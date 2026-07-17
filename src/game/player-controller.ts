@@ -1,0 +1,141 @@
+import * as THREE from 'three';
+import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+import { SCENE_CONFIG } from './scene-manager';
+import { PhysicsSystem } from './physics-system';
+import { HUD } from './hud';
+
+export class PlayerController {
+  private controls: PointerLockControls;
+  private camera: THREE.PerspectiveCamera;
+  private physics: PhysicsSystem;
+  private moveForward = false;
+  private moveBackward = false;
+  private moveLeft = false;
+  private moveRight = false;
+  private isSprinting = false;
+  private wantsJump = false;
+  private _isLocked = false;
+
+  private verticalSpeed = 0;
+  private grounded = true;
+
+  constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement, private hud: HUD, physics: PhysicsSystem) {
+    this.camera = camera;
+    this.physics = physics;
+    this.controls = new PointerLockControls(camera, domElement);
+
+    this.camera.position.set(0, SCENE_CONFIG.playerEyeHeight, 0);
+
+    domElement.addEventListener('click', () => {
+      if (!this._isLocked) this.controls.lock();
+    });
+
+    this.controls.addEventListener('lock', () => {
+      this._isLocked = true;
+      this.hud.hideInstructions();
+    });
+
+    this.controls.addEventListener('unlock', () => {
+      this._isLocked = false;
+      this.clearInputState();
+      this.hud.showInstructions();
+    });
+
+    document.addEventListener('keydown', (e) => this.onKeyDown(e));
+    document.addEventListener('keyup', (e) => this.onKeyUp(e));
+    window.addEventListener('blur', () => this.clearInputState());
+  }
+
+  get isLocked(): boolean { return this._isLocked; }
+
+  setInputEnabled(enabled: boolean): void {
+    if (!enabled) this.clearInputState();
+    this._inputEnabled = enabled;
+  }
+
+  private _inputEnabled = true;
+
+  private clearInputState(): void {
+    this.moveForward = false;
+    this.moveBackward = false;
+    this.moveLeft = false;
+    this.moveRight = false;
+    this.isSprinting = false;
+    this.wantsJump = false;
+  }
+
+  private onKeyDown(event: KeyboardEvent): void {
+    if (!this._isLocked) return;
+    if (event.repeat) return;
+    switch (event.code) {
+      case 'KeyW': this.moveForward = true; break;
+      case 'KeyS': this.moveBackward = true; break;
+      case 'KeyA': this.moveLeft = true; break;
+      case 'KeyD': this.moveRight = true; break;
+      case 'ShiftLeft': case 'ShiftRight': this.isSprinting = true; break;
+      case 'Space':
+        if (this.grounded) this.wantsJump = true;
+        break;
+    }
+  }
+
+  private onKeyUp(event: KeyboardEvent): void {
+    switch (event.code) {
+      case 'KeyW': this.moveForward = false; break;
+      case 'KeyS': this.moveBackward = false; break;
+      case 'KeyA': this.moveLeft = false; break;
+      case 'KeyD': this.moveRight = false; break;
+      case 'ShiftLeft': case 'ShiftRight': this.isSprinting = false; break;
+    }
+  }
+
+  update(deltaTime: number): void {
+    if (!this._isLocked || !this._inputEnabled) return;
+
+    const speedMult = this.isSprinting ? SCENE_CONFIG.sprintMultiplier : 1;
+    const speed = SCENE_CONFIG.playerSpeed * speedMult * deltaTime;
+
+    // Get forward/right on XZ
+    const forward = new THREE.Vector3();
+    this.camera.getWorldDirection(forward);
+    forward.y = 0;
+    forward.normalize();
+    const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+
+    // Build desired horizontal movement
+    const move = new THREE.Vector3(0, 0, 0);
+    if (this.moveForward) move.addScaledVector(forward, speed);
+    if (this.moveBackward) move.addScaledVector(forward, -speed);
+    if (this.moveLeft) move.addScaledVector(right, -speed);
+    if (this.moveRight) move.addScaledVector(right, speed);
+
+    // Jump
+    if (this.wantsJump && this.grounded) {
+      this.verticalSpeed = Math.sqrt(2 * SCENE_CONFIG.gravity * SCENE_CONFIG.jumpHeight);
+      this.grounded = false;
+      this.wantsJump = false;
+    }
+
+    // Apply gravity
+    this.verticalSpeed -= SCENE_CONFIG.gravity * deltaTime;
+    move.y = this.verticalSpeed * deltaTime;
+
+    // Use character controller for collision
+    const corrected = this.physics.movePlayer(move);
+
+    // Update physics body position
+    const currentPos = this.physics.getPlayerPosition();
+    const newPos = currentPos.add(corrected);
+    this.physics.setPlayerPosition(newPos);
+
+    // Check grounded
+    this.grounded = this.physics.isPlayerGrounded();
+    if (this.grounded && this.verticalSpeed < 0) {
+      this.verticalSpeed = 0;
+    }
+
+    // Sync camera to player body position (eye height offset from capsule center)
+    const bodyPos = this.physics.getPlayerPosition();
+    this.camera.position.set(bodyPos.x, bodyPos.y + 0.6, bodyPos.z);
+  }
+}

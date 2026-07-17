@@ -1,0 +1,334 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* HUD Container */
+#hud {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 100;
+}
+
+/* Crosshair */
+#crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 20px;
+  color: #ffffff;
+  font-family: monospace;
+  line-height: 1;
+  user-select: none;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.8);
+}
+
+#crosshair.active {
+  color: #44ff44;
+}
+
+/* Interaction Prompt */
+#interaction-prompt {
+  position: absolute;
+  top: 55%;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #ffffff;
+  font-family: sans-serif;
+  font-size: 14px;
+  text-align: center;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+  user-select: none;
+  display: none;
+}
+
+#interaction-prompt.visible {
+  display: block;
+}
+
+/* Too Far Prompt */
+#too-far-prompt {
+  position: absolute;
+  top: 60%;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #ff6666;
+  font-family: sans-serif;
+  font-size: 13px;
+  text-align: center;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+  user-select: none;
+  display: none;
+}
+
+#too-far-prompt.visible {
+  display: block;
+}
+
+/* Instructions Panel */
+#instructions-panel {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #ffffff;
+  font-family: sans-serif;
+  font-size: 16px;
+  text-align: center;
+  line-height: 2;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 30px 50px;
+  border-radius: 8px;
+  user-select: none;
+}
+
+#instructions-panel.hidden {
+  display: none;
+}
+
+/* WebGL Error */
+#webgl-error {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #ff4444;
+  font-family: sans-serif;
+  font-size: 18px;
+  text-align: center;
+  padding: 30px;
+  background: rgba(0, 0, 0, 0.9);
+  border-radius: 8px;
+}
+
+/* Charge Bar */
+#charge-bar-container {
+  position: absolute;
+  bottom: 20%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 200px;
+  height: 8px;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 4px;
+  overflow: hidden;
+  display: none;
+}
+
+#charge-bar-container.visible {
+  display: block;
+}
+
+#charge-bar-fill {
+  height: 100%;
+  width: 0%;
+  background-color: #44ff44;
+  border-radius: 4px;
+  transition: width 0.05s linear;
+}
+
+
+/* Stamp Minigame Overlay */
+#stamp-minigame-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: all;
+  cursor: default;
+}
+
+.stamp-game-container {
+  background: #2a2a3a;
+  border-radius: 12px;
+  padding: 30px;
+  max-width: 700px;
+  width: 90%;
+  color: #fff;
+  font-family: sans-serif;
+}
+
+.stamp-game-header {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.stamp-game-header h2 {
+  margin: 0 0 8px 0;
+  font-size: 24px;
+}
+
+.stamp-instruction {
+  color: #aaa;
+  font-size: 14px;
+}
+
+.stamp-game-body {
+  display: flex;
+  gap: 20px;
+}
+
+.address-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.address-card {
+  background: #FFFDE8;
+  color: #222;
+  padding: 15px;
+  border-radius: 6px;
+  border: 2px solid #ccc;
+}
+
+.address-recipient {
+  font-weight: bold;
+  font-size: 16px;
+  margin: 0 0 4px 0;
+}
+
+.address-street, .address-dest {
+  margin: 0;
+  font-size: 14px;
+}
+
+.address-dest {
+  font-weight: bold;
+  margin-top: 6px;
+  color: #555;
+}
+
+.stamp-target {
+  width: 120px;
+  height: 90px;
+  border: 3px dashed #666;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #888;
+  font-size: 12px;
+  text-align: center;
+  transition: border-color 0.3s, background 0.3s;
+  align-self: center;
+}
+
+.stamp-target.shake {
+  animation: shake 0.3s ease-in-out;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  50% { transform: translateX(5px); }
+  75% { transform: translateX(-3px); }
+}
+
+.stamps-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  flex: 1;
+}
+
+.stamp-item {
+  background: #3a3a5a;
+  border: 2px solid #555;
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: grab;
+  user-select: none;
+  transition: transform 0.15s, border-color 0.15s;
+}
+
+.stamp-item:hover {
+  border-color: #88f;
+  transform: scale(1.05);
+}
+
+.stamp-item:active {
+  cursor: grabbing;
+}
+
+.stamp-icon {
+  font-size: 28px;
+}
+
+.stamp-name {
+  font-size: 12px;
+  color: #ccc;
+}
+
+.stamp-dragging {
+  width: 60px;
+  height: 60px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #3a3a5a;
+  border: 2px solid #88f;
+  opacity: 0.9;
+}
+
+.stamp-game-footer {
+  margin-top: 20px;
+  text-align: center;
+  color: #888;
+  font-size: 13px;
+}
+
+#stamp-feedback {
+  font-size: 16px;
+  margin-top: 8px;
+  min-height: 24px;
+}
+
+
+/* Overweight label button */
+.overweight-btn {
+  background: #5a2a2a !important;
+  border-color: #ff4444 !important;
+}
+
+.overweight-btn:hover {
+  border-color: #ff6666 !important;
+  transform: scale(1.05);
+}
+
+.overweight-disabled {
+  opacity: 0.5;
+  cursor: not-allowed !important;
+  pointer-events: none;
+}
