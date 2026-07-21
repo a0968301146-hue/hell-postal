@@ -10,6 +10,20 @@ export interface PlayerInteractionData {
   targetedObjectId: string | null;
 }
 
+/** Describes the interior volume of a movable container, for content capture/restore. */
+export interface ContainerBounds {
+  /** Interior usable width along local X. */
+  innerWidth: number;
+  /** Interior usable depth along local Z. */
+  innerDepth: number;
+  /** Interior usable height along local Y. */
+  innerHeight: number;
+  /** Local-space offset from the container mesh root to the center of the interior volume. */
+  interiorCenterOffset: THREE.Vector3;
+  /** Safety margin (meters) used when detecting/clamping contents inside this container. */
+  tolerance: number;
+}
+
 export interface InteractableObject {
   id: string;
   displayName: string;
@@ -24,6 +38,7 @@ export interface InteractableObject {
   height: number;
   depth: number;
   packageData: PackageData | null;
+  containerBounds: ContainerBounds | null;
 }
 
 export function createInteractableObject(
@@ -48,6 +63,7 @@ export function createInteractableObject(
     height,
     depth,
     packageData: null,
+    containerBounds: null,
   };
 }
 

@@ -248,28 +248,36 @@ export class EnvelopeSystem {
 
     // Create as interactable (movable)
     const obj = createInteractableObject(CRATE_ID, '待整理信封箱', crateMesh, CRATE_SIZE.w, CRATE_SIZE.h, CRATE_SIZE.d);
+    obj.containerBounds = {
+      innerWidth: CRATE_SIZE.w - wt * 2,
+      innerDepth: CRATE_SIZE.d - wt * 2,
+      innerHeight: wallH,
+      interiorCenterOffset: new THREE.Vector3(0, bt + wallH / 2, 0),
+      tolerance: 0.02,
+    };
 
-    // Static wall colliders for containment (5 faces, no top)
-    // startY is bottom of container (0.005)
+    // Single Dynamic body at box center; bottom + 4 walls are colliders
+    // attached via local offsets so they move together with the container
+    // (open top, no separate static colliders left behind at spawn).
     const wt2 = wt / 2;
     const wallHalf = wallH / 2;
-    const wallCY = startY + bt + wallHalf;
-    this.physics.createStaticCuboid(CRATE_POS.x, startY + bt / 2, CRATE_POS.z, hw, bt / 2, hd); // bottom
-    this.physics.createStaticCuboid(CRATE_POS.x, wallCY, CRATE_POS.z + hd - wt2, hw, wallHalf, wt2); // front
-    this.physics.createStaticCuboid(CRATE_POS.x, wallCY, CRATE_POS.z - hd + wt2, hw, wallHalf, wt2); // back
-    this.physics.createStaticCuboid(CRATE_POS.x - hw + wt2, wallCY, CRATE_POS.z, wt2, wallHalf, hd); // left
-    this.physics.createStaticCuboid(CRATE_POS.x + hw - wt2, wallCY, CRATE_POS.z, wt2, wallHalf, hd); // right
-
-    // Dynamic body for pickup — at center of box volume
     const bodyCenterY = startY + CRATE_SIZE.h / 2;
-    const { body, collider } = this.physics.createBoxBody(
-      CRATE_POS.x, bodyCenterY, CRATE_POS.z,
-      CRATE_SIZE.w / 2, CRATE_SIZE.h / 2, CRATE_SIZE.d / 2,
-      800
-    );
+    const bodyDesc = this.physics.createDynamicBodyDesc(CRATE_POS.x, bodyCenterY, CRATE_POS.z, 800);
+    const body = this.physics.createDynamicBody(bodyDesc);
     body.setEnabledRotations(false, true, false, true);
+    body.setLinearDamping(1.5);
+    body.setAngularDamping(2.0);
+
+    const bottomLocalY = -CRATE_SIZE.h / 2 + bt / 2;
+    const wallLocalY = -CRATE_SIZE.h / 2 + bt + wallHalf;
+    this.physics.addColliderToBody(body, 0, bottomLocalY, 0, hw, bt / 2, hd); // bottom
+    this.physics.addColliderToBody(body, 0, wallLocalY, hd - wt2, hw, wallHalf, wt2); // front
+    this.physics.addColliderToBody(body, 0, wallLocalY, -(hd - wt2), hw, wallHalf, wt2); // back
+    this.physics.addColliderToBody(body, -(hw - wt2), wallLocalY, 0, wt2, wallHalf, hd); // left
+    this.physics.addColliderToBody(body, hw - wt2, wallLocalY, 0, wt2, wallHalf, hd); // right
+
     obj.rigidBody = body;
-    obj.collider = collider;
+    obj.collider = null; // multiple colliders, tracked by body
 
     this.interactables.set(CRATE_ID, obj);
     this.crateObj = obj;

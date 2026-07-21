@@ -85,6 +85,13 @@ export class SortingBoxSystem {
 
     const obj = createInteractableObject(data.boxId, data.displayName, mesh, SBOX_WIDTH, SBOX_HEIGHT, SBOX_DEPTH);
     obj.packageData = null;
+    obj.containerBounds = {
+      innerWidth: SBOX_WIDTH - SBOX_WALL_THICKNESS * 2,
+      innerDepth: SBOX_DEPTH - SBOX_WALL_THICKNESS * 2,
+      innerHeight: SBOX_HEIGHT - BOTTOM_THICKNESS,
+      interiorCenterOffset: new THREE.Vector3(0, (BOTTOM_THICKNESS + SBOX_HEIGHT) / 2, 0),
+      tolerance: 0.02,
+    };
 
     // Create a single Dynamic body at box center
     const bodyCenterY = rootY + SBOX_HEIGHT / 2;

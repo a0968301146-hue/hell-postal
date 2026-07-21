@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { InteractableObject, PlayerInteractionData } from './interactable-object';
 import { SCENE_CONFIG } from './scene-manager';
-import { SBOX_HEIGHT, SBOX_WIDTH, SBOX_DEPTH, SBOX_WALL_THICKNESS } from './sorting-box-data';
 import { PhysicsSystem } from './physics-system';
 import { HUD } from './hud';
 
@@ -118,14 +117,21 @@ export class PickupSystem {
   /** Find and capture all envelopes inside a container before picking it up */
   private captureContainerContents(container: InteractableObject): void {
     this.carriedEnvelopes = [];
+    const bounds = container.containerBounds;
+    if (!bounds) return;
+
     const containerPos = container.mesh.position;
     const containerQuat = container.mesh.quaternion;
 
-    // Calculate interior bounds (bottom-origin container)
-    const innerHW = (SBOX_WIDTH - SBOX_WALL_THICKNESS * 2) / 2;
-    const innerHD = (SBOX_DEPTH - SBOX_WALL_THICKNESS * 2) / 2;
-    const bottomY = containerPos.y + 0.08; // BOTTOM_THICKNESS
-    const topY = containerPos.y + SBOX_HEIGHT;
+    // Interior bounds are per-container (see InteractableObject.containerBounds)
+    const innerHW = bounds.innerWidth / 2;
+    const innerHD = bounds.innerDepth / 2;
+    const centerX = containerPos.x + bounds.interiorCenterOffset.x;
+    const centerZ = containerPos.z + bounds.interiorCenterOffset.z;
+    const centerY = containerPos.y + bounds.interiorCenterOffset.y;
+    const halfH = bounds.innerHeight / 2;
+    const bottomY = centerY - halfH;
+    const topY = centerY + halfH;
 
     // Use world-space inverse for local position calculation
     const containerMatrixInverse = new THREE.Matrix4().copy(container.mesh.matrixWorld).invert();
@@ -137,9 +143,9 @@ export class PickupSystem {
 
       const envPos = envObj.mesh.position;
       // Check if envelope center is inside container
-      if (envPos.x < containerPos.x - innerHW || envPos.x > containerPos.x + innerHW) continue;
-      if (envPos.z < containerPos.z - innerHD || envPos.z > containerPos.z + innerHD) continue;
-      if (envPos.y < bottomY - 0.05 || envPos.y > topY) continue;
+      if (envPos.x < centerX - innerHW || envPos.x > centerX + innerHW) continue;
+      if (envPos.z < centerZ - innerHD || envPos.z > centerZ + innerHD) continue;
+      if (envPos.y < bottomY - bounds.tolerance || envPos.y > topY) continue;
 
       // Save relative position
       const localPos = envObj.mesh.position.clone().applyMatrix4(containerMatrixInverse);
@@ -165,6 +171,7 @@ export class PickupSystem {
   /** Restore carried envelopes to world after placing container */
   private restoreContainerContents(container: InteractableObject): void {
     if (this.carriedEnvelopes.length === 0) return;
+    const bounds = container.containerBounds;
 
     for (const carried of this.carriedEnvelopes) {
       const envObj = carried.obj;
@@ -173,14 +180,18 @@ export class PickupSystem {
       const worldPos = carried.localPos.clone().applyMatrix4(container.mesh.matrixWorld);
       const worldQuat = container.mesh.quaternion.clone().multiply(carried.localQuat);
 
-      // Clamp to inside container bounds
-      const containerPos = container.mesh.position;
-      const innerHW = (SBOX_WIDTH - SBOX_WALL_THICKNESS * 2) / 2 - 0.02;
-      const innerHD = (SBOX_DEPTH - SBOX_WALL_THICKNESS * 2) / 2 - 0.02;
-      worldPos.x = Math.max(containerPos.x - innerHW, Math.min(containerPos.x + innerHW, worldPos.x));
-      worldPos.z = Math.max(containerPos.z - innerHD, Math.min(containerPos.z + innerHD, worldPos.z));
-      const bottomY = containerPos.y + 0.08 + 0.02; // BOTTOM_THICKNESS + safety
-      worldPos.y = Math.max(bottomY, worldPos.y);
+      // Clamp to inside container bounds (per-container, see containerBounds)
+      if (bounds) {
+        const containerPos = container.mesh.position;
+        const centerX = containerPos.x + bounds.interiorCenterOffset.x;
+        const centerZ = containerPos.z + bounds.interiorCenterOffset.z;
+        const innerHW = bounds.innerWidth / 2 - bounds.tolerance;
+        const innerHD = bounds.innerDepth / 2 - bounds.tolerance;
+        worldPos.x = Math.max(centerX - innerHW, Math.min(centerX + innerHW, worldPos.x));
+        worldPos.z = Math.max(centerZ - innerHD, Math.min(centerZ + innerHD, worldPos.z));
+        const bottomY = containerPos.y + bounds.interiorCenterOffset.y - bounds.innerHeight / 2 + bounds.tolerance;
+        worldPos.y = Math.max(bottomY, worldPos.y);
+      }
 
       // Restore world mesh
       envObj.mesh.position.copy(worldPos);
@@ -203,6 +214,7 @@ export class PickupSystem {
   /** Restore envelopes with throw velocity (for Q throw) */
   private restoreContainerContentsWithVelocity(container: InteractableObject, throwDir: THREE.Vector3, chargeRatio: number): void {
     if (this.carriedEnvelopes.length === 0) return;
+    const bounds = container.containerBounds;
 
     // Calculate throw velocity to apply to envelopes
     const throwSpeed = SCENE_CONFIG.minThrowImpulse + chargeRatio * (SCENE_CONFIG.maxThrowImpulse - SCENE_CONFIG.minThrowImpulse);
@@ -215,14 +227,18 @@ export class PickupSystem {
       const worldPos = carried.localPos.clone().applyMatrix4(container.mesh.matrixWorld);
       const worldQuat = container.mesh.quaternion.clone().multiply(carried.localQuat);
 
-      // Clamp to container bounds
-      const containerPos = container.mesh.position;
-      const innerHW = (SBOX_WIDTH - SBOX_WALL_THICKNESS * 2) / 2 - 0.02;
-      const innerHD = (SBOX_DEPTH - SBOX_WALL_THICKNESS * 2) / 2 - 0.02;
-      worldPos.x = Math.max(containerPos.x - innerHW, Math.min(containerPos.x + innerHW, worldPos.x));
-      worldPos.z = Math.max(containerPos.z - innerHD, Math.min(containerPos.z + innerHD, worldPos.z));
-      const bottomY = containerPos.y + 0.08 + 0.02;
-      worldPos.y = Math.max(bottomY, worldPos.y);
+      // Clamp to container bounds (per-container, see containerBounds)
+      if (bounds) {
+        const containerPos = container.mesh.position;
+        const centerX = containerPos.x + bounds.interiorCenterOffset.x;
+        const centerZ = containerPos.z + bounds.interiorCenterOffset.z;
+        const innerHW = bounds.innerWidth / 2 - bounds.tolerance;
+        const innerHD = bounds.innerDepth / 2 - bounds.tolerance;
+        worldPos.x = Math.max(centerX - innerHW, Math.min(centerX + innerHW, worldPos.x));
+        worldPos.z = Math.max(centerZ - innerHD, Math.min(centerZ + innerHD, worldPos.z));
+        const bottomY = containerPos.y + bounds.interiorCenterOffset.y - bounds.innerHeight / 2 + bounds.tolerance;
+        worldPos.y = Math.max(bottomY, worldPos.y);
+      }
 
       // Restore world mesh
       envObj.mesh.position.copy(worldPos);
@@ -248,21 +264,9 @@ export class PickupSystem {
     // Clone the entire mesh tree (including children like walls, labels for containers)
     const cloned = obj.mesh.clone(true);
     cloned.frustumCulled = false;
-    cloned.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.frustumCulled = false;
-        // Ensure materials are visible and opaque
-        if (child.material && 'opacity' in child.material) {
-          const mat = child.material as THREE.MeshStandardMaterial | THREE.MeshBasicMaterial;
-          if (mat.opacity > 0) {
-            // Keep existing opacity for visible meshes
-          } else if (child.userData.isHitProxy) {
-            // Keep hitproxies invisible
-          }
-        }
-      }
-    });
-    // Remove hitproxies from viewmodel (they're invisible and waste raycasting)
+
+    // Remove hitproxies from viewmodel first (they're invisible and waste
+    // raycasting) so we don't bother giving them owned resources below.
     const toRemove: THREE.Object3D[] = [];
     cloned.traverse((child) => {
       if (child.userData.isHitProxy || child.userData.interiorPlane) {
@@ -270,6 +274,22 @@ export class PickupSystem {
       }
     });
     toRemove.forEach(c => c.parent?.remove(c));
+
+    // Object3D.clone() does NOT deep-clone geometry/material — the cloned
+    // meshes still reference the exact same geometry/material instances as
+    // the world mesh. Give the viewmodel its own copies so removeHeldViewMesh()
+    // can safely dispose them without freeing resources the world mesh needs.
+    cloned.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.frustumCulled = false;
+        child.geometry = child.geometry.clone();
+        if (Array.isArray(child.material)) {
+          child.material = child.material.map(m => m.clone());
+        } else if (child.material) {
+          child.material = child.material.clone();
+        }
+      }
+    });
 
     this.heldViewMesh = cloned as THREE.Mesh;
 
