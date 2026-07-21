@@ -9,11 +9,9 @@ import { createPlayerInteractionData, InteractableObject, PlayerInteractionData 
 import { StampStation } from './stamp-station';
 import { StampMinigame, MinigameResult } from './stamp-minigame';
 import { PackageData } from './package-data';
-import { SignSystem } from './sign-system';
 import { EnvelopeSystem } from './envelope-system';
 import { EnvelopeStampStation } from './envelope-stamp-station';
 import { SortingBoxSystem } from './sorting-box-system';
-import { ScaleSystem } from './scale-system';
 import { MailSortingSystem } from './mail-sorting-system';
 
 export class Game {
@@ -33,7 +31,6 @@ export class Game {
   private envelopeSystem!: EnvelopeSystem;
   private mailBagSystem!: SortingBoxSystem;
   private mailSortingSystem!: MailSortingSystem;
-  private scaleSystem!: ScaleSystem;
   private stampMinigame: StampMinigame | null = null;
   private packageDataMap!: Map<string, PackageData>;
 
@@ -84,12 +81,6 @@ export class Game {
       this.mailBagSystem, this.interactables, this.physics, this.envelopeSystem.envelopeDataMap, this.hud
     );
 
-    // Signs
-    new SignSystem(this.worldScene, this.physics);
-
-    // Scale
-    this.scaleSystem = new ScaleSystem(this.worldScene, this.physics, this.interactables);
-
     // Player controller
     this.playerController = new PlayerController(this.camera, this.renderer.domElement, this.hud, this.physics);
 
@@ -101,7 +92,6 @@ export class Game {
     // Register stamp table top as a placement surface
     this.pickupSystem.addPlacementSurface(this.stampStation.tableTopMesh);
     this.pickupSystem.addPlacementSurface(this.envelopeStation.tableTopMesh);
-    this.pickupSystem.addPlacementSurface(this.scaleSystem.platformTopMesh);
 
     // Register sorting box interior planes as placement surfaces
     for (const plane of this.mailBagSystem.interiorPlanes.values()) {
@@ -228,7 +218,6 @@ export class Game {
       this.stampStation.update(deltaTime);
       this.envelopeStation.update(deltaTime);
       this.mailSortingSystem.update(deltaTime);
-      this.scaleSystem.update(deltaTime);
     }
 
     // Render

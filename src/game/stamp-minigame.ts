@@ -1,5 +1,5 @@
 import { STAMPS, StampInfo } from './stamp-data';
-import { PackageData, createStampVisual, createOverweightLabel } from './package-data';
+import { PackageData, createStampVisual } from './package-data';
 import { InteractableObject } from './interactable-object';
 
 export type MinigameResult = 'completed' | 'cancelled';
@@ -46,7 +46,6 @@ export class StampMinigame {
                 <span class="stamp-name">${s.displayName}</span>
               </div>
             `).join('')}
-            ${this.getOverweightButtonHtml()}
           </div>
         </div>
         <div class="stamp-game-footer">
@@ -62,49 +61,7 @@ export class StampMinigame {
       el.addEventListener('mousedown', (e) => this.onStampMouseDown(e as MouseEvent, el as HTMLElement));
     });
 
-    // Overweight label button
-    const owBtn = this.overlay.querySelector('#overweight-label-btn');
-    if (owBtn) {
-      owBtn.addEventListener('click', () => this.onOverweightLabelClick());
-    }
-
     document.addEventListener('keydown', this.onKeyDown);
-  }
-
-  private getOverweightButtonHtml(): string {
-    if (!this.pkg.hasBeenWeighed) {
-      return `<div class="stamp-item overweight-disabled"><span class="stamp-icon">⚖️</span><span class="stamp-name">請先秤重</span></div>`;
-    }
-    if (!this.pkg.isOverweight) {
-      return `<div class="stamp-item overweight-disabled"><span class="stamp-icon">✓</span><span class="stamp-name">重量正常</span></div>`;
-    }
-    if (this.pkg.hasOverweightLabel) {
-      return `<div class="stamp-item overweight-disabled"><span class="stamp-icon">⚠️</span><span class="stamp-name">已貼過重標示</span></div>`;
-    }
-    return `<div class="stamp-item overweight-btn" id="overweight-label-btn"><span class="stamp-icon">⚠️</span><span class="stamp-name">貼過重貼紙</span></div>`;
-  }
-
-  private onOverweightLabelClick(): void {
-    if (!this.pkg.hasBeenWeighed || !this.pkg.isOverweight || this.pkg.hasOverweightLabel) return;
-
-    this.pkg.hasOverweightLabel = true;
-
-    // Create and attach overweight label mesh to the package
-    const labelMesh = createOverweightLabel(this.obj.width, this.obj.height);
-    this.obj.mesh.add(labelMesh);
-    this.pkg.overweightLabelMesh = labelMesh;
-
-    // Visual feedback
-    const feedback = this.overlay?.querySelector('#stamp-feedback') as HTMLElement;
-    if (feedback) {
-      feedback.textContent = '✓ 過重標示已貼上';
-      feedback.style.color = '#ff8844';
-    }
-    const btn = this.overlay?.querySelector('#overweight-label-btn');
-    if (btn) {
-      btn.classList.add('overweight-disabled');
-      btn.innerHTML = '<span class="stamp-icon">⚠️</span><span class="stamp-name">已貼過重標示</span>';
-    }
   }
 
   private onKeyDown = (e: KeyboardEvent): void => {

@@ -1,7 +1,6 @@
 import * as THREE from 'three';
-import { InteractableObject, createInteractableObject } from './interactable-object';
+import { InteractableObject } from './interactable-object';
 import { PhysicsSystem } from './physics-system';
-import { createPackageData, createAddressLabel } from './package-data';
 
 export const ROOM_WIDTH = 15;
 export const ROOM_DEPTH = 15;
@@ -29,7 +28,7 @@ export interface SceneData {
   floor: THREE.Mesh;
 }
 
-export function createTestScene(scene: THREE.Scene, physics: PhysicsSystem): SceneData {
+export function createTestScene(scene: THREE.Scene, _physics: PhysicsSystem): SceneData {
   const halfWidth = ROOM_WIDTH / 2;
   const halfDepth = ROOM_DEPTH / 2;
   const wallHeight = ROOM_HEIGHT;
@@ -72,46 +71,10 @@ export function createTestScene(scene: THREE.Scene, physics: PhysicsSystem): Sce
   dirLight.position.set(3, 6, 4);
   scene.add(dirLight);
 
-  // Create boxes
+  // No test packages are spawned here anymore (removed with the old prototype
+  // room). Kept as an empty map — envelope/sorting-box/stamp-station systems
+  // populate `interactables` themselves after this scene is built.
   const interactables = new Map<string, InteractableObject>();
-
-  const addBox = (id: string, name: string, w: number, h: number, d: number, color: number, x: number, z: number) => {
-    const geo = new THREE.BoxGeometry(w, h, d);
-    const mat = new THREE.MeshStandardMaterial({ color });
-    const mesh = new THREE.Mesh(geo, mat);
-    const y = h / 2 + 0.01; // slightly above ground
-    mesh.position.set(x, y, z);
-    scene.add(mesh);
-
-    const obj = createInteractableObject(id, name, mesh, w, h, d);
-
-    // Create physics body
-    const density = 200 + Math.max(w, h, d) * 300; // larger = heavier
-    const { body, collider } = physics.createBoxBody(x, y, z, w / 2, h / 2, d / 2, density);
-    obj.rigidBody = body;
-    obj.collider = collider;
-
-    // Package data with address label
-    const pkgData = createPackageData(id, w, h, d);
-    obj.packageData = pkgData;
-    const label = createAddressLabel(pkgData, w, d);
-    label.position.y = h / 2 + 0.001;
-    mesh.add(label);
-    pkgData.addressLabelMesh = label;
-
-    interactables.set(id, obj);
-  };
-
-  // 9 boxes - positioned to avoid stamp table (Z=-6) and shelves (side walls)
-  addBox('parcel-small', '小型包裹', 0.3, 0.3, 0.3, 0x8B4513, -1, -2);
-  addBox('parcel-long', '長型包裹', 0.2, 0.2, 0.8, 0x654321, 2, -1);
-  addBox('mailbox-medium', '中型郵件箱', 0.5, 0.5, 0.4, 0xDAA520, 0, 2);
-  addBox('box-small', '小型紙箱', 0.35, 0.35, 0.35, 0xA0522D, -2, 1);
-  addBox('box-medium', '中型紙箱', 0.6, 0.6, 0.5, 0xCD853F, 3, 1);
-  addBox('parcel-long-2', '長型包裹 B', 0.25, 0.25, 0.9, 0x8B6914, 1, 4);
-  addBox('box-large-1', '大型箱子 A', 1.0, 1.0, 1.0, 0x5F9EA0, -3, 4);
-  addBox('box-large-2', '大型箱子 B', 1.1, 0.9, 1.0, 0x708090, 3, 5);
-  addBox('box-large-3', '大型箱子 C', 0.9, 1.1, 1.0, 0x6B8E23, 0, 6);
 
   return { interactables, floor };
 }
