@@ -2,14 +2,19 @@ import * as THREE from 'three';
 import { InteractableObject } from './interactable-object';
 import { PhysicsSystem } from './physics-system';
 import { SCENE_CONFIG } from './scene-manager';
+import { BACK_AREA } from './logistics-layout-data';
+import { createFloatingLabel } from './world-label-system';
+
+const FLOOR_Y = BACK_AREA.floorY;
 
 export const ENVELOPE_TABLE = {
   width: 1.6,
   depth: 1.0,
   height: 0.9,
   legWidth: 0.08,
-  posX: -4,
-  posZ: -6.0,
+  // Relocated into the back-area work furniture cluster (see logistics-layout-data.ts)
+  posX: -8,
+  posZ: 14.5,
 };
 
 export class EnvelopeStampStation {
@@ -32,14 +37,14 @@ export class EnvelopeStampStation {
     this.interactables = interactables;
 
     this.tableMesh = this.createTableMesh();
-    this.tableMesh.position.set(ENVELOPE_TABLE.posX, 0, ENVELOPE_TABLE.posZ);
+    this.tableMesh.position.set(ENVELOPE_TABLE.posX, FLOOR_Y, ENVELOPE_TABLE.posZ);
     scene.add(this.tableMesh);
     this.tableMesh.updateMatrixWorld(true);
 
     // Physics collider for table top
     const topThickness = 0.05;
     physics.createStaticCuboid(
-      ENVELOPE_TABLE.posX, ENVELOPE_TABLE.height - topThickness / 2, ENVELOPE_TABLE.posZ,
+      ENVELOPE_TABLE.posX, FLOOR_Y + ENVELOPE_TABLE.height - topThickness / 2, ENVELOPE_TABLE.posZ,
       ENVELOPE_TABLE.width / 2, topThickness / 2, ENVELOPE_TABLE.depth / 2
     );
 
@@ -50,7 +55,7 @@ export class EnvelopeStampStation {
     const legHx = ENVELOPE_TABLE.legWidth / 2;
     for (const [lx, lz] of [[-hw, -hd], [hw, -hd], [-hw, hd], [hw, hd]]) {
       physics.createStaticCuboid(
-        ENVELOPE_TABLE.posX + lx, legH / 2, ENVELOPE_TABLE.posZ + lz,
+        ENVELOPE_TABLE.posX + lx, FLOOR_Y + legH / 2, ENVELOPE_TABLE.posZ + lz,
         legHx, legH / 2, legHx
       );
     }
@@ -59,12 +64,12 @@ export class EnvelopeStampStation {
     this.sensorBox = new THREE.Box3(
       new THREE.Vector3(
         ENVELOPE_TABLE.posX - ENVELOPE_TABLE.width / 2 + 0.05,
-        ENVELOPE_TABLE.height,
+        FLOOR_Y + ENVELOPE_TABLE.height,
         ENVELOPE_TABLE.posZ - ENVELOPE_TABLE.depth / 2 + 0.05
       ),
       new THREE.Vector3(
         ENVELOPE_TABLE.posX + ENVELOPE_TABLE.width / 2 - 0.05,
-        ENVELOPE_TABLE.height + 0.5,
+        FLOOR_Y + ENVELOPE_TABLE.height + 0.5,
         ENVELOPE_TABLE.posZ + ENVELOPE_TABLE.depth / 2 - 0.05
       )
     );
@@ -92,22 +97,9 @@ export class EnvelopeStampStation {
       group.add(leg);
     }
 
-    // Label
-    const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 64;
-    const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = '#E8F5E9';
-    ctx.fillRect(0, 0, 256, 64);
-    ctx.fillStyle = '#333';
-    ctx.font = 'bold 20px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('信封貼郵票桌', 128, 42);
-    const tex = new THREE.CanvasTexture(canvas);
-    const labelGeo = new THREE.PlaneGeometry(0.7, 0.18);
-    const labelMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true });
-    const labelMesh = new THREE.Mesh(labelGeo, labelMat);
-    labelMesh.position.set(0, ENVELOPE_TABLE.height + 0.4, -ENVELOPE_TABLE.depth / 2 + 0.01);
+    // Label — floating billboard, always faces the player
+    const labelMesh = createFloatingLabel('信封貼郵票桌', { width: 0.8 });
+    labelMesh.position.set(0, ENVELOPE_TABLE.height + 0.4, 0);
     group.add(labelMesh);
 
     return group;

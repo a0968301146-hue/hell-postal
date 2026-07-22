@@ -1,6 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { SCENE_CONFIG, ROOM_WIDTH, ROOM_DEPTH, ROOM_HEIGHT } from './scene-manager';
+import { SCENE_CONFIG } from './scene-manager';
+import { PLAYER_SPAWN } from './counter-layout-data';
 
 // Collision groups
 export const GROUP_STATIC = 0x0001;
@@ -29,28 +30,7 @@ export class PhysicsSystem {
     this.characterController.enableSnapToGround(0.3);
     this.characterController.setApplyImpulsesToDynamicBodies(true);
 
-    this.createStaticWorld();
     this.createPlayer();
-  }
-
-  private createStaticWorld(): void {
-    const halfW = ROOM_WIDTH / 2;
-    const halfD = ROOM_DEPTH / 2;
-    const halfH = ROOM_HEIGHT / 2;
-    const wallThickness = 0.2;
-
-    // Floor
-    this.createStaticCuboid(0, -wallThickness / 2, 0, halfW, wallThickness / 2, halfD);
-    // Ceiling
-    this.createStaticCuboid(0, ROOM_HEIGHT + wallThickness / 2, 0, halfW, wallThickness / 2, halfD);
-    // Back wall (Z = -halfD)
-    this.createStaticCuboid(0, halfH, -halfD - wallThickness / 2, halfW, halfH, wallThickness / 2);
-    // Front wall (Z = +halfD)
-    this.createStaticCuboid(0, halfH, halfD + wallThickness / 2, halfW, halfH, wallThickness / 2);
-    // Left wall (X = -halfW)
-    this.createStaticCuboid(-halfW - wallThickness / 2, halfH, 0, wallThickness / 2, halfH, halfD);
-    // Right wall (X = +halfW)
-    this.createStaticCuboid(halfW + wallThickness / 2, halfH, 0, wallThickness / 2, halfH, halfD);
   }
 
   createStaticCuboid(x: number, y: number, z: number, hx: number, hy: number, hz: number): void {
@@ -60,6 +40,20 @@ export class PhysicsSystem {
       .setCollisionGroups((GROUP_STATIC << 16) | (GROUP_PLAYER | GROUP_BOX))
       .setFriction(0.7)
       .setRestitution(0.1);
+    this.world.createCollider(colliderDesc, body);
+  }
+
+  /** Static cuboid tilted around the X axis (radians) — used for sloped surfaces like the cargo ramp. */
+  createStaticCuboidRotatedX(x: number, y: number, z: number, hx: number, hy: number, hz: number, rotX: number, friction = 0.7): void {
+    const quat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), rotX);
+    const bodyDesc = RAPIER.RigidBodyDesc.fixed()
+      .setTranslation(x, y, z)
+      .setRotation({ x: quat.x, y: quat.y, z: quat.z, w: quat.w });
+    const body = this.world.createRigidBody(bodyDesc);
+    const colliderDesc = RAPIER.ColliderDesc.cuboid(hx, hy, hz)
+      .setCollisionGroups((GROUP_STATIC << 16) | (GROUP_PLAYER | GROUP_BOX))
+      .setFriction(friction)
+      .setRestitution(0.05);
     this.world.createCollider(colliderDesc, body);
   }
 
@@ -87,13 +81,29 @@ export class PhysicsSystem {
     return this.world.createRigidBody(desc);
   }
 
+  /** Kinematic body descriptor — for things moved by scripted position
+   * updates (not physics forces) that still need attached colliders to
+   * follow them, e.g. a vehicle driving in/out along a fixed path. */
+  createKinematicBodyDesc(x: number, y: number, z: number): RAPIER.RigidBodyDesc {
+    return RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, y, z);
+  }
+
+  createKinematicBody(desc: RAPIER.RigidBodyDesc): RAPIER.RigidBody {
+    return this.world.createRigidBody(desc);
+  }
+
+  /** Removes a body and all colliders attached to it. */
+  removeRigidBody(body: RAPIER.RigidBody): void {
+    this.world.removeRigidBody(body);
+  }
+
   private createPlayer(): void {
     const radius = 0.35;
     const halfHeight = 0.55; // total capsule height ~1.8m
     const startY = SCENE_CONFIG.playerEyeHeight;
 
     const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased()
-      .setTranslation(0, startY - 0.3, 0);
+      .setTranslation(PLAYER_SPAWN.x, startY - 0.3, PLAYER_SPAWN.z);
     this.playerBody = this.world.createRigidBody(bodyDesc);
 
     const colliderDesc = RAPIER.ColliderDesc.capsule(halfHeight, radius)
@@ -171,9 +181,43 @@ export class PhysicsSystem {
     const shape = new RAPIER.Cuboid(halfExtents.x - 0.01, halfExtents.y - 0.01, halfExtents.z - 0.01);
     const shapePos = { x: position.x, y: position.y, z: position.z };
     const shapeRot = { x: 0, y: 0, z: 0, w: 1 };
-    const hit = this.world.intersectionWithShape(shapePos, shapeRot, shape, undefined, 
+    const hit = this.world.intersectionWithShape(shapePos, shapeRot, shape, undefined,
       (GROUP_STATIC | GROUP_BOX) // filter: only collide with static + boxes
     );
     return hit !== null;
+  }
+
+  /** Swept shape cast against FIXED scene geometry only (walls/glass/counter/
+   * furniture — GROUP_STATIC), used to clamp a kinematic body's intended
+   * per-frame movement so it can't be teleported straight through solid
+   * geometry. Returns the fraction (0..1) of `movement` that's actually
+   * safe to apply — 1 if the full move is clear, 0 if already blocked. */
+  castShapeMove(position: THREE.Vector3, rotation: THREE.Quaternion, halfExtents: THREE.Vector3, movement: THREE.Vector3): number {
+    if (!this.initialized) return 1;
+    const totalDist = movement.length();
+    if (totalDist < 1e-6) return 1;
+
+    const shape = new RAPIER.Cuboid(halfExtents.x, halfExtents.y, halfExtents.z);
+    const shapePos = { x: position.x, y: position.y, z: position.z };
+    const shapeRot = { x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w };
+    const shapeVel = { x: movement.x, y: movement.y, z: movement.z };
+
+    // Rapier query filter groups are packed as (membership << 16) | filter,
+    // same as collider.setCollisionGroups() — a bare bitmask (as the older
+    // castShape()/intersectionWithShape() above uses) silently matches
+    // nothing. Static walls declare membership=GROUP_STATIC and
+    // filter=(PLAYER|BOX), so querying with membership=GROUP_BOX and
+    // filter=GROUP_STATIC satisfies the symmetric test on both sides —
+    // matches only fixed scene geometry, not the player or other loose cargo.
+    const hit = this.world.castShape(
+      shapePos, shapeRot, shapeVel, shape,
+      0.0, 1.0, true,
+      undefined, (GROUP_BOX << 16) | GROUP_STATIC
+    );
+    if (!hit) return 1;
+
+    const margin = 0.03; // stop a little short of actual contact, not flush against it
+    const allowedDist = Math.max(0, totalDist * hit.time_of_impact - margin);
+    return allowedDist / totalDist;
   }
 }

@@ -30,12 +30,12 @@ export interface SortingBoxConfig {
   posZ: number;
 }
 
-// Positions: right side of room, on the GROUND, away from tables
+// Positions: back-area work furniture cluster, past the stamp tables (see logistics-layout-data.ts)
 export const SORTING_BOX_CONFIGS: SortingBoxConfig[] = [
-  { boxId: 'sortbox-taichung', destinationId: 'taichung-city', posX: 4.0, posZ: 2.0 },
-  { boxId: 'sortbox-taipei', destinationId: 'taipei-city', posX: 5.3, posZ: 2.0 },
-  { boxId: 'sortbox-japan', destinationId: 'japan', posX: 4.0, posZ: 3.5 },
-  { boxId: 'sortbox-usa', destinationId: 'united-states', posX: 5.3, posZ: 3.5 },
+  { boxId: 'sortbox-taichung', destinationId: 'taichung-city', posX: -9.3, posZ: 19.0 },
+  { boxId: 'sortbox-taipei', destinationId: 'taipei-city', posX: -6.7, posZ: 19.0 },
+  { boxId: 'sortbox-japan', destinationId: 'japan', posX: -9.3, posZ: 19.8 },
+  { boxId: 'sortbox-usa', destinationId: 'united-states', posX: -6.7, posZ: 19.8 },
 ];
 
 export function createSortingBoxData(config: SortingBoxConfig): SortingBoxData {

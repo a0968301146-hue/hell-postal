@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { createTestScene, SCENE_CONFIG } from './scene-manager';
+import { createLogisticsScene, SCENE_CONFIG } from './scene-manager';
 import { PhysicsSystem } from './physics-system';
 import { PlayerController } from './player-controller';
 import { InteractionSystem } from './interaction-system';
@@ -13,6 +13,13 @@ import { EnvelopeSystem } from './envelope-system';
 import { EnvelopeStampStation } from './envelope-stamp-station';
 import { SortingBoxSystem } from './sorting-box-system';
 import { MailSortingSystem } from './mail-sorting-system';
+import { CargoSystem } from './cargo-system';
+import { DollySystem } from './dolly-system';
+import { VehicleControlSystem } from './vehicle-control-system';
+import { ConveyorSystem } from './conveyor-system';
+import { CounterNpcSystem } from './counter-npc-system';
+import { CounterServiceSystem } from './counter-service-system';
+import { CompassUI } from './compass-ui';
 
 export class Game {
   private worldScene: THREE.Scene;
@@ -33,6 +40,13 @@ export class Game {
   private mailSortingSystem!: MailSortingSystem;
   private stampMinigame: StampMinigame | null = null;
   private packageDataMap!: Map<string, PackageData>;
+  private cargoSystem!: CargoSystem;
+  private dollySystem!: DollySystem;
+  private vehicleControlSystem!: VehicleControlSystem;
+  private conveyorSystem!: ConveyorSystem;
+  private counterNpcSystem!: CounterNpcSystem;
+  private counterServiceSystem!: CounterServiceSystem;
+  private compassUI!: CompassUI;
 
   constructor() {
     this.worldScene = new THREE.Scene();
@@ -57,7 +71,7 @@ export class Game {
 
     this.hud = new HUD();
     this.playerData = createPlayerInteractionData();
-    const sceneData = createTestScene(this.worldScene, this.physics);
+    const sceneData = createLogisticsScene(this.worldScene, this.physics);
     this.interactables = sceneData.interactables;
 
     // Build packageDataMap from interactables
@@ -81,8 +95,28 @@ export class Game {
       this.mailBagSystem, this.interactables, this.physics, this.envelopeSystem.envelopeDataMap, this.hud
     );
 
+    // Normal cargo prototype (spawned before pickupSystem so surfaces below register cleanly)
+    this.cargoSystem = new CargoSystem(this.worldScene, this.physics, this.interactables);
+
+    // Back-area flatbed dolly — pushable, not hand-carried (see dolly-system.ts)
+    this.dollySystem = new DollySystem(this.worldScene, this.physics, this.interactables, this.cargoSystem);
+
+    // Conveyor belt: drives cargo down the ramp from the window to the back area
+    this.conveyorSystem = new ConveyorSystem(
+      this.interactables, sceneData.ramp.topPos, sceneData.ramp.bottomPos, sceneData.ramp.width,
+      sceneData.ramp.mesh.userData.conveyorTexture ?? null
+    );
+
+    // Counter NPC service prototype (front office)
+    this.counterNpcSystem = new CounterNpcSystem(this.worldScene);
+    this.counterServiceSystem = new CounterServiceSystem(
+      this.worldScene, this.physics, this.interactables, this.counterNpcSystem, this.hud
+    );
+
+    this.compassUI = new CompassUI();
+
     // Player controller
-    this.playerController = new PlayerController(this.camera, this.renderer.domElement, this.hud, this.physics);
+    this.playerController = new PlayerController(this.camera, this.renderer.domElement, this.hud, this.physics, this.playerData);
 
     // Pickup system
     this.pickupSystem = new PickupSystem(
@@ -93,6 +127,14 @@ export class Game {
     this.pickupSystem.addPlacementSurface(this.stampStation.tableTopMesh);
     this.pickupSystem.addPlacementSurface(this.envelopeStation.tableTopMesh);
 
+    // Register the back-area floor, pier deck and the conveyor ramp itself
+    // (so players can precisely place cargo onto its high end, not just
+    // throw it through the window) — a docked vehicle registers/deregisters
+    // its own cargo bed surface as it comes and goes.
+    this.pickupSystem.addPlacementSurface(sceneData.backFloor);
+    this.pickupSystem.addPlacementSurface(sceneData.pierFloor);
+    this.pickupSystem.addPlacementSurface(sceneData.ramp.mesh);
+
     // Register sorting box interior planes as placement surfaces
     for (const plane of this.mailBagSystem.interiorPlanes.values()) {
       this.pickupSystem.addPlacementSurface(plane);
@@ -101,6 +143,16 @@ export class Game {
     if (this.envelopeSystem.interiorPlane) {
       this.pickupSystem.addPlacementSurface(this.envelopeSystem.interiorPlane);
     }
+    // Register the dolly's platform top as a placement surface — lets
+    // players precisely place cargo onto it without pushing it around
+    this.pickupSystem.addPlacementSurface(this.dollySystem.platformTopMesh);
+
+    // Vehicle spawn/depart control (hall center) — needs pickupSystem to
+    // register/deregister the cargo bed surface as vehicles come and go
+    this.vehicleControlSystem = new VehicleControlSystem(
+      this.worldScene, this.physics, this.interactables, this.cargoSystem, this.pickupSystem, this.hud,
+      (paused) => this.setPaused(paused)
+    );
 
     // Interaction system
     this.interactionSystem = new InteractionSystem(
@@ -111,7 +163,10 @@ export class Game {
       this.envelopeSystem,
       this.envelopeStation,
       () => this.startEnvelopeMinigame(),
-      this.mailBagSystem
+      this.mailBagSystem,
+      this.vehicleControlSystem,
+      this.counterServiceSystem,
+      this.dollySystem
     );
 
     this.clock.start();
@@ -187,20 +242,40 @@ export class Game {
     });
   }
 
+  /** Vehicle settlement pause — mirrors the stamp-minigame pattern: exit
+   * pointer lock (stops mouse-look, frees the cursor for the settlement
+   * panel's button) and gate the whole per-frame update block below via
+   * playerData.state, which also naturally blocks pickup/placement/throw
+   * and every station's E-key interaction. */
+  private setPaused(paused: boolean): void {
+    if (paused) {
+      this.playerData.state = 'vehicle-settlement';
+      this.playerController.setInputEnabled(false);
+      document.exitPointerLock();
+    } else {
+      this.playerData.state = 'empty-handed';
+      this.playerData.heldObjectId = null;
+      this.playerController.setInputEnabled(true);
+      this.hud.showInstructions();
+    }
+  }
+
   private loop(): void {
     requestAnimationFrame(() => this.loop());
 
     let deltaTime = this.clock.getDelta();
     if (deltaTime > SCENE_CONFIG.deltaTimeMax) deltaTime = SCENE_CONFIG.deltaTimeMax;
 
-    // Skip game updates during minigame
-    if (this.playerData.state !== 'stamping-minigame') {
+    // Skip game updates during a minigame or a vehicle-settlement pause
+    if (this.playerData.state !== 'stamping-minigame' && this.playerData.state !== 'vehicle-settlement') {
       this.playerController.update(deltaTime);
       this.physics.update(deltaTime);
 
-      // Sync box meshes to physics bodies
+      // Sync box meshes to physics bodies (skip disabled bodies — e.g. cargo
+      // that has been pinned for departure and is being manually animated
+      // by VehicleControlSystem's departure sequence instead)
       for (const obj of this.interactables.values()) {
-        if (!obj.isHeld && obj.rigidBody && obj.mesh.visible) {
+        if (!obj.isHeld && obj.rigidBody && obj.mesh.visible && obj.rigidBody.isEnabled()) {
           // For bottom-origin containers, offset Y by -height/2
           if (obj.mesh.userData.bottomOrigin || obj.mesh.userData.crateId) {
             const t = obj.rigidBody.translation();
@@ -218,7 +293,18 @@ export class Game {
       this.stampStation.update(deltaTime);
       this.envelopeStation.update(deltaTime);
       this.mailSortingSystem.update(deltaTime);
+      this.vehicleControlSystem.update(deltaTime);
+      if (this.dollySystem.isPushing) {
+        const forward = new THREE.Vector3();
+        this.camera.getWorldDirection(forward);
+        this.dollySystem.update(this.camera.position, forward);
+      }
+      this.conveyorSystem.update(deltaTime);
+      this.counterNpcSystem.update(deltaTime);
+      this.counterServiceSystem.update(deltaTime);
     }
+
+    this.compassUI.update(this.camera);
 
     // Render
     this.renderer.clear();

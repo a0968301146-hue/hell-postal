@@ -6,6 +6,9 @@ import { StampStation } from './stamp-station';
 import { EnvelopeSystem } from './envelope-system';
 import { EnvelopeStampStation } from './envelope-stamp-station';
 import { SortingBoxSystem } from './sorting-box-system';
+import { VehicleControlSystem } from './vehicle-control-system';
+import { CounterServiceSystem } from './counter-service-system';
+import { DollySystem } from './dolly-system';
 import { HUD } from './hud';
 
 export class InteractionSystem {
@@ -23,6 +26,9 @@ export class InteractionSystem {
   private envelopeStation: EnvelopeStampStation;
   private onStartEnvelopeMinigame: () => void;
   private sortingBoxSystem: SortingBoxSystem;
+  private vehicleControlSystem: VehicleControlSystem;
+  private counterServiceSystem: CounterServiceSystem;
+  private dollySystem: DollySystem;
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -36,7 +42,10 @@ export class InteractionSystem {
     envelopeSystem: EnvelopeSystem,
     envelopeStation: EnvelopeStampStation,
     onStartEnvelopeMinigame: () => void,
-    sortingBoxSystem: SortingBoxSystem
+    sortingBoxSystem: SortingBoxSystem,
+    vehicleControlSystem: VehicleControlSystem,
+    counterServiceSystem: CounterServiceSystem,
+    dollySystem: DollySystem
   ) {
     this.raycaster = new THREE.Raycaster();
     this.camera = camera;
@@ -51,6 +60,9 @@ export class InteractionSystem {
     this.envelopeStation = envelopeStation;
     this.onStartEnvelopeMinigame = onStartEnvelopeMinigame;
     this.sortingBoxSystem = sortingBoxSystem;
+    this.vehicleControlSystem = vehicleControlSystem;
+    this.counterServiceSystem = counterServiceSystem;
+    this.dollySystem = dollySystem;
 
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
   }
@@ -79,6 +91,14 @@ export class InteractionSystem {
     if (event.code !== 'KeyE') return;
 
     if (this.playerData.state === 'placement-preview' || this.playerData.state === 'stamping-minigame') return;
+
+    // Pushing a dolly: E always means "let go", regardless of proximity —
+    // checked before the empty-handed guard below since 'pushing-dolly' isn't 'empty-handed'.
+    if (this.playerData.state === 'pushing-dolly') {
+      this.dollySystem.stopPush();
+      this.playerData.state = 'empty-handed';
+      return;
+    }
 
     if (this.playerData.state === 'holding-item') {
       // Check if aiming at sorting box interior - direct placement
@@ -135,6 +155,32 @@ export class InteractionSystem {
       return;
     }
 
+    // Priority 4: vehicle call/depart buttons — the three sit close enough
+    // together that a naive per-button proximity check would overlap;
+    // resolve to whichever one the player is actually nearer to.
+    const nearestVehicleButton = this.vehicleControlSystem.getNearestButton(this.camera.position);
+    if (nearestVehicleButton === 'land' || nearestVehicleButton === 'sea') {
+      this.vehicleControlSystem.pressCallButton(nearestVehicleButton);
+      return;
+    }
+    if (nearestVehicleButton === 'depart') {
+      this.vehicleControlSystem.pressDepartButton();
+      return;
+    }
+
+    // Priority 5: counter open-for-business button
+    if (this.counterServiceSystem.isPlayerNear(this.camera.position)) {
+      this.counterServiceSystem.pressButton();
+      return;
+    }
+
+    // Priority 6: start pushing the dolly
+    if (this.dollySystem.isPlayerNear(this.camera.position)) {
+      this.dollySystem.startPush();
+      this.playerData.state = 'pushing-dolly';
+      return;
+    }
+
     if (this.checkFarTarget()) {
       this.hud.showTooFar();
     }
@@ -165,6 +211,17 @@ export class InteractionSystem {
         this.currentTarget = null;
         this.playerData.targetedObjectId = null;
       }
+      return;
+    }
+
+    if (this.playerData.state === 'pushing-dolly') {
+      if (this.currentTarget) {
+        this.clearHighlight(this.currentTarget);
+        this.currentTarget = null;
+        this.playerData.targetedObjectId = null;
+      }
+      this.hud.showInteractionPrompt('拖板車', '按 E 放開');
+      this.hud.setCrosshairActive(true);
       return;
     }
 
@@ -243,6 +300,49 @@ export class InteractionSystem {
         this.hud.showInteractionPrompt('貼郵票工作桌', '請先將包裹放到桌面');
         this.hud.setCrosshairActive(false);
       }
+      return;
+    }
+
+    // Vehicle call/depart buttons — same nearest-button resolution as onKeyDown
+    const nearestVehicleButton = this.vehicleControlSystem.getNearestButton(this.camera.position);
+    if (nearestVehicleButton === 'land' || nearestVehicleButton === 'sea') {
+      const label = nearestVehicleButton === 'land' ? '呼叫陸運' : '呼叫海運';
+      if (this.vehicleControlSystem.state === 'absent') {
+        this.hud.showInteractionPrompt(label, '按 E 呼叫載具');
+        this.hud.setCrosshairActive(true);
+      } else {
+        this.hud.showInteractionPrompt(label, this.vehicleControlSystem.blockedCallMessage());
+        this.hud.setCrosshairActive(false);
+      }
+      return;
+    }
+    if (nearestVehicleButton === 'depart') {
+      if (this.vehicleControlSystem.state === 'docked') {
+        this.hud.showInteractionPrompt('載具出發', '按 E 讓載具離場');
+        this.hud.setCrosshairActive(true);
+      } else {
+        this.hud.showInteractionPrompt('載具出發', this.vehicleControlSystem.blockedDepartMessage());
+        this.hud.setCrosshairActive(false);
+      }
+      return;
+    }
+
+    // Counter open-for-business button
+    if (this.counterServiceSystem.isPlayerNear(this.camera.position)) {
+      if (this.counterServiceSystem.phase === 'open') {
+        this.hud.showInteractionPrompt('開業按鈕', '營業中...');
+        this.hud.setCrosshairActive(false);
+      } else {
+        this.hud.showInteractionPrompt('開業按鈕', '按 E 開始營業');
+        this.hud.setCrosshairActive(true);
+      }
+      return;
+    }
+
+    // Flatbed dolly — parked, not currently being pushed
+    if (this.dollySystem.isPlayerNear(this.camera.position)) {
+      this.hud.showInteractionPrompt('拖板車', '按 E 推行');
+      this.hud.setCrosshairActive(true);
       return;
     }
 

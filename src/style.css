@@ -17,6 +17,34 @@ canvas {
   height: 100%;
 }
 
+/* Compass */
+#compass {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  z-index: 101;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-family: sans-serif;
+  color: #ffffff;
+  text-align: center;
+  user-select: none;
+}
+
+#compass-heading {
+  font-size: 20px;
+  font-weight: bold;
+  line-height: 1.1;
+}
+
+#compass-degrees {
+  font-size: 11px;
+  color: #aaa;
+}
+
 /* HUD Container */
 #hud {
   position: fixed;
@@ -146,6 +174,70 @@ canvas {
   transition: width 0.05s linear;
 }
 
+
+/* Shipment / vehicle settlement panel — a pause-blocking overlay, so it
+ * needs pointer-events even though it lives inside the (pointer-events:none)
+ * #hud container. */
+#shipment-summary {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #ffffff;
+  font-family: sans-serif;
+  text-align: center;
+  background: rgba(10, 30, 15, 0.92);
+  border: 2px solid #66ff88;
+  border-radius: 10px;
+  padding: 22px 40px;
+  display: none;
+  pointer-events: all;
+  z-index: 200;
+}
+
+#shipment-summary.visible {
+  display: block;
+}
+
+#shipment-summary p {
+  margin: 4px 0;
+  font-size: 15px;
+}
+
+#shipment-summary .summary-title {
+  font-weight: bold;
+  font-size: 20px;
+  color: #66ff88;
+  margin-bottom: 10px;
+}
+
+#shipment-summary .summary-empty {
+  color: #ffcc66;
+  font-weight: bold;
+}
+
+#shipment-summary .summary-note {
+  font-size: 11px;
+  color: #aaa;
+  margin-top: 6px;
+}
+
+#settlement-continue-btn {
+  margin-top: 16px;
+  padding: 8px 28px;
+  font-size: 15px;
+  font-family: sans-serif;
+  font-weight: bold;
+  color: #0a1a0a;
+  background: #66ff88;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#settlement-continue-btn:hover {
+  background: #88ffaa;
+}
 
 /* Stamp Minigame Overlay */
 #stamp-minigame-overlay {

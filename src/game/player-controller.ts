@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { SCENE_CONFIG } from './scene-manager';
 import { PhysicsSystem } from './physics-system';
+import { PLAYER_SPAWN } from './counter-layout-data';
+import { DOLLY_PUSH_SPEED_MULTIPLIER } from './dolly-data';
+import { PlayerInteractionData } from './interactable-object';
 import { HUD } from './hud';
 
 export class PlayerController {
@@ -19,12 +22,16 @@ export class PlayerController {
   private verticalSpeed = 0;
   private grounded = true;
 
-  constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement, private hud: HUD, physics: PhysicsSystem) {
+  constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement, private hud: HUD, physics: PhysicsSystem, private playerData: PlayerInteractionData) {
     this.camera = camera;
     this.physics = physics;
     this.controls = new PointerLockControls(camera, domElement);
 
-    this.camera.position.set(0, SCENE_CONFIG.playerEyeHeight, 0);
+    this.camera.position.set(PLAYER_SPAWN.x, SCENE_CONFIG.playerEyeHeight, PLAYER_SPAWN.z);
+    // Face +Z at spawn: the logistics layout (window/ramp/back area/pier)
+    // extends toward +Z from the front-office spawn point, whereas a fresh
+    // THREE.PerspectiveCamera defaults to looking down -Z.
+    this.camera.rotation.y = Math.PI;
 
     domElement.addEventListener('click', () => {
       if (!this._isLocked) this.controls.lock();
@@ -92,7 +99,10 @@ export class PlayerController {
   update(deltaTime: number): void {
     if (!this._isLocked || !this._inputEnabled) return;
 
-    const speedMult = this.isSprinting ? SCENE_CONFIG.sprintMultiplier : 1;
+    // Pushing a dolly overrides sprinting — can't run while pushing a cart.
+    const speedMult = this.playerData.state === 'pushing-dolly'
+      ? DOLLY_PUSH_SPEED_MULTIPLIER
+      : (this.isSprinting ? SCENE_CONFIG.sprintMultiplier : 1);
     const speed = SCENE_CONFIG.playerSpeed * speedMult * deltaTime;
 
     // Get forward/right on XZ

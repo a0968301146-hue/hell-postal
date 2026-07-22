@@ -3,14 +3,19 @@ import { InteractableObject } from './interactable-object';
 import { PhysicsSystem } from './physics-system';
 import { PackageData } from './package-data';
 import { SCENE_CONFIG } from './scene-manager';
+import { BACK_AREA } from './logistics-layout-data';
+import { createFloatingLabel } from './world-label-system';
+
+const FLOOR_Y = BACK_AREA.floorY;
 
 export const STAMP_TABLE = {
   width: 2.4,
   depth: 1.8,
   height: 0.9,
   legWidth: 0.1,
-  posX: 0,
-  posZ: -6.0,
+  // Relocated into the back-area work furniture cluster (see logistics-layout-data.ts)
+  posX: -8,
+  posZ: 17.5,
 };
 
 export class StampStation {
@@ -37,13 +42,13 @@ export class StampStation {
 
     // Create table mesh
     this.tableMesh = this.createTableMesh();
-    this.tableMesh.position.set(STAMP_TABLE.posX, 0, STAMP_TABLE.posZ);
+    this.tableMesh.position.set(STAMP_TABLE.posX, FLOOR_Y, STAMP_TABLE.posZ);
     scene.add(this.tableMesh);
     // Force world matrix computation so raycaster works immediately
     this.tableMesh.updateMatrixWorld(true);
 
     // Create physics collider for table top
-    const tableY = STAMP_TABLE.height;
+    const tableY = FLOOR_Y + STAMP_TABLE.height;
     const topThickness = 0.06;
     physics.createStaticCuboid(
       STAMP_TABLE.posX, tableY - topThickness / 2, STAMP_TABLE.posZ,
@@ -58,13 +63,13 @@ export class StampStation {
     const positions = [[-hw, -hd], [hw, -hd], [-hw, hd], [hw, hd]];
     for (const [lx, lz] of positions) {
       physics.createStaticCuboid(
-        STAMP_TABLE.posX + lx, legH / 2, STAMP_TABLE.posZ + lz,
+        STAMP_TABLE.posX + lx, FLOOR_Y + legH / 2, STAMP_TABLE.posZ + lz,
         legHx, legH / 2, legHx
       );
     }
 
     // Sensor area above table
-    const sensorY = STAMP_TABLE.height;
+    const sensorY = FLOOR_Y + STAMP_TABLE.height;
     this.sensorBox = new THREE.Box3(
       new THREE.Vector3(
         STAMP_TABLE.posX - STAMP_TABLE.width / 2 + 0.1,
@@ -104,22 +109,9 @@ export class StampStation {
       group.add(leg);
     }
 
-    // Label
-    const labelCanvas = document.createElement('canvas');
-    labelCanvas.width = 256;
-    labelCanvas.height = 64;
-    const ctx = labelCanvas.getContext('2d')!;
-    ctx.fillStyle = '#FFF8DC';
-    ctx.fillRect(0, 0, 256, 64);
-    ctx.fillStyle = '#333';
-    ctx.font = 'bold 24px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('貼郵票工作桌', 128, 42);
-    const labelTex = new THREE.CanvasTexture(labelCanvas);
-    const labelGeo = new THREE.PlaneGeometry(0.8, 0.2);
-    const labelMat = new THREE.MeshBasicMaterial({ map: labelTex, transparent: true });
-    const labelMesh = new THREE.Mesh(labelGeo, labelMat);
-    labelMesh.position.set(0, STAMP_TABLE.height + 0.5, -STAMP_TABLE.depth / 2 + 0.01);
+    // Label — floating billboard, always faces the player
+    const labelMesh = createFloatingLabel('貼郵票工作桌', { width: 0.9 });
+    labelMesh.position.set(0, STAMP_TABLE.height + 0.5, 0);
     group.add(labelMesh);
 
     return group;
@@ -191,6 +183,6 @@ export class StampStation {
   }
 
   getWorkPoint(): THREE.Vector3 {
-    return new THREE.Vector3(STAMP_TABLE.posX, STAMP_TABLE.height + 0.01, STAMP_TABLE.posZ);
+    return new THREE.Vector3(STAMP_TABLE.posX, FLOOR_Y + STAMP_TABLE.height + 0.01, STAMP_TABLE.posZ);
   }
 }

@@ -5,6 +5,7 @@ export class HUD {
   private tooFarEl: HTMLElement;
   private chargeBarContainer: HTMLElement;
   private chargeBarFill: HTMLElement;
+  private shipmentSummaryEl: HTMLElement;
   private tooFarTimer: number | null = null;
 
   constructor() {
@@ -33,6 +34,10 @@ export class HUD {
     this.chargeBarFill.id = 'charge-bar-fill';
     this.chargeBarContainer.appendChild(this.chargeBarFill);
     hud.appendChild(this.chargeBarContainer);
+
+    this.shipmentSummaryEl = document.createElement('div');
+    this.shipmentSummaryEl.id = 'shipment-summary';
+    hud.appendChild(this.shipmentSummaryEl);
 
     this.instructionsEl = document.createElement('div');
     this.instructionsEl.id = 'instructions-panel';
@@ -94,5 +99,43 @@ export class HUD {
   hideChargeBar(): void {
     this.chargeBarContainer.classList.remove('visible');
     this.chargeBarFill.style.width = '0%';
+  }
+
+  /** Prototype-only vehicle settlement panel — stays open (game is paused
+   * behind it) until the player clicks 繼續. Shared by both land and sea
+   * departures; `transportType` is just a display label ('陸運'/'海運'). */
+  showVehicleSettlement(params: {
+    vehicleName: string;
+    transportType: string;
+    normalCount: number;
+    largeCount: number;
+    runScore: number;
+    totalScore: number;
+    onContinue: () => void;
+  }): void {
+    const { vehicleName, transportType, normalCount, largeCount, runScore, totalScore, onContinue } = params;
+    const total = normalCount + largeCount;
+    this.shipmentSummaryEl.innerHTML = `
+      <p class="summary-title">${vehicleName}已出發</p>
+      <p>運輸類型：${transportType}</p>
+      ${total === 0 ? '<p class="summary-empty">本次空載出發</p>' : ''}
+      <p>本次送出總件數：${total} 件</p>
+      <p>普通貨物：${normalCount} 件</p>
+      <p>大型貨物：${largeCount} 件</p>
+      <p>本次分數：${runScore}</p>
+      <p>累積分數：${totalScore}</p>
+      <p class="summary-note">（原型暫定計分，僅供測試，非正式規格）</p>
+      <button id="settlement-continue-btn">繼續</button>
+    `;
+    this.shipmentSummaryEl.classList.add('visible');
+    const btn = this.shipmentSummaryEl.querySelector('#settlement-continue-btn') as HTMLButtonElement;
+    btn.addEventListener('click', () => {
+      this.hideVehicleSettlement();
+      onContinue();
+    }, { once: true });
+  }
+
+  hideVehicleSettlement(): void {
+    this.shipmentSummaryEl.classList.remove('visible');
   }
 }

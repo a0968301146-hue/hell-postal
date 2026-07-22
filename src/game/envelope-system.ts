@@ -3,6 +3,10 @@ import { PhysicsSystem } from './physics-system';
 import { InteractableObject, createInteractableObject } from './interactable-object';
 import { EnvelopeData, createAllEnvelopes, createEnvelopeAddressLabel, createEnvelopeStampVisual } from './envelope-data';
 import { SCENE_CONFIG } from './scene-manager';
+import { BACK_AREA } from './logistics-layout-data';
+import { createFloatingLabel } from './world-label-system';
+
+const FLOOR_Y = BACK_AREA.floorY;
 
 // Envelope dimensions
 const ENV_WIDTH = 0.32;
@@ -10,8 +14,8 @@ const ENV_HEIGHT = 0.03;
 const ENV_DEPTH = 0.22;
 const ENV_HITPROXY_HEIGHT = 0.14; // thicker invisible proxy for raycasting
 
-// Crate config — positioned at least 2m from envelope table (-4, -6)
-const CRATE_POS = { x: -2, z: -4 };
+// Crate config — relocated into the back-area work furniture cluster (see logistics-layout-data.ts)
+const CRATE_POS = { x: -8, z: 12 };
 const CRATE_SIZE = { w: 0.8, h: 0.5, d: 0.6 };
 const CRATE_ID = 'incoming-envelope-crate';
 
@@ -76,7 +80,7 @@ export class EnvelopeSystem {
     mesh.userData.envelopeId = envData.envelopeId;
 
     const cratePos = this.crateObj.mesh.position;
-    mesh.position.set(cratePos.x, 1.5, cratePos.z);
+    mesh.position.set(cratePos.x, cratePos.y + 1.5, cratePos.z);
     this.scene.add(mesh);
 
     // Address label on top
@@ -120,7 +124,7 @@ export class EnvelopeSystem {
     // Physics body (use min collider height for stability)
     const colliderHalfH = Math.max(ENV_HEIGHT / 2, 0.02);
     const { body, collider } = this.physics.createBoxBody(
-      cratePos.x, 1.5, cratePos.z,
+      cratePos.x, cratePos.y + 1.5, cratePos.z,
       ENV_WIDTH / 2, colliderHalfH, ENV_DEPTH / 2,
       50
     );
@@ -166,7 +170,7 @@ export class EnvelopeSystem {
     const rootGeo = new THREE.BoxGeometry(0.001, 0.001, 0.001);
     const rootMeshMat = new THREE.MeshBasicMaterial({ visible: false });
     const crateMesh = new THREE.Mesh(rootGeo, rootMeshMat);
-    const startY = 0.005; // bottom-origin, just above floor
+    const startY = FLOOR_Y + 0.005; // bottom-origin, just above the back-area floor
     crateMesh.position.set(CRATE_POS.x, startY, CRATE_POS.z);
     crateMesh.userData.crateId = CRATE_ID;
     crateMesh.userData.bottomOrigin = true;
@@ -216,26 +220,8 @@ export class EnvelopeSystem {
     crateMesh.add(interiorPlane);
     this.interiorPlane = interiorPlane;
 
-    // Label on front face
-    const labelCanvas = document.createElement('canvas');
-    labelCanvas.width = 256;
-    labelCanvas.height = 128;
-    const ctx = labelCanvas.getContext('2d')!;
-    ctx.fillStyle = '#FFF8DC';
-    ctx.fillRect(0, 0, 256, 128);
-    ctx.strokeStyle = '#8B4513';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(3, 3, 250, 122);
-    ctx.fillStyle = '#333';
-    ctx.font = 'bold 22px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('待整理信封', 128, 55);
-    ctx.font = '16px sans-serif';
-    ctx.fillText(`剩餘: ${this.envelopeQueue.length} 封`, 128, 85);
-    const labelTex = new THREE.CanvasTexture(labelCanvas);
-    const labelGeo = new THREE.PlaneGeometry(0.5, 0.25);
-    const labelMat = new THREE.MeshBasicMaterial({ map: labelTex, transparent: true });
-    const labelMesh = new THREE.Mesh(labelGeo, labelMat);
+    // Label on front face — floating billboard, always faces the player
+    const labelMesh = createFloatingLabel(`待整理信封\n剩餘: ${this.envelopeQueue.length} 封`, { width: 0.5 });
     labelMesh.position.set(0, CRATE_SIZE.h * 0.55, CRATE_SIZE.d / 2 + 0.008);
     crateMesh.add(labelMesh);
 

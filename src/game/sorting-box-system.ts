@@ -6,9 +6,12 @@ import {
   SBOX_WIDTH, SBOX_DEPTH, SBOX_HEIGHT, SBOX_WALL_THICKNESS,
   createSortingBoxData
 } from './sorting-box-data';
+import { BACK_AREA } from './logistics-layout-data';
+import { createFloatingLabel } from './world-label-system';
 
 // Bottom plate thickness
 const BOTTOM_THICKNESS = 0.08;
+const FLOOR_Y = BACK_AREA.floorY;
 
 export class SortingBoxSystem {
   private scene: THREE.Scene;
@@ -77,7 +80,7 @@ export class SortingBoxSystem {
     this.boxes.set(data.boxId, data);
 
     const mesh = this.createOpenBoxMesh(data);
-    const rootY = 0.005;
+    const rootY = FLOOR_Y + 0.005;
     mesh.position.set(config.posX, rootY, config.posZ);
     mesh.userData.sortingBoxId = data.boxId;
     mesh.userData.bottomOrigin = true;
@@ -174,30 +177,20 @@ export class SortingBoxSystem {
     rightWall.position.set(hw - wt / 2, wallBaseY, 0);
     root.add(rightWall);
 
-    // Front label
-    const labelCanvas = document.createElement('canvas');
-    labelCanvas.width = 256; labelCanvas.height = 128;
-    const ctx = labelCanvas.getContext('2d')!;
-    ctx.fillStyle = '#FFFFF0'; ctx.fillRect(0, 0, 256, 128);
-    ctx.strokeStyle = '#333'; ctx.lineWidth = 3; ctx.strokeRect(3, 3, 250, 122);
-    ctx.fillStyle = '#222'; ctx.font = 'bold 24px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText(`${data.icon} ${data.destinationName}`, 128, 50);
-    ctx.font = '15px sans-serif'; ctx.fillText('分類箱', 128, 80);
-    const labelTex = new THREE.CanvasTexture(labelCanvas);
-    const labelGeo = new THREE.PlaneGeometry(0.5, 0.25);
-    const labelMeshMat = new THREE.MeshBasicMaterial({ map: labelTex, transparent: true });
-    const labelMesh = new THREE.Mesh(labelGeo, labelMeshMat);
+    // Front label — floating billboard, always faces the player
+    const labelMesh = createFloatingLabel(`${data.icon} ${data.destinationName}\n分類箱`, { width: 0.55 });
     labelMesh.position.set(0, SBOX_HEIGHT * 0.7, hd + 0.005);
     root.add(labelMesh);
 
-    // Count label
+    // Count label — also billboard, redrawn whenever the count changes
     const countCanvas = document.createElement('canvas');
     countCanvas.width = 128; countCanvas.height = 48;
     this.drawCountLabel(countCanvas, 0);
     const countTex = new THREE.CanvasTexture(countCanvas);
-    const countGeo = new THREE.PlaneGeometry(0.28, 0.09);
-    const countMat = new THREE.MeshBasicMaterial({ map: countTex, transparent: true });
-    const countMesh = new THREE.Mesh(countGeo, countMat);
+    const countMat = new THREE.SpriteMaterial({ map: countTex, transparent: true, depthWrite: false });
+    const countMesh = new THREE.Sprite(countMat);
+    countMesh.raycast = () => {}; // decorative only — see world-label-system.ts for why
+    countMesh.scale.set(0.32, 0.12, 1);
     countMesh.position.set(0, SBOX_HEIGHT * 0.45, hd + 0.005);
     root.add(countMesh);
     this.countTextures.set(data.boxId, { canvas: countCanvas, texture: countTex });

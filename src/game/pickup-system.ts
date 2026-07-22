@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { InteractableObject, PlayerInteractionData } from './interactable-object';
 import { SCENE_CONFIG } from './scene-manager';
+import { WORLD_BOUNDS } from './logistics-layout-data';
 import { PhysicsSystem } from './physics-system';
 import { HUD } from './hud';
 
@@ -76,6 +77,12 @@ export class PickupSystem {
     this.additionalSurfaces.push(surface);
   }
 
+  /** For surfaces that come and go, e.g. a vehicle's cargo bed while docked. */
+  removePlacementSurface(surface: THREE.Object3D): void {
+    const i = this.additionalSurfaces.indexOf(surface);
+    if (i !== -1) this.additionalSurfaces.splice(i, 1);
+  }
+
   get chargeRatio(): number {
     if (!this.isCharging) return 0;
     return Math.min(this.chargeTime / SCENE_CONFIG.maxChargeTime, 1);
@@ -139,7 +146,11 @@ export class PickupSystem {
     for (const envObj of this.interactables.values()) {
       if (envObj.id === container.id) continue;
       if (envObj.isHeld || !envObj.mesh.visible) continue;
-      if (envObj.height > 0.05) continue; // only envelopes
+      // Don't nest containers inside containers (sorting box/crate).
+      if (envObj.mesh.userData.sortingBoxId || envObj.mesh.userData.crateId) continue;
+      // Must physically fit within THIS container's own interior height —
+      // per-container (see containerBounds), not a fixed "envelopes only" cutoff.
+      if (envObj.height > bounds.innerHeight) continue;
 
       const envPos = envObj.mesh.position;
       // Check if envelope center is inside container
@@ -314,6 +325,14 @@ export class PickupSystem {
 
     this.heldViewBasePos.set(0, holdY, holdZ);
     this.heldViewMesh.position.copy(this.heldViewBasePos);
+
+    // Large cargo (up to 1.35m on an axis) would otherwise fill most of the
+    // screen at viewmodel distance — shrink the CLONE only (world size /
+    // collider are untouched) once it's clearly bigger than the biggest
+    // normal-cargo preset (0.6m, see cargo-data.ts CARGO_SIZE_LIMITS).
+    if (maxDim > 0.9) {
+      this.heldViewMesh.scale.setScalar(Math.max(0.5, 0.9 / maxDim));
+    }
 
     this.viewModelScene.add(this.heldViewMesh);
   }
@@ -613,7 +632,7 @@ export class PickupSystem {
     for (const s of this.additionalSurfaces) {
       if (!s.userData.interiorPlane && !s.userData.surfaceType) {
         surfaces.push(s);
-      } else if (s.userData.surfaceType === 'stamp-table' || s.userData.surfaceType === 'envelope-table') {
+      } else if (s.userData.surfaceType === 'stamp-table' || s.userData.surfaceType === 'envelope-table' || s.userData.surfaceType === 'cargo-ramp') {
         surfaces.push(s);
       }
     }
@@ -670,12 +689,11 @@ export class PickupSystem {
     const halfW = obj.width / 2;
     const halfH = obj.height / 2;
     const halfD = obj.depth / 2;
-    const roomHalfW = SCENE_CONFIG.roomWidth / 2;
-    const roomHalfD = SCENE_CONFIG.roomDepth / 2;
 
-    // Room bounds
-    if (position.x - halfW < -roomHalfW || position.x + halfW > roomHalfW ||
-        position.z - halfD < -roomHalfD || position.z + halfD > roomHalfD) return false;
+    // World bounds (see logistics-layout-data.ts — the playable area is no
+    // longer a single room centered at the origin, so this is a min/max box).
+    if (position.x - halfW < WORLD_BOUNDS.minX || position.x + halfW > WORLD_BOUNDS.maxX ||
+        position.z - halfD < WORLD_BOUNDS.minZ || position.z + halfD > WORLD_BOUNDS.maxZ) return false;
 
     // Player overlap
     const dx = position.x - this.camera.position.x;
