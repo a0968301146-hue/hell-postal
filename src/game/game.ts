@@ -6,9 +6,7 @@ import { InteractionSystem } from './interaction-system';
 import { PickupSystem } from './pickup-system';
 import { HUD } from './hud';
 import { createPlayerInteractionData, InteractableObject, PlayerInteractionData } from './interactable-object';
-import { StampStation } from './stamp-station';
 import { StampMinigame, MinigameResult } from './stamp-minigame';
-import { PackageData } from './package-data';
 import { EnvelopeSystem } from './envelope-system';
 import { EnvelopeStampStation } from './envelope-stamp-station';
 import { SortingBoxSystem } from './sorting-box-system';
@@ -20,6 +18,9 @@ import { ConveyorSystem } from './conveyor-system';
 import { CounterNpcSystem } from './counter-npc-system';
 import { CounterServiceSystem } from './counter-service-system';
 import { CompassUI } from './compass-ui';
+import { PauseManager } from './pause-manager';
+import { SettingsManager } from './settings-manager';
+import { ManualUI } from './manual-ui';
 
 export class Game {
   private worldScene: THREE.Scene;
@@ -33,13 +34,11 @@ export class Game {
   private clock: THREE.Clock;
   private interactables!: Map<string, InteractableObject>;
   private playerData!: PlayerInteractionData;
-  private stampStation!: StampStation;
   private envelopeStation!: EnvelopeStampStation;
   private envelopeSystem!: EnvelopeSystem;
   private mailBagSystem!: SortingBoxSystem;
   private mailSortingSystem!: MailSortingSystem;
   private stampMinigame: StampMinigame | null = null;
-  private packageDataMap!: Map<string, PackageData>;
   private cargoSystem!: CargoSystem;
   private dollySystem!: DollySystem;
   private vehicleControlSystem!: VehicleControlSystem;
@@ -47,6 +46,8 @@ export class Game {
   private counterNpcSystem!: CounterNpcSystem;
   private counterServiceSystem!: CounterServiceSystem;
   private compassUI!: CompassUI;
+  private pauseManager!: PauseManager;
+  private settingsManager!: SettingsManager;
 
   constructor() {
     this.worldScene = new THREE.Scene();
@@ -70,20 +71,11 @@ export class Game {
     await this.physics.init();
 
     this.hud = new HUD();
+    this.pauseManager = new PauseManager();
+    this.settingsManager = new SettingsManager(this.camera, this.renderer);
     this.playerData = createPlayerInteractionData();
     const sceneData = createLogisticsScene(this.worldScene, this.physics);
     this.interactables = sceneData.interactables;
-
-    // Build packageDataMap from interactables
-    this.packageDataMap = new Map();
-    for (const obj of this.interactables.values()) {
-      if (obj.packageData) {
-        this.packageDataMap.set(obj.id, obj.packageData);
-      }
-    }
-
-    // Stamp station (packages)
-    this.stampStation = new StampStation(this.worldScene, this.physics, this.interactables, this.packageDataMap);
 
     // Envelope system + station
     this.envelopeSystem = new EnvelopeSystem(this.worldScene, this.physics, this.interactables);
@@ -92,7 +84,8 @@ export class Game {
     // Mail sorting box system
     this.mailBagSystem = new SortingBoxSystem(this.worldScene, this.physics, this.interactables);
     this.mailSortingSystem = new MailSortingSystem(
-      this.mailBagSystem, this.interactables, this.physics, this.envelopeSystem.envelopeDataMap, this.hud
+      this.mailBagSystem, this.interactables, this.physics, this.envelopeSystem.envelopeDataMap, this.hud,
+      () => this.settingsManager.fireTutorialEvent('sorting')
     );
 
     // Normal cargo prototype (spawned before pickupSystem so surfaces below register cleanly)
@@ -104,7 +97,8 @@ export class Game {
     // Conveyor belt: drives cargo down the ramp from the window to the back area
     this.conveyorSystem = new ConveyorSystem(
       this.interactables, sceneData.ramp.topPos, sceneData.ramp.bottomPos, sceneData.ramp.width,
-      sceneData.ramp.mesh.userData.conveyorTexture ?? null
+      sceneData.ramp.mesh.userData.conveyorTexture ?? null,
+      () => this.settingsManager.fireTutorialEvent('conveyor')
     );
 
     // Counter NPC service prototype (front office)
@@ -116,15 +110,17 @@ export class Game {
     this.compassUI = new CompassUI();
 
     // Player controller
-    this.playerController = new PlayerController(this.camera, this.renderer.domElement, this.hud, this.physics, this.playerData);
+    this.playerController = new PlayerController(
+      this.camera, this.renderer.domElement, this.hud, this.physics, this.playerData, this.settingsManager
+    );
 
     // Pickup system
     this.pickupSystem = new PickupSystem(
-      this.camera, this.worldScene, this.playerData, this.interactables, this.hud, this.physics, sceneData.floor
+      this.camera, this.worldScene, this.playerData, this.interactables, this.hud, this.physics, sceneData.floor,
+      this.pauseManager, this.settingsManager
     );
 
-    // Register stamp table top as a placement surface
-    this.pickupSystem.addPlacementSurface(this.stampStation.tableTopMesh);
+    // Register the envelope stamp table top as a placement surface
     this.pickupSystem.addPlacementSurface(this.envelopeStation.tableTopMesh);
 
     // Register the back-area floor, pier deck and the conveyor ramp itself
@@ -151,54 +147,52 @@ export class Game {
     // register/deregister the cargo bed surface as vehicles come and go
     this.vehicleControlSystem = new VehicleControlSystem(
       this.worldScene, this.physics, this.interactables, this.cargoSystem, this.pickupSystem, this.hud,
-      (paused) => this.setPaused(paused)
+      (paused) => this.setPaused(paused),
+      (config) => this.settingsManager.markVehicleDiscovered(config.id),
+      () => this.settingsManager.fireTutorialEvent('cargoLoaded'),
+      () => this.settingsManager.fireTutorialEvent('vehicleDeparted')
     );
 
     // Interaction system
     this.interactionSystem = new InteractionSystem(
       this.camera, this.interactables, this.playerData, this.pickupSystem, this.hud,
       () => this.playerController.isLocked,
-      this.stampStation,
-      () => this.startStampMinigame(),
       this.envelopeSystem,
       this.envelopeStation,
       () => this.startEnvelopeMinigame(),
       this.mailBagSystem,
       this.vehicleControlSystem,
       this.counterServiceSystem,
-      this.dollySystem
+      this.dollySystem,
+      this.pauseManager,
+      this.settingsManager
     );
+
+    // 異世界物流手冊 — pause menu / tutorial / settings / codex (spec round).
+    // Not stored on the instance: nothing else in Game needs to reference
+    // it after construction (it manages its own DOM/listeners internally).
+    new ManualUI(this.pauseManager, this.settingsManager, this.hud, () => this.interruptPlayerActions());
 
     this.clock.start();
     this.loop();
   }
 
-  private startStampMinigame(): void {
-    if (!this.stampStation.readyPackageId) return;
-    const obj = this.interactables.get(this.stampStation.readyPackageId);
-    if (!obj || !obj.packageData) return;
-
-    // Enter minigame state
-    this.playerData.state = 'stamping-minigame';
-    this.playerController.setInputEnabled(false);
-
-    // Fix box on table
-    if (obj.rigidBody) {
-      obj.rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
-      obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
-      this.physics.setBodyEnabled(obj.rigidBody, false);
+  /** Called when the manual opens, so a mid-hold/mid-placement/mid-push
+   * action doesn't sit frozen-but-still-technically-active behind the book
+   * (spec 二: "玩家停止目前操作"). Each call is self-guarding (no-op if that
+   * state isn't currently active), so it's safe to call unconditionally. */
+  private interruptPlayerActions(): void {
+    if (this.playerData.state === 'placement-preview') this.pickupSystem.cancelPlacement();
+    if (this.playerData.state === 'holding-item') this.pickupSystem.forceDropHeld();
+    if (this.playerData.state === 'pushing-dolly') {
+      this.dollySystem.stopPush();
+      this.playerData.state = 'empty-handed';
     }
-
-    // Unlock pointer for minigame UI
-    document.exitPointerLock();
-
-    this.stampMinigame = new StampMinigame(obj.packageData, obj, (result: MinigameResult) => {
-      this.endStampMinigame(obj, result);
-    });
   }
 
   private endStampMinigame(obj: InteractableObject, _result: MinigameResult): void {
     if (this.stampMinigame) this.stampMinigame = null;
+    this.pauseManager.remove('stampMinigame');
 
     // Restore package to world - fully interactable
     obj.mesh.visible = true;
@@ -226,7 +220,10 @@ export class Game {
     const obj = this.interactables.get(this.envelopeStation.readyEnvelopeId);
     if (!obj || !obj.packageData) return;
 
+    this.settingsManager.fireTutorialEvent('stamp');
+
     this.playerData.state = 'stamping-minigame';
+    this.pauseManager.add('stampMinigame');
     this.playerController.setInputEnabled(false);
 
     if (obj.rigidBody) {
@@ -250,11 +247,13 @@ export class Game {
   private setPaused(paused: boolean): void {
     if (paused) {
       this.playerData.state = 'vehicle-settlement';
+      this.pauseManager.add('settlement');
       this.playerController.setInputEnabled(false);
       document.exitPointerLock();
     } else {
       this.playerData.state = 'empty-handed';
       this.playerData.heldObjectId = null;
+      this.pauseManager.remove('settlement');
       this.playerController.setInputEnabled(true);
       this.hud.showInstructions();
     }
@@ -266,8 +265,9 @@ export class Game {
     let deltaTime = this.clock.getDelta();
     if (deltaTime > SCENE_CONFIG.deltaTimeMax) deltaTime = SCENE_CONFIG.deltaTimeMax;
 
-    // Skip game updates during a minigame or a vehicle-settlement pause
-    if (this.playerData.state !== 'stamping-minigame' && this.playerData.state !== 'vehicle-settlement') {
+    // Skip game updates while ANY pause reason is active (minigame,
+    // settlement, or the manual) — see pause-manager.ts.
+    if (!this.pauseManager.isPaused) {
       this.playerController.update(deltaTime);
       this.physics.update(deltaTime);
 
@@ -290,7 +290,6 @@ export class Game {
 
       this.interactionSystem.update();
       this.pickupSystem.update(deltaTime);
-      this.stampStation.update(deltaTime);
       this.envelopeStation.update(deltaTime);
       this.mailSortingSystem.update(deltaTime);
       this.vehicleControlSystem.update(deltaTime);
@@ -314,9 +313,17 @@ export class Game {
   }
 
   private onResize(): void {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
-    this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    // Delegates to SettingsManager once it exists — a FIXED resolution
+    // preset (spec 八) deliberately does NOT track window resizes, only
+    // 'native' does. Falls back to the old always-track-window behavior
+    // during the brief window before start() has run.
+    if (this.settingsManager) {
+      this.settingsManager.onWindowResize();
+    } else {
+      this.camera.aspect = window.innerWidth / window.innerHeight;
+      this.camera.updateProjectionMatrix();
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
+    }
     if (this.pickupSystem) this.pickupSystem.onResize();
   }
 }

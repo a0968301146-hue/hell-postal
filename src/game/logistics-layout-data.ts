@@ -126,8 +126,8 @@ export const WORLD_BOUNDS = {
 /** Vehicle control post — hall center, reachable from the front-office door,
  * the package work zone and both dock areas without blocking the main
  * cargo-carrying paths (sits in the gap between the cargo-zone row and the
- * land dock). Three buttons sit side by side here, `spacing` apart:
- * 呼叫陸運 (centerX - spacing) / 呼叫海運 (centerX) / 載具出發 (centerX + spacing). */
+ * land dock). Two buttons sit side by side here: 呼叫載具 (centerX -
+ * spacing/2, calls land AND sea together) / 載具出發 (centerX + spacing/2). */
 export const VEHICLE_CONTROL_POS = { centerX: 0, centerZ: 25.5, spacing: 1.4 };
 
 /** How many normal-cargo boxes to spawn in each area, and where — kept
@@ -153,3 +153,18 @@ export const LARGE_CARGO_SPAWN_POSITIONS = [
   { x: -4.4, z: 22.7 },
   { x: -2.8, z: 22.7 },
 ];
+
+/** Fixed spawn spots for the labeling-system test cargo (spec 九) — placed
+ * in the open floor east of the large-cargo zone but west of the vehicle
+ * control posts, clear of the NPC area, player spawn, doorway/stairs,
+ * conveyor exit, control buttons and the dolly's parked position (7,16).
+ * 0.9m spacing comfortably separates every footprint here (normal/fragile
+ * cargo maxes out at 0.6m, the one large item at 1.35m — positioned with
+ * extra room on its own row). */
+export const LABELED_CARGO_SPAWN_POSITIONS = {
+  domesticFragile: [{ x: -1.2, z: 21.4 }, { x: -0.2, z: 21.4 }],
+  overseasNormal: [{ x: -1.2, z: 22.4 }, { x: -0.2, z: 22.4 }],
+  overseasFragile: [{ x: -1.2, z: 23.4 }],
+  overseasLarge: [{ x: 1.6, z: 22.0 }],
+  overseasLargeFragile: [{ x: 1.6, z: 23.8 }],
+};

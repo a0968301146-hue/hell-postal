@@ -21,19 +21,22 @@ export class MailSortingSystem {
   private envelopeDataMap: Map<string, EnvelopeData>;
   private hud: HUD;
   private pending: Map<string, PendingSort> = new Map();
+  private onFirstSort?: () => void;
 
   constructor(
     sortingBoxSystem: SortingBoxSystem,
     interactables: Map<string, InteractableObject>,
     physics: PhysicsSystem,
     envelopeDataMap: Map<string, EnvelopeData>,
-    hud: HUD
+    hud: HUD,
+    onFirstSort?: () => void
   ) {
     this.sortingBoxSystem = sortingBoxSystem;
     this.interactables = interactables;
     this.physics = physics;
     this.envelopeDataMap = envelopeDataMap;
     this.hud = hud;
+    this.onFirstSort = onFirstSort;
   }
 
   /** Called every frame to check envelopes inside sorting boxes */
@@ -131,6 +134,7 @@ export class MailSortingSystem {
     envData.isSorted = true;
     envData.sortedBagId = boxId;
     this.sortingBoxSystem.recordSort(boxId, envelopeId);
+    this.onFirstSort?.();
 
     // Disable envelope physics and make non-interactable
     const obj = this.interactables.get(envelopeId);

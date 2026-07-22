@@ -4,6 +4,8 @@ import { SCENE_CONFIG } from './scene-manager';
 import { WORLD_BOUNDS } from './logistics-layout-data';
 import { PhysicsSystem } from './physics-system';
 import { HUD } from './hud';
+import { PauseManager } from './pause-manager';
+import { SettingsManager } from './settings-manager';
 
 export class PickupSystem {
   private camera: THREE.PerspectiveCamera;
@@ -13,6 +15,11 @@ export class PickupSystem {
   private hud: HUD;
   private physics: PhysicsSystem;
   private floor: THREE.Mesh;
+  private pauseManager: PauseManager;
+  private settingsManager: SettingsManager;
+  private hasFiredFirstPickup = false;
+  private hasFiredCounterReceive = false;
+  private hasFiredCargoLabelSeen = false;
 
   // ViewModel
   viewModelScene: THREE.Scene;
@@ -40,7 +47,9 @@ export class PickupSystem {
     interactables: Map<string, InteractableObject>,
     hud: HUD,
     physics: PhysicsSystem,
-    floor: THREE.Mesh
+    floor: THREE.Mesh,
+    pauseManager: PauseManager,
+    settingsManager: SettingsManager
   ) {
     this.camera = camera;
     this.worldScene = worldScene;
@@ -49,6 +58,8 @@ export class PickupSystem {
     this.hud = hud;
     this.physics = physics;
     this.floor = floor;
+    this.pauseManager = pauseManager;
+    this.settingsManager = settingsManager;
     this.placementRaycaster = new THREE.Raycaster();
 
     // ViewModel scene (separate from world)
@@ -93,6 +104,23 @@ export class PickupSystem {
     if (!obj || !obj.mesh) return;
     if (this.playerData.state !== 'empty-handed') return;
     if (!obj.canPickUp || obj.isHeld) return;
+
+    if (!this.hasFiredFirstPickup) {
+      this.hasFiredFirstPickup = true;
+      this.settingsManager.fireTutorialEvent('pickup');
+    }
+    if (!this.hasFiredCounterReceive && obj.id.startsWith('counter-')) {
+      this.hasFiredCounterReceive = true;
+      this.settingsManager.fireTutorialEvent('counterReceive');
+    }
+    // "辨識貨物標籤" unlocks on the first labeled-cargo pickup (spec 十三:
+    // "玩家第一次拿起有物流標籤的貨物") — cargo ids are always prefixed
+    // 'cargo-' by CargoSystem, envelopes/packages are not, so this can't
+    // misfire on picking up an envelope.
+    if (!this.hasFiredCargoLabelSeen && obj.id.startsWith('cargo-')) {
+      this.hasFiredCargoLabelSeen = true;
+      this.settingsManager.fireTutorialEvent('cargoLabelSeen');
+    }
 
     // If picking up a container, capture envelopes inside
     const isContainer = obj.mesh.userData.sortingBoxId || obj.mesh.userData.crateId;
@@ -748,6 +776,7 @@ export class PickupSystem {
 
   // --- INPUT ---
   private onMouseDown(event: MouseEvent): void {
+    if (this.pauseManager.isPaused) return;
     if (this.playerData.state === 'placement-preview') {
       if (event.button === 0 && this.previewValid) this.confirmPlacement();
       else if (event.button === 2) this.cancelPlacement();
@@ -755,14 +784,19 @@ export class PickupSystem {
   }
 
   private onKeyDown(event: KeyboardEvent): void {
+    if (this.pauseManager.isPaused) return;
     if (event.repeat) return;
-    if (event.code === 'KeyQ' && this.playerData.state === 'holding-item') {
+    if (this.settingsManager.inputBindings.matches('chargeThrow', event.code) && this.playerData.state === 'holding-item') {
       this.startCharge();
     }
   }
 
   private onKeyUp(event: KeyboardEvent): void {
-    if (event.code === 'KeyQ' && this.isCharging) {
+    // Deliberately NOT gated by pauseManager: if a charge was already in
+    // progress when the pause began, letting the matching keyup still
+    // resolve it (rather than leaving isCharging permanently stuck true)
+    // avoids a dangling charge bar after the manual/settlement UI closes.
+    if (this.settingsManager.inputBindings.matches('chargeThrow', event.code) && this.isCharging) {
       this.executeThrow();
     }
   }

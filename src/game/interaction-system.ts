@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { InteractableObject, PlayerInteractionData } from './interactable-object';
 import { SCENE_CONFIG } from './scene-manager';
 import { PickupSystem } from './pickup-system';
-import { StampStation } from './stamp-station';
 import { EnvelopeSystem } from './envelope-system';
 import { EnvelopeStampStation } from './envelope-stamp-station';
 import { SortingBoxSystem } from './sorting-box-system';
@@ -10,6 +9,8 @@ import { VehicleControlSystem } from './vehicle-control-system';
 import { CounterServiceSystem } from './counter-service-system';
 import { DollySystem } from './dolly-system';
 import { HUD } from './hud';
+import { PauseManager } from './pause-manager';
+import { SettingsManager } from './settings-manager';
 
 export class InteractionSystem {
   private raycaster: THREE.Raycaster;
@@ -20,8 +21,6 @@ export class InteractionSystem {
   private hud: HUD;
   private currentTarget: InteractableObject | null = null;
   private isLocked: () => boolean;
-  private stampStation: StampStation;
-  private onStartPackageMinigame: () => void;
   private envelopeSystem: EnvelopeSystem;
   private envelopeStation: EnvelopeStampStation;
   private onStartEnvelopeMinigame: () => void;
@@ -29,6 +28,8 @@ export class InteractionSystem {
   private vehicleControlSystem: VehicleControlSystem;
   private counterServiceSystem: CounterServiceSystem;
   private dollySystem: DollySystem;
+  private pauseManager: PauseManager;
+  private settingsManager: SettingsManager;
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -37,15 +38,15 @@ export class InteractionSystem {
     pickupSystem: PickupSystem,
     hud: HUD,
     isLockedFn: () => boolean,
-    stampStation: StampStation,
-    onStartPackageMinigame: () => void,
     envelopeSystem: EnvelopeSystem,
     envelopeStation: EnvelopeStampStation,
     onStartEnvelopeMinigame: () => void,
     sortingBoxSystem: SortingBoxSystem,
     vehicleControlSystem: VehicleControlSystem,
     counterServiceSystem: CounterServiceSystem,
-    dollySystem: DollySystem
+    dollySystem: DollySystem,
+    pauseManager: PauseManager,
+    settingsManager: SettingsManager
   ) {
     this.raycaster = new THREE.Raycaster();
     this.camera = camera;
@@ -54,8 +55,6 @@ export class InteractionSystem {
     this.pickupSystem = pickupSystem;
     this.hud = hud;
     this.isLocked = isLockedFn;
-    this.stampStation = stampStation;
-    this.onStartPackageMinigame = onStartPackageMinigame;
     this.envelopeSystem = envelopeSystem;
     this.envelopeStation = envelopeStation;
     this.onStartEnvelopeMinigame = onStartEnvelopeMinigame;
@@ -63,6 +62,8 @@ export class InteractionSystem {
     this.vehicleControlSystem = vehicleControlSystem;
     this.counterServiceSystem = counterServiceSystem;
     this.dollySystem = dollySystem;
+    this.pauseManager = pauseManager;
+    this.settingsManager = settingsManager;
 
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
   }
@@ -70,6 +71,7 @@ export class InteractionSystem {
   private onKeyDown(event: KeyboardEvent): void {
     if (event.repeat) return;
     if (!this.isLocked()) return;
+    if (this.pauseManager.isPaused) return;
 
     // F key: take envelope from crate (only when empty-handed and near crate)
     if (event.code === 'KeyF') {
@@ -87,8 +89,10 @@ export class InteractionSystem {
       return;
     }
 
-    // E key
-    if (event.code !== 'KeyE') return;
+    // E key — "interact" and "pickupPlace" share this one handler (see
+    // input-binding-manager.ts doc comment on why they're not independent).
+    const bindings = this.settingsManager.inputBindings;
+    if (!bindings.matches('interact', event.code) && !bindings.matches('pickupPlace', event.code)) return;
 
     if (this.playerData.state === 'placement-preview' || this.playerData.state === 'stamping-minigame') return;
 
@@ -149,18 +153,12 @@ export class InteractionSystem {
       return;
     }
 
-    // Priority 3: package stamp station
-    if (this.stampStation.readyPackageId && this.stampStation.isPlayerNearTable(this.camera.position)) {
-      this.onStartPackageMinigame();
-      return;
-    }
-
-    // Priority 4: vehicle call/depart buttons — the three sit close enough
+    // Priority 3: vehicle call/depart buttons — the two sit close enough
     // together that a naive per-button proximity check would overlap;
     // resolve to whichever one the player is actually nearer to.
     const nearestVehicleButton = this.vehicleControlSystem.getNearestButton(this.camera.position);
-    if (nearestVehicleButton === 'land' || nearestVehicleButton === 'sea') {
-      this.vehicleControlSystem.pressCallButton(nearestVehicleButton);
+    if (nearestVehicleButton === 'call') {
+      this.vehicleControlSystem.pressCallButton();
       return;
     }
     if (nearestVehicleButton === 'depart') {
@@ -168,13 +166,13 @@ export class InteractionSystem {
       return;
     }
 
-    // Priority 5: counter open-for-business button
+    // Priority 4: counter open-for-business button
     if (this.counterServiceSystem.isPlayerNear(this.camera.position)) {
       this.counterServiceSystem.pressButton();
       return;
     }
 
-    // Priority 6: start pushing the dolly
+    // Priority 5: start pushing the dolly
     if (this.dollySystem.isPlayerNear(this.camera.position)) {
       this.dollySystem.startPush();
       this.playerData.state = 'pushing-dolly';
@@ -287,41 +285,24 @@ export class InteractionSystem {
       return;
     }
 
-    // Package station
-    if (this.stampStation.isPlayerNearTable(this.camera.position)) {
-      const status = this.stampStation.statusMessage;
-      if (status === 'ready') {
-        this.hud.showInteractionPrompt('貼郵票工作桌', '按 E 開始貼郵票');
-        this.hud.setCrosshairActive(true);
-      } else if (status === 'already-stamped') {
-        this.hud.showInteractionPrompt('貼郵票工作桌', '請先將完成的包裹拿走');
-        this.hud.setCrosshairActive(false);
-      } else if (status === 'empty') {
-        this.hud.showInteractionPrompt('貼郵票工作桌', '請先將包裹放到桌面');
-        this.hud.setCrosshairActive(false);
-      }
-      return;
-    }
-
     // Vehicle call/depart buttons — same nearest-button resolution as onKeyDown
     const nearestVehicleButton = this.vehicleControlSystem.getNearestButton(this.camera.position);
-    if (nearestVehicleButton === 'land' || nearestVehicleButton === 'sea') {
-      const label = nearestVehicleButton === 'land' ? '呼叫陸運' : '呼叫海運';
-      if (this.vehicleControlSystem.state === 'absent') {
-        this.hud.showInteractionPrompt(label, '按 E 呼叫載具');
+    if (nearestVehicleButton === 'call') {
+      if (this.vehicleControlSystem.canCall) {
+        this.hud.showInteractionPrompt('呼叫載具', '按 E 同時呼叫陸運與海運');
         this.hud.setCrosshairActive(true);
       } else {
-        this.hud.showInteractionPrompt(label, this.vehicleControlSystem.blockedCallMessage());
+        this.hud.showInteractionPrompt('呼叫載具', this.vehicleControlSystem.callBlockedMessage());
         this.hud.setCrosshairActive(false);
       }
       return;
     }
     if (nearestVehicleButton === 'depart') {
-      if (this.vehicleControlSystem.state === 'docked') {
-        this.hud.showInteractionPrompt('載具出發', '按 E 讓載具離場');
+      if (this.vehicleControlSystem.canDepart) {
+        this.hud.showInteractionPrompt('載具出發', '按 E 讓兩台載具一起離場');
         this.hud.setCrosshairActive(true);
       } else {
-        this.hud.showInteractionPrompt('載具出發', this.vehicleControlSystem.blockedDepartMessage());
+        this.hud.showInteractionPrompt('載具出發', this.vehicleControlSystem.departBlockedMessage());
         this.hud.setCrosshairActive(false);
       }
       return;

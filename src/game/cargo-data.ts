@@ -2,25 +2,82 @@
 // Intentionally does NOT reuse PackageData — normal cargo has no address,
 // stamp, weight or destination concept yet.
 
-export type CargoType = 'normal' | 'large';
+export type CargoType = 'normal' | 'large' | 'fragile' | 'frozen' | 'live';
+export type RouteType = 'domestic' | 'overseas';
+
+// 'domestic'/'overseas' double as CargoLabel values too — a label IS the
+// route, just spelled the same way, so building a label list never needs a
+// separate route->label mapping (see CARGO_LABEL_PRESETS below).
+export type CargoLabel = 'domestic' | 'overseas' | 'fragile' | 'large' | 'frozen' | 'live';
+
+export const ALL_CARGO_LABELS: CargoLabel[] = ['domestic', 'overseas', 'fragile', 'large', 'frozen', 'live'];
+
+export interface CargoDimensions {
+  width: number;
+  height: number;
+  depth: number;
+}
 
 export interface CargoData {
   id: string;
   cargoType: CargoType;
+  routeType: RouteType;
+  /** Fixed at spawn (see CARGO_LABEL_PRESETS) — the player never edits this
+   * this round (no labeling desk/UI exists anymore). Single source of
+   * truth for both the on-mesh visual badges (cargo-label-visuals.ts) and
+   * the departure judgment (cargo-compliance.ts only reads
+   * routeType/cargoType directly, never this array — labels are for the
+   * PLAYER to read, not for the system to re-derive rules from). */
+  labels: CargoLabel[];
   displayName: string;
+  dimensions: CargoDimensions;
   isShipped: boolean;
 }
 
 const CARGO_TYPE_DISPLAY_NAME: Record<CargoType, string> = {
   normal: '普通貨物',
   large: '大型貨物',
+  fragile: '易碎貨物',
+  frozen: '冷凍貨物',
+  live: '活體貨物',
 };
 
-export function createCargoData(id: string, cargoType: CargoType = 'normal'): CargoData {
+/** A named cargoType+routeType+labels combination — the ONE place these
+ * combos are defined (spec section 五: "不要把標籤組合散落在不同生成函式
+ * 中"). cargo-system.ts spawns cargo by picking a preset here, never by
+ * hand-assembling a labels array itself. Large+fragile combos need BOTH
+ * labels even though cargoType can only hold one value — that's exactly
+ * why `labels` is its own independent field on CargoData rather than
+ * something derived purely from cargoType at read time. */
+export interface CargoLabelPreset {
+  id: string;
+  cargoType: CargoType;
+  routeType: RouteType;
+  labels: CargoLabel[];
+}
+
+export const CARGO_LABEL_PRESETS: Record<string, CargoLabelPreset> = {
+  normalDomestic: { id: 'normalDomestic', cargoType: 'normal', routeType: 'domestic', labels: ['domestic'] },
+  normalOverseas: { id: 'normalOverseas', cargoType: 'normal', routeType: 'overseas', labels: ['overseas'] },
+  fragileDomestic: { id: 'fragileDomestic', cargoType: 'fragile', routeType: 'domestic', labels: ['domestic', 'fragile'] },
+  fragileOverseas: { id: 'fragileOverseas', cargoType: 'fragile', routeType: 'overseas', labels: ['overseas', 'fragile'] },
+  largeDomestic: { id: 'largeDomestic', cargoType: 'large', routeType: 'domestic', labels: ['domestic', 'large'] },
+  largeOverseas: { id: 'largeOverseas', cargoType: 'large', routeType: 'overseas', labels: ['overseas', 'large'] },
+  largeFragileOverseas: { id: 'largeFragileOverseas', cargoType: 'large', routeType: 'overseas', labels: ['overseas', 'large', 'fragile'] },
+  // Reserved for later rounds — NOT generated this round (spec section 三/十四).
+  frozenDomestic: { id: 'frozenDomestic', cargoType: 'frozen', routeType: 'domestic', labels: ['domestic', 'frozen'] },
+  liveOverseas: { id: 'liveOverseas', cargoType: 'live', routeType: 'overseas', labels: ['overseas', 'live'] },
+};
+
+export function createCargoData(id: string, preset: CargoLabelPreset, dimensions: CargoDimensions): CargoData {
+  const routePrefix = preset.routeType === 'overseas' ? '海外' : '';
   return {
     id,
-    cargoType,
-    displayName: CARGO_TYPE_DISPLAY_NAME[cargoType],
+    cargoType: preset.cargoType,
+    routeType: preset.routeType,
+    labels: preset.labels,
+    displayName: routePrefix + CARGO_TYPE_DISPLAY_NAME[preset.cargoType],
+    dimensions,
     isShipped: false,
   };
 }

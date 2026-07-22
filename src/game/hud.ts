@@ -50,6 +50,7 @@ export class HUD {
       <p>按住 Q 蓄力丟出</p>
       <p>左鍵 確認放置 ｜ 右鍵 取消</p>
       <p>Esc 解除滑鼠鎖定</p>
+      <p>Tab 開啟物流手冊</p>
     `;
     hud.appendChild(this.instructionsEl);
   }
@@ -101,29 +102,47 @@ export class HUD {
     this.chargeBarFill.style.width = '0%';
   }
 
-  /** Prototype-only vehicle settlement panel — stays open (game is paused
-   * behind it) until the player clicks 繼續. Shared by both land and sea
-   * departures; `transportType` is just a display label ('陸運'/'海運'). */
+  /** Combined land+sea settlement panel (spec section 十五/十九) — shown
+   * only once BOTH routes have finished departing, stays open (game paused
+   * behind it) until the player clicks 繼續. Each route's breakdown always
+   * satisfies correctCount+incompatibleCount === loadedCount
+   * (see cargo-compliance.ts / vehicle-control-system.ts). */
   showVehicleSettlement(params: {
-    vehicleName: string;
-    transportType: string;
-    normalCount: number;
-    largeCount: number;
-    runScore: number;
-    totalScore: number;
+    land: { vehicleName: string; loadedCount: number; correctCount: number; incompatibleCount: number; scoreChange: number };
+    sea: { vehicleName: string; loadedCount: number; correctCount: number; incompatibleCount: number; scoreChange: number };
+    totalCount: number;
+    totalCorrect: number;
+    totalIncorrect: number;
+    totalScoreChange: number;
+    cumulativeScore: number;
     onContinue: () => void;
   }): void {
-    const { vehicleName, transportType, normalCount, largeCount, runScore, totalScore, onContinue } = params;
-    const total = normalCount + largeCount;
+    const { land, sea, totalCount, totalCorrect, totalIncorrect, totalScoreChange, cumulativeScore, onContinue } = params;
+    const landEmpty = land.loadedCount === 0;
+    const seaEmpty = sea.loadedCount === 0;
+
+    let emptyNote = '';
+    if (landEmpty && seaEmpty) emptyNote = '<p class="summary-empty">本次陸運與海運皆為空載</p>';
+    else if (landEmpty) emptyNote = '<p class="summary-empty">陸運本次空載出發</p>';
+    else if (seaEmpty) emptyNote = '<p class="summary-empty">海運本次空載出發</p>';
+
+    const routeBlock = (label: string, r: typeof land) => `
+      <div class="summary-route">
+        <p class="summary-route-title">${label}：${r.vehicleName}</p>
+        <p>本次裝載件數：${r.loadedCount} 件</p>
+        <p>正確受理：${r.correctCount} 件　不相容貨物：${r.incompatibleCount} 件</p>
+        <p>${label}分數變化：${r.scoreChange >= 0 ? '+' : ''}${r.scoreChange}</p>
+      </div>`;
+
     this.shipmentSummaryEl.innerHTML = `
-      <p class="summary-title">${vehicleName}已出發</p>
-      <p>運輸類型：${transportType}</p>
-      ${total === 0 ? '<p class="summary-empty">本次空載出發</p>' : ''}
-      <p>本次送出總件數：${total} 件</p>
-      <p>普通貨物：${normalCount} 件</p>
-      <p>大型貨物：${largeCount} 件</p>
-      <p>本次分數：${runScore}</p>
-      <p>累積分數：${totalScore}</p>
+      <p class="summary-title">兩台載具已出發</p>
+      ${emptyNote}
+      ${routeBlock('陸運', land)}
+      ${routeBlock('海運', sea)}
+      <p>本次總件數：${totalCount} 件</p>
+      <p>本次正確件數：${totalCorrect} 件　本次錯誤件數：${totalIncorrect} 件</p>
+      <p>本次總分變化：${totalScoreChange >= 0 ? '+' : ''}${totalScoreChange}</p>
+      <p>累積分數：${cumulativeScore}</p>
       <p class="summary-note">（原型暫定計分，僅供測試，非正式規格）</p>
       <button id="settlement-continue-btn">繼續</button>
     `;

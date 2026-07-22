@@ -2,6 +2,7 @@
 // collider and cargo-bay detection volume are built FROM these numbers —
 // no vehicle's size is ever hardcoded in VehicleSystem/VehicleControlSystem/
 // PickupSystem/Game.
+import { CargoType, RouteType } from './cargo-data';
 
 export interface VehicleConfig {
   id: string;
@@ -31,6 +32,12 @@ export interface VehicleConfig {
    * sea vehicles, which travel east-west and dock with their cargo opening
    * facing west (toward the player-accessible interior), not north. */
   axis?: 'x' | 'z';
+  /** Rule-level compatibility (spec section 十) — separate from cargo-bay
+   * DIMENSIONS (which govern whether cargo physically fits): a cargo item
+   * must satisfy BOTH the size check (isInCargoBay) AND this list to count
+   * as a correctly-shipped item at departure (see cargo-compliance.ts). */
+  acceptedRouteTypes: RouteType[];
+  acceptedCargoTypes: CargoType[];
 }
 
 /** Hard ceiling every VehicleConfig must stay under, so a badly-tuned
@@ -69,6 +76,8 @@ export const LAND_VEHICLE_CONFIGS: VehicleConfig[] = [
     spawnPosition: LAND_SPAWN_POS,
     exitPosition: LAND_EXIT_POS,
     movementSpeed: 3.6,
+    acceptedRouteTypes: ['domestic'],
+    acceptedCargoTypes: ['normal', 'fragile'],
   },
   {
     id: 'land-truck-01',
@@ -84,6 +93,8 @@ export const LAND_VEHICLE_CONFIGS: VehicleConfig[] = [
     spawnPosition: LAND_SPAWN_POS,
     exitPosition: LAND_EXIT_POS,
     movementSpeed: 3,
+    acceptedRouteTypes: ['domestic'],
+    acceptedCargoTypes: ['normal', 'fragile', 'large'],
   },
   {
     id: 'land-truck-02',
@@ -99,6 +110,8 @@ export const LAND_VEHICLE_CONFIGS: VehicleConfig[] = [
     spawnPosition: LAND_SPAWN_POS,
     exitPosition: LAND_EXIT_POS,
     movementSpeed: 2.4,
+    acceptedRouteTypes: ['domestic'],
+    acceptedCargoTypes: ['normal', 'fragile', 'large'],
   },
 ];
 
@@ -132,6 +145,8 @@ export const SEA_VEHICLE_CONFIGS: VehicleConfig[] = [
     exitPosition: { x: 40, z: SEA_DOCK_1_POS.z },
     movementSpeed: 3.0,
     axis: 'x',
+    acceptedRouteTypes: ['overseas'],
+    acceptedCargoTypes: ['normal', 'fragile'],
   },
   {
     id: 'sea-boxship-01',
@@ -148,6 +163,8 @@ export const SEA_VEHICLE_CONFIGS: VehicleConfig[] = [
     exitPosition: { x: 40, z: SEA_DOCK_2_POS.z },
     movementSpeed: 2.3,
     axis: 'x',
+    acceptedRouteTypes: ['overseas'],
+    acceptedCargoTypes: ['normal', 'fragile', 'large'],
   },
 ];
 

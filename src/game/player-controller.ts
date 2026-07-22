@@ -6,11 +6,15 @@ import { PLAYER_SPAWN } from './counter-layout-data';
 import { DOLLY_PUSH_SPEED_MULTIPLIER } from './dolly-data';
 import { PlayerInteractionData } from './interactable-object';
 import { HUD } from './hud';
+import { SettingsManager } from './settings-manager';
+
+const HALF_PI = Math.PI / 2;
 
 export class PlayerController {
   private controls: PointerLockControls;
   private camera: THREE.PerspectiveCamera;
   private physics: PhysicsSystem;
+  private settingsManager: SettingsManager;
   private moveForward = false;
   private moveBackward = false;
   private moveLeft = false;
@@ -18,14 +22,29 @@ export class PlayerController {
   private isSprinting = false;
   private wantsJump = false;
   private _isLocked = false;
+  private hasFiredFirstMove = false;
+  private lookEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 
   private verticalSpeed = 0;
   private grounded = true;
 
-  constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement, private hud: HUD, physics: PhysicsSystem, private playerData: PlayerInteractionData) {
+  constructor(
+    camera: THREE.PerspectiveCamera, domElement: HTMLElement, private hud: HUD, physics: PhysicsSystem,
+    private playerData: PlayerInteractionData, settingsManager: SettingsManager
+  ) {
     this.camera = camera;
     this.physics = physics;
+    this.settingsManager = settingsManager;
     this.controls = new PointerLockControls(camera, domElement);
+
+    // The stock addon's own mousemove listener only supports a uniform
+    // pointerSpeed (no per-axis invert), but settings 七 requires a real
+    // invert-Y toggle — so its built-in rotation listener is removed here
+    // and replaced with our own (see onMouseMoveCustom), while still using
+    // the addon for lock()/unlock() and the lock/unlock events themselves.
+    const rawControls = this.controls as unknown as { _onMouseMove: (e: MouseEvent) => void };
+    domElement.ownerDocument.removeEventListener('mousemove', rawControls._onMouseMove);
+    document.addEventListener('mousemove', (e) => this.onMouseMoveCustom(e));
 
     this.camera.position.set(PLAYER_SPAWN.x, SCENE_CONFIG.playerEyeHeight, PLAYER_SPAWN.z);
     // Face +Z at spawn: the logistics layout (window/ramp/back area/pier)
@@ -55,6 +74,29 @@ export class PlayerController {
 
   get isLocked(): boolean { return this._isLocked; }
 
+  /** Public so ManualUI can re-request pointer lock is NOT used (see
+   * manual close flow — it follows the same click-to-relock convention as
+   * ending the stamp minigame, rather than a special-cased programmatic
+   * lock() call), but exposed anyway for completeness/consistency. */
+  requestLock(): void {
+    if (!this._isLocked) this.controls.lock();
+  }
+
+  private onMouseMoveCustom(event: MouseEvent): void {
+    if (!this._isLocked) return;
+    const movementX = event.movementX || 0;
+    const movementY = event.movementY || 0;
+    const { sensitivity, invertY } = this.settingsManager.settings.mouse;
+    const factor = 0.002 * sensitivity;
+    const invertSign = invertY ? 1 : -1;
+
+    this.lookEuler.setFromQuaternion(this.camera.quaternion);
+    this.lookEuler.y -= movementX * factor;
+    this.lookEuler.x += invertSign * movementY * factor;
+    this.lookEuler.x = Math.max(-HALF_PI, Math.min(HALF_PI, this.lookEuler.x));
+    this.camera.quaternion.setFromEuler(this.lookEuler);
+  }
+
   setInputEnabled(enabled: boolean): void {
     if (!enabled) this.clearInputState();
     this._inputEnabled = enabled;
@@ -74,26 +116,33 @@ export class PlayerController {
   private onKeyDown(event: KeyboardEvent): void {
     if (!this._isLocked) return;
     if (event.repeat) return;
-    switch (event.code) {
-      case 'KeyW': this.moveForward = true; break;
-      case 'KeyS': this.moveBackward = true; break;
-      case 'KeyA': this.moveLeft = true; break;
-      case 'KeyD': this.moveRight = true; break;
-      case 'ShiftLeft': case 'ShiftRight': this.isSprinting = true; break;
-      case 'Space':
-        if (this.grounded) this.wantsJump = true;
-        break;
+    const bindings = this.settingsManager.inputBindings;
+    const code = event.code;
+    if (bindings.matches('moveForward', code)) this.moveForward = true;
+    else if (bindings.matches('moveBackward', code)) this.moveBackward = true;
+    else if (bindings.matches('moveLeft', code)) this.moveLeft = true;
+    else if (bindings.matches('moveRight', code)) this.moveRight = true;
+    else if (bindings.matches('sprint', code)) this.isSprinting = true;
+    else if (bindings.matches('jump', code)) { if (this.grounded) this.wantsJump = true; }
+
+    if (
+      !this.hasFiredFirstMove &&
+      (bindings.matches('moveForward', code) || bindings.matches('moveBackward', code) ||
+        bindings.matches('moveLeft', code) || bindings.matches('moveRight', code))
+    ) {
+      this.hasFiredFirstMove = true;
+      this.settingsManager.fireTutorialEvent('move');
     }
   }
 
   private onKeyUp(event: KeyboardEvent): void {
-    switch (event.code) {
-      case 'KeyW': this.moveForward = false; break;
-      case 'KeyS': this.moveBackward = false; break;
-      case 'KeyA': this.moveLeft = false; break;
-      case 'KeyD': this.moveRight = false; break;
-      case 'ShiftLeft': case 'ShiftRight': this.isSprinting = false; break;
-    }
+    const bindings = this.settingsManager.inputBindings;
+    const code = event.code;
+    if (bindings.matches('moveForward', code)) this.moveForward = false;
+    else if (bindings.matches('moveBackward', code)) this.moveBackward = false;
+    else if (bindings.matches('moveLeft', code)) this.moveLeft = false;
+    else if (bindings.matches('moveRight', code)) this.moveRight = false;
+    else if (bindings.matches('sprint', code)) this.isSprinting = false;
   }
 
   update(deltaTime: number): void {

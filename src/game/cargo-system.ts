@@ -1,8 +1,12 @@
 import * as THREE from 'three';
 import { PhysicsSystem } from './physics-system';
 import { InteractableObject, createInteractableObject } from './interactable-object';
-import { CargoData, CargoSize, CargoType, createCargoData, pickCargoSize, pickLargeCargoSize } from './cargo-data';
-import { FRONT_OFFICE, BACK_AREA, CARGO_SPAWN_CONFIG, LARGE_CARGO_SPAWN_POSITIONS } from './logistics-layout-data';
+import {
+  CargoData, CargoLabelPreset, CargoSize,
+  CARGO_LABEL_PRESETS, createCargoData, pickCargoSize, pickLargeCargoSize,
+} from './cargo-data';
+import { attachCargoLabels } from './cargo-label-visuals';
+import { FRONT_OFFICE, BACK_AREA, CARGO_SPAWN_CONFIG, LARGE_CARGO_SPAWN_POSITIONS, LABELED_CARGO_SPAWN_POSITIONS } from './logistics-layout-data';
 
 const CARGO_COLORS = [0x8b5a2b, 0xa0703a, 0x7a4e24, 0x966032, 0x8b6f47, 0x9a7040];
 // Single consistent color for ALL large cargo — a deliberately different
@@ -37,6 +41,7 @@ export class CargoSystem {
   cargoDataMap: Map<string, CargoData> = new Map();
   private nextId = 1;
   private nextLargeId = 1;
+  private nextLabeledId = 1;
 
   constructor(scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>) {
     const frontSpots = shuffle(
@@ -48,14 +53,36 @@ export class CargoSystem {
         .filter(p => Math.abs(p.x) > RAMP_EXCLUSION_HALF_WIDTH)
     ).slice(0, CARGO_SPAWN_CONFIG.backAreaCount);
 
+    // Plain domestic normal cargo (spec 五: CARGO_LABEL_PRESETS.normalDomestic).
     for (const spot of frontSpots) this.spawnOne(scene, physics, interactables, spot.x, spot.z, FRONT_OFFICE.floorY);
     for (const spot of backSpots) this.spawnOne(scene, physics, interactables, spot.x, spot.z, BACK_AREA.floorY);
 
     // Large cargo — fixed spots in the back area's "大型貨物區" (zone-large),
     // not random like normal cargo, so the 4 items never overlap at spawn.
+    // All domestic (CARGO_LABEL_PRESETS.largeDomestic).
     LARGE_CARGO_SPAWN_POSITIONS.forEach((spot, i) => {
       this.spawnLarge(scene, physics, interactables, spot.x, spot.z, BACK_AREA.floorY, i);
     });
+
+    // Labeling-showcase test cargo (spec 十四) — fixed cargoType/routeType
+    // combos so the full label set (domestic/overseas/fragile/large) and
+    // vehicle-compatibility rules can be exercised deterministically.
+    const L = LABELED_CARGO_SPAWN_POSITIONS;
+    for (const spot of L.domesticFragile) {
+      this.spawnLabeled(scene, physics, interactables, CARGO_LABEL_PRESETS.fragileDomestic, spot.x, spot.z, pickCargoSize());
+    }
+    for (const spot of L.overseasNormal) {
+      this.spawnLabeled(scene, physics, interactables, CARGO_LABEL_PRESETS.normalOverseas, spot.x, spot.z, pickCargoSize());
+    }
+    for (const spot of L.overseasFragile) {
+      this.spawnLabeled(scene, physics, interactables, CARGO_LABEL_PRESETS.fragileOverseas, spot.x, spot.z, pickCargoSize());
+    }
+    for (const spot of L.overseasLarge) {
+      this.spawnLabeled(scene, physics, interactables, CARGO_LABEL_PRESETS.largeOverseas, spot.x, spot.z, pickLargeCargoSize(0));
+    }
+    for (const spot of L.overseasLargeFragile) {
+      this.spawnLabeled(scene, physics, interactables, CARGO_LABEL_PRESETS.largeFragileOverseas, spot.x, spot.z, pickLargeCargoSize(2));
+    }
   }
 
   getCargoData(id: string): CargoData | undefined {
@@ -69,7 +96,7 @@ export class CargoSystem {
     const id = `cargo-normal-${this.nextId++}`;
     const size = pickCargoSize();
     const color = CARGO_COLORS[this.nextId % CARGO_COLORS.length];
-    this.buildCargoItem(scene, physics, interactables, id, 'normal', size, x, z, floorY, color);
+    this.buildCargoItem(scene, physics, interactables, id, CARGO_LABEL_PRESETS.normalDomestic, size, x, z, floorY, color);
   }
 
   private spawnLarge(
@@ -78,12 +105,21 @@ export class CargoSystem {
   ): void {
     const id = `cargo-large-${this.nextLargeId++}`;
     const size = pickLargeCargoSize(presetIndex);
-    this.buildCargoItem(scene, physics, interactables, id, 'large', size, x, z, floorY, LARGE_CARGO_COLOR);
+    this.buildCargoItem(scene, physics, interactables, id, CARGO_LABEL_PRESETS.largeDomestic, size, x, z, floorY, LARGE_CARGO_COLOR);
+  }
+
+  private spawnLabeled(
+    scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>,
+    preset: CargoLabelPreset, x: number, z: number, size: CargoSize
+  ): void {
+    const id = `cargo-labeled-${this.nextLabeledId++}`;
+    const color = preset.cargoType === 'large' ? LARGE_CARGO_COLOR : CARGO_COLORS[this.nextLabeledId % CARGO_COLORS.length];
+    this.buildCargoItem(scene, physics, interactables, id, preset, size, x, z, BACK_AREA.floorY, color);
   }
 
   private buildCargoItem(
     scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>,
-    id: string, cargoType: CargoType, size: CargoSize, x: number, z: number, floorY: number, color: number
+    id: string, preset: CargoLabelPreset, size: CargoSize, x: number, z: number, floorY: number, color: number
   ): void {
     const y = floorY + size.height / 2 + 0.02;
 
@@ -93,7 +129,11 @@ export class CargoSystem {
     mesh.position.set(x, y, z);
     scene.add(mesh);
 
-    const data = createCargoData(id, cargoType);
+    const data = createCargoData(id, preset, size);
+    // Labels are attached ONCE here, fixed for the item's whole lifetime —
+    // no labeling desk/UI exists this round to change them (spec 七).
+    attachCargoLabels(mesh, data.labels, size.width, size.height, size.depth);
+
     const obj = createInteractableObject(id, data.displayName, mesh, size.width, size.height, size.depth);
     const density = 250;
     const { body, collider } = physics.createBoxBody(x, y, z, size.width / 2, size.height / 2, size.depth / 2, density);

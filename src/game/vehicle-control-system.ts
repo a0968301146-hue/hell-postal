@@ -9,30 +9,46 @@ import { VEHICLE_CONTROL_POS, BACK_AREA } from './logistics-layout-data';
 import { SCENE_CONFIG } from './scene-manager';
 import { createFloatingLabel, updateFloatingLabel } from './world-label-system';
 import { HUD } from './hud';
+import { evaluateCargoOutcome, scoreForOutcome } from './cargo-compliance';
 
-// PROTOTYPE-ONLY scoring constant — not a final design spec.
-export const POINTS_PER_CARGO = 1;
+/** Per-vehicle lifecycle. 'departed' is a terminal holding state — the
+ * vehicle mesh/body is already gone, but the route stays 'departed' (not
+ * reset to 'absent') until the COMBINED settlement (both routes departed)
+ * has been shown and the player presses 繼續 — see checkCombinedSettlement. */
+export type SingleVehicleState = 'absent' | 'arriving' | 'docked' | 'departing' | 'departed';
+type RouteVehicleType = 'land' | 'sea';
+type ButtonId = 'call' | 'depart';
 
-export type VehicleFlowState = 'absent' | 'arriving' | 'docked' | 'departing' | 'settlement';
-type CallButtonType = 'land' | 'sea';
-type ButtonId = CallButtonType | 'depart';
+/** Per-route departure breakdown (spec section 十二) — no more label
+ * correctness this round (every cargo item already spawns correctly
+ * labeled — see cargo-data.ts), so every loaded item is simply either
+ * successfully receivable by this vehicle or not: correctCount +
+ * incompatibleCount always equals loadedCount. */
+export interface RouteDepartureResult {
+  vehicleName: string;
+  loadedCount: number;
+  correctCount: number;
+  incompatibleCount: number;
+  scoreChange: number;
+}
 
-const LAND_IDLE_TEXT = '呼叫陸運\n按 E 呼叫陸運載具';
-const SEA_IDLE_TEXT = '呼叫海運\n按 E 呼叫海運載具';
-const DEPART_IDLE_TEXT = '載具出發\n按 E 讓載具離場';
+const CALL_IDLE_TEXT = '呼叫載具\n按 E 同時呼叫陸運與海運';
+const DEPART_IDLE_TEXT = '載具出發\n按 E 讓兩台載具一起離場';
+const DEPART_BLOCKED_TEXT = '載具尚未全部停靠';
 
 /**
- * One shared state machine drives BOTH routes — land and sea are just two
- * different VehicleConfig lists fed into the same absent→arriving→docked→
- * departing→settlement flow (see VehicleFlowState). Exactly one `vehicle`
- * field exists, so at most one vehicle (of either type) can ever be in the
- * scene at once; both call buttons are gated by the same `state !== 'absent'`
- * check, which is what prevents spawning land+sea simultaneously or
- * double-spawning on a fast double-press (the very first press already
- * flips state away from 'absent' before any second press can be handled).
+ * One shared per-route state machine, driven twice (once for 'land', once
+ * for 'sea') — see SingleVehicleState. Calling "呼叫載具" spawns BOTH routes
+ * at once (each still gated by its own round-robin config index), and both
+ * must independently reach 'docked' before "載具出發" will do anything.
+ * Departure pins each route's OWN cargo-bay contents (never the other
+ * route's — see pressDepartButton's per-object bay-membership resolution)
+ * and only shows ONE combined settlement panel once BOTH routes have
+ * independently finished departing (checkCombinedSettlement).
  */
 export class VehicleControlSystem {
-  state: VehicleFlowState = 'absent';
+  landState: SingleVehicleState = 'absent';
+  seaState: SingleVehicleState = 'absent';
   totalScore = 0;
 
   private scene: THREE.Scene;
@@ -42,20 +58,27 @@ export class VehicleControlSystem {
   private pickupSystem: PickupSystem;
   private hud: HUD;
   private onPauseChange: (paused: boolean) => void;
+  private onVehicleDiscovered?: (config: VehicleConfig) => void;
+  private onCargoLoaded?: () => void;
+  private onVehicleDeparted?: () => void;
 
-  private vehicle: VehicleSystem | null = null;
-  private pinnedCargo: InteractableObject[] = [];
+  private landVehicle: VehicleSystem | null = null;
+  private seaVehicle: VehicleSystem | null = null;
+  private landPinnedCargo: InteractableObject[] = [];
+  private seaPinnedCargo: InteractableObject[] = [];
+  private landResult: RouteDepartureResult | null = null;
+  private seaResult: RouteDepartureResult | null = null;
+  private settlementActive = false;
+
   /** Round-robin indices — land and sea each cycle through their OWN config
-   * list independently (spec section 七之7), so calling sea vehicles never
-   * advances the land index or vice versa. */
+   * list independently (spec section 十六): calling 呼叫載具 advances BOTH
+   * indices together, but each still only steps through its own list. */
   private nextLandConfigIndex = 0;
   private nextSeaConfigIndex = 0;
 
-  private landButtonPos: THREE.Vector3;
-  private seaButtonPos: THREE.Vector3;
+  private callButtonPos: THREE.Vector3;
   private departButtonPos: THREE.Vector3;
-  private landLabel!: THREE.Sprite;
-  private seaLabel!: THREE.Sprite;
+  private callLabel!: THREE.Sprite;
   private departLabel!: THREE.Sprite;
 
   constructor(
@@ -65,7 +88,10 @@ export class VehicleControlSystem {
     cargoSystem: CargoSystem,
     pickupSystem: PickupSystem,
     hud: HUD,
-    onPauseChange: (paused: boolean) => void
+    onPauseChange: (paused: boolean) => void,
+    onVehicleDiscovered?: (config: VehicleConfig) => void,
+    onCargoLoaded?: () => void,
+    onVehicleDeparted?: () => void
   ) {
     this.scene = scene;
     this.physics = physics;
@@ -74,24 +100,22 @@ export class VehicleControlSystem {
     this.pickupSystem = pickupSystem;
     this.hud = hud;
     this.onPauseChange = onPauseChange;
+    this.onVehicleDiscovered = onVehicleDiscovered;
+    this.onCargoLoaded = onCargoLoaded;
+    this.onVehicleDeparted = onVehicleDeparted;
 
     const { centerX, centerZ, spacing } = VEHICLE_CONTROL_POS;
-    this.landButtonPos = new THREE.Vector3(centerX - spacing, 0, centerZ);
-    this.seaButtonPos = new THREE.Vector3(centerX, 0, centerZ);
-    this.departButtonPos = new THREE.Vector3(centerX + spacing, 0, centerZ);
+    this.callButtonPos = new THREE.Vector3(centerX - spacing / 2, 0, centerZ);
+    this.departButtonPos = new THREE.Vector3(centerX + spacing / 2, 0, centerZ);
     this.buildButtons();
   }
 
   private buildButtons(): void {
-    this.landLabel = this.buildOneButton(this.landButtonPos, 0x2b6bd8, LAND_IDLE_TEXT);
-    this.seaLabel = this.buildOneButton(this.seaButtonPos, 0x2bb8d8, SEA_IDLE_TEXT);
+    this.callLabel = this.buildOneButton(this.callButtonPos, 0x2b6bd8, CALL_IDLE_TEXT);
     this.departLabel = this.buildOneButton(this.departButtonPos, 0xd88a2b, DEPART_IDLE_TEXT);
   }
 
   private buildOneButton(pos: THREE.Vector3, color: number, labelText: string): THREE.Sprite {
-    // Post/cap/collider/label are all built relative to the back area's
-    // actual floor height, not world Y=0 — the button sits in the back area
-    // (floorY = -1.5), so anchoring to 0 left it floating mid-air.
     const floorY = BACK_AREA.floorY;
     const postHeight = 0.9;
     const postGeo = new THREE.BoxGeometry(0.22, postHeight, 0.22);
@@ -120,27 +144,36 @@ export class VehicleControlSystem {
     return Math.sqrt(dx * dx + dz * dz);
   }
 
-  /** The three buttons sit close enough together that their proximity radii
-   * overlap — resolve which one the player is actually next to (the nearest
-   * one) so E/prompt handling never has to guess between them. */
   getNearestButton(pos: THREE.Vector3): ButtonId | null {
-    const distances: Record<ButtonId, number> = {
-      land: this.distanceXZ(pos, this.landButtonPos),
-      sea: this.distanceXZ(pos, this.seaButtonPos),
-      depart: this.distanceXZ(pos, this.departButtonPos),
-    };
+    const dCall = this.distanceXZ(pos, this.callButtonPos);
+    const dDepart = this.distanceXZ(pos, this.departButtonPos);
     const range = SCENE_CONFIG.interactionDistance + 1;
-    let best: ButtonId | null = null;
-    let bestDist = Infinity;
-    for (const key of Object.keys(distances) as ButtonId[]) {
-      const d = distances[key];
-      if (d <= range && d < bestDist) { bestDist = d; best = key; }
-    }
-    return best;
+    if (dCall > range && dDepart > range) return null;
+    return dCall <= dDepart ? 'call' : 'depart';
   }
 
   get isPaused(): boolean {
-    return this.state === 'settlement';
+    return this.settlementActive;
+  }
+
+  get canCall(): boolean {
+    return this.landState === 'absent' && this.seaState === 'absent';
+  }
+
+  get canDepart(): boolean {
+    return this.landState === 'docked' && this.seaState === 'docked';
+  }
+
+  callBlockedMessage(): string {
+    if (this.settlementActive) return '結算尚未完成';
+    const anyMoving = this.landState === 'arriving' || this.landState === 'departing'
+      || this.seaState === 'arriving' || this.seaState === 'departing';
+    if (anyMoving) return '載具正在移動';
+    return '目前已有載具';
+  }
+
+  departBlockedMessage(): string {
+    return DEPART_BLOCKED_TEXT;
   }
 
   private flash(label: THREE.Sprite, text: string, revertTo: string): void {
@@ -148,69 +181,80 @@ export class VehicleControlSystem {
     setTimeout(() => updateFloatingLabel(label, revertTo), 1500);
   }
 
-  /** Blocked-state message for the two CALL buttons (land/sea) — shown
-   * whenever state !== 'absent', i.e. some vehicle already occupies the
-   * scene in some phase of its own flow. Public: also used by
-   * InteractionSystem's proximity prompt (not just the flash-on-press). */
-  blockedCallMessage(): string {
-    switch (this.state) {
-      case 'docked': return '目前已有載具';
-      case 'arriving': case 'departing': return '載具正在移動';
-      case 'settlement': return '結算尚未完成';
-      default: return '';
-    }
-  }
-
-  /** Blocked-state message for the DEPART button — shown whenever
-   * state !== 'docked'. Public for the same reason as blockedCallMessage. */
-  blockedDepartMessage(): string {
-    switch (this.state) {
-      case 'absent': return '目前沒有載具';
-      case 'arriving': case 'departing': return '載具正在移動';
-      case 'settlement': return '結算尚未完成';
-      default: return '';
-    }
-  }
-
-  /** 呼叫陸運 / 呼叫海運 — same absent-only gate for both, so the two
-   * routes can never spawn simultaneously and a vehicle already in any
-   * other phase (arriving/docked/departing/settlement) blocks new calls of
-   * either type, not just its own. */
-  pressCallButton(type: CallButtonType): void {
-    const label = type === 'land' ? this.landLabel : this.seaLabel;
-    const idleText = type === 'land' ? LAND_IDLE_TEXT : SEA_IDLE_TEXT;
-    if (this.state !== 'absent') {
-      this.flash(label, this.blockedCallMessage(), idleText);
+  /** 呼叫載具 — spawns land AND sea simultaneously. Gated on BOTH routes
+   * being 'absent', so a fast double-press can't spawn a second pair: the
+   * very first press already flips both states away from 'absent' before a
+   * second press could be handled. */
+  pressCallButton(): void {
+    if (!this.canCall) {
+      this.flash(this.callLabel, this.callBlockedMessage(), CALL_IDLE_TEXT);
       return;
     }
-    const configs: VehicleConfig[] = type === 'land' ? LAND_VEHICLE_CONFIGS : SEA_VEHICLE_CONFIGS;
+    this.spawnVehicle('land');
+    this.spawnVehicle('sea');
+  }
+
+  private spawnVehicle(type: RouteVehicleType): void {
+    const configs = type === 'land' ? LAND_VEHICLE_CONFIGS : SEA_VEHICLE_CONFIGS;
     const index = type === 'land' ? this.nextLandConfigIndex : this.nextSeaConfigIndex;
     const config = configs[index];
     if (type === 'land') this.nextLandConfigIndex = (index + 1) % configs.length;
     else this.nextSeaConfigIndex = (index + 1) % configs.length;
 
-    this.vehicle = new VehicleSystem(this.scene, this.physics, config, config.spawnPosition);
-    this.pickupSystem.addPlacementSurface(this.vehicle.cargoBedTopMesh);
-    this.state = 'arriving';
+    const vehicle = new VehicleSystem(this.scene, this.physics, config, config.spawnPosition);
+    this.pickupSystem.addPlacementSurface(vehicle.cargoBedTopMesh);
+    if (type === 'land') { this.landVehicle = vehicle; this.landState = 'arriving'; }
+    else { this.seaVehicle = vehicle; this.seaState = 'arriving'; }
+
+    this.onVehicleDiscovered?.(config);
   }
 
+  /** 載具出發 — only proceeds once BOTH routes are docked. Each object is
+   * assigned to at most one route's pinned-cargo list: normally the two
+   * cargoBounds never overlap (land dock and sea docks are far apart), but
+   * if one ever did fall inside both, it's assigned to whichever bay center
+   * is nearer — a deterministic, explicit tie-break rather than double-
+   * counting it or leaving it ambiguous. */
   pressDepartButton(): void {
-    if (this.state !== 'docked' || !this.vehicle) {
-      this.flash(this.departLabel, this.blockedDepartMessage(), DEPART_IDLE_TEXT);
+    if (!this.canDepart || !this.landVehicle || !this.seaVehicle) {
+      this.flash(this.departLabel, this.departBlockedMessage(), DEPART_IDLE_TEXT);
       return;
     }
 
-    const vehicle = this.vehicle;
-    const valid: InteractableObject[] = [];
+    const land = this.landVehicle;
+    const sea = this.seaVehicle;
+    const landValid: InteractableObject[] = [];
+    const seaValid: InteractableObject[] = [];
+
     for (const obj of this.interactables.values()) {
       if (!this.cargoSystem.getCargoData(obj.id)) continue;
       if (obj.isHeld) continue;
-      if (!vehicle.isInCargoBay(obj.mesh.position)) continue;
-      valid.push(obj);
+      const inLand = land.isInCargoBay(obj.mesh.position);
+      const inSea = sea.isInCargoBay(obj.mesh.position);
+      if (inLand && inSea) {
+        const dLand = this.distanceXZ(obj.mesh.position, land.position);
+        const dSea = this.distanceXZ(obj.mesh.position, sea.position);
+        (dLand <= dSea ? landValid : seaValid).push(obj);
+      } else if (inLand) {
+        landValid.push(obj);
+      } else if (inSea) {
+        seaValid.push(obj);
+      }
     }
 
-    this.pinnedCargo = valid;
-    for (const obj of valid) {
+    this.landPinnedCargo = landValid;
+    this.seaPinnedCargo = seaValid;
+    this.pinCargoPhysics(landValid);
+    this.pinCargoPhysics(seaValid);
+    this.landState = 'departing';
+    this.seaState = 'departing';
+
+    this.onVehicleDeparted?.();
+    if (landValid.length + seaValid.length > 0) this.onCargoLoaded?.();
+  }
+
+  private pinCargoPhysics(list: InteractableObject[]): void {
+    for (const obj of list) {
       obj.canPickUp = false;
       if (obj.rigidBody) {
         obj.rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -218,56 +262,116 @@ export class VehicleControlSystem {
         this.physics.setBodyEnabled(obj.rigidBody, false);
       }
     }
-
-    this.state = 'departing';
   }
 
   update(deltaTime: number): void {
-    if (this.state === 'arriving' && this.vehicle) {
-      // Use the spawned vehicle's OWN config, not a fixed constant — each
-      // cycled-through vehicle can have its own dock/exit position.
-      const arrived = this.vehicle.moveToward(this.vehicle.config.dockPosition, deltaTime, []);
-      if (arrived) this.state = 'docked';
+    this.updateRoute('land', deltaTime);
+    this.updateRoute('sea', deltaTime);
+  }
+
+  private updateRoute(type: RouteVehicleType, deltaTime: number): void {
+    const vehicle = type === 'land' ? this.landVehicle : this.seaVehicle;
+    if (!vehicle) return;
+    const state = type === 'land' ? this.landState : this.seaState;
+
+    if (state === 'arriving') {
+      const arrived = vehicle.moveToward(vehicle.config.dockPosition, deltaTime, []);
+      if (arrived) {
+        if (type === 'land') this.landState = 'docked'; else this.seaState = 'docked';
+      }
       return;
     }
 
-    if (this.state === 'departing' && this.vehicle) {
-      const arrived = this.vehicle.moveToward(this.vehicle.config.exitPosition, deltaTime, this.pinnedCargo);
-      if (arrived) this.finishDeparture();
-      return;
+    if (state === 'departing') {
+      const pinned = type === 'land' ? this.landPinnedCargo : this.seaPinnedCargo;
+      const arrived = vehicle.moveToward(vehicle.config.exitPosition, deltaTime, pinned);
+      if (arrived) this.finishOneDeparture(type);
     }
   }
 
-  private finishDeparture(): void {
-    if (!this.vehicle) return;
-    let normalCount = 0;
-    let largeCount = 0;
-    for (const obj of this.pinnedCargo) {
-      if (this.cargoSystem.getCargoData(obj.id)?.cargoType === 'large') largeCount++;
-      else normalCount++;
-    }
-    const count = this.pinnedCargo.length;
-    const runScore = count * POINTS_PER_CARGO;
-    this.totalScore += runScore;
-    const vehicleName = this.vehicle.config.displayName;
-    const transportType = this.vehicle.config.vehicleType === 'sea' ? '海運' : '陸運';
+  /** Evaluates each pinned item's outcome ONLY here, at actual departure —
+   * never at load time or button-press time (spec 十: "出發前不會顯示錯誤
+   * 提示"). An incompatible item still ships; it just contributes -1
+   * instead of +1 (spec 十一). */
+  private finishOneDeparture(type: RouteVehicleType): void {
+    const vehicle = type === 'land' ? this.landVehicle : this.seaVehicle;
+    const pinned = type === 'land' ? this.landPinnedCargo : this.seaPinnedCargo;
+    if (!vehicle) return;
 
-    for (const obj of this.pinnedCargo) {
+    let correctCount = 0;
+    let incompatibleCount = 0;
+    let scoreChange = 0;
+
+    for (const obj of pinned) {
+      const cargo = this.cargoSystem.getCargoData(obj.id);
+      if (!cargo) continue; // pressDepartButton only pins objects with cargo data
+      const outcome = evaluateCargoOutcome(cargo, vehicle.config);
+      if (outcome.successful) correctCount++;
+      else incompatibleCount++;
+      scoreChange += scoreForOutcome(outcome);
+    }
+
+    const result: RouteDepartureResult = {
+      vehicleName: vehicle.config.displayName,
+      loadedCount: pinned.length,
+      correctCount, incompatibleCount, scoreChange,
+    };
+
+    for (const obj of pinned) {
       obj.mesh.visible = false;
       this.interactables.delete(obj.id);
     }
-    this.pickupSystem.removePlacementSurface(this.vehicle.cargoBedTopMesh);
-    this.vehicle.dispose();
-    this.vehicle = null;
-    this.pinnedCargo = [];
+    this.pickupSystem.removePlacementSurface(vehicle.cargoBedTopMesh);
+    vehicle.dispose();
 
-    this.state = 'settlement';
+    if (type === 'land') {
+      this.landVehicle = null;
+      this.landPinnedCargo = [];
+      this.landState = 'departed';
+      this.landResult = result;
+    } else {
+      this.seaVehicle = null;
+      this.seaPinnedCargo = [];
+      this.seaState = 'departed';
+      this.seaResult = result;
+    }
+
+    this.checkCombinedSettlement();
+  }
+
+  /** Only fires once both routes have independently finished departing —
+   * `settlementActive` guards against either route's transition re-firing
+   * this after the panel is already up (both will be 'departed' the whole
+   * time the panel is open, since they only reset to 'absent' on 繼續). */
+  private checkCombinedSettlement(): void {
+    if (this.landState === 'departed' && this.seaState === 'departed' && !this.settlementActive) {
+      this.settlementActive = true;
+      this.showCombinedSettlement();
+    }
+  }
+
+  private showCombinedSettlement(): void {
+    const land = this.landResult!;
+    const sea = this.seaResult!;
+    const totalCount = land.loadedCount + sea.loadedCount;
+    const totalCorrect = land.correctCount + sea.correctCount;
+    const totalScoreChange = land.scoreChange + sea.scoreChange;
+    // Cumulative score is a progress threshold, not a spendable currency —
+    // never allowed below 0 (spec 十四), and past unlocks never re-lock
+    // just because a later run dips the score (nothing in this codebase
+    // gates an unlock on the CURRENT score value, only on historical events).
+    this.totalScore = Math.max(0, this.totalScore + totalScoreChange);
+
     this.onPauseChange(true);
     this.hud.showVehicleSettlement({
-      vehicleName, transportType, normalCount, largeCount, runScore,
-      totalScore: this.totalScore,
+      land, sea, totalCount, totalCorrect, totalIncorrect: totalCount - totalCorrect,
+      totalScoreChange, cumulativeScore: this.totalScore,
       onContinue: () => {
-        this.state = 'absent';
+        this.landState = 'absent';
+        this.seaState = 'absent';
+        this.landResult = null;
+        this.seaResult = null;
+        this.settlementActive = false;
         this.onPauseChange(false);
       },
     });

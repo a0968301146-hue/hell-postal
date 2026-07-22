@@ -22,15 +22,19 @@ export class ConveyorSystem {
   private halfWidth: number;
   private halfLength: number;
   private texture: THREE.Texture | null;
+  private onFirstUse?: () => void;
+  private hasFiredFirstUse = false;
 
   constructor(
     interactables: Map<string, InteractableObject>,
     topPos: THREE.Vector3,
     bottomPos: THREE.Vector3,
     width: number,
-    texture: THREE.Texture | null = null
+    texture: THREE.Texture | null = null,
+    onFirstUse?: () => void
   ) {
     this.interactables = interactables;
+    this.onFirstUse = onFirstUse;
     this.center = topPos.clone().add(bottomPos).multiplyScalar(0.5);
     this.alongDir = bottomPos.clone().sub(topPos).normalize();
     // alongDir has no X component (the ramp only tilts around X), so a
@@ -64,6 +68,11 @@ export class ConveyorSystem {
 
       const currentVel = obj.rigidBody.linvel();
       obj.rigidBody.setLinvel({ x: belt.x, y: currentVel.y, z: belt.z }, true);
+
+      if (!this.hasFiredFirstUse) {
+        this.hasFiredFirstUse = true;
+        this.onFirstUse?.();
+      }
     }
   }
 }

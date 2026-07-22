@@ -148,6 +148,35 @@ canvas {
   border-radius: 8px;
 }
 
+/* Loading screen — shown from initial HTML parse (before any JS runs) until
+ * main.ts hides it once Game.start() resolves, so public-network users never
+ * see a blank page while the Rapier/Three.js bundle downloads and Rapier's
+ * WASM initializes. main.ts also repurposes it to show a readable error
+ * message if init() throws, instead of leaving the screen blank. */
+#loading-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #101408;
+  color: #cfe0b8;
+  font-family: sans-serif;
+  font-size: 20px;
+  text-align: center;
+  padding: 30px;
+}
+
+#loading-screen.loading-error {
+  color: #ff4444;
+  white-space: pre-line;
+}
+
+#loading-screen.hidden {
+  display: none;
+}
+
 /* Charge Bar */
 #charge-bar-container {
   position: absolute;
@@ -220,6 +249,20 @@ canvas {
   font-size: 11px;
   color: #aaa;
   margin-top: 6px;
+}
+
+#shipment-summary .summary-route {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 6px 12px;
+  margin: 8px 0;
+  text-align: left;
+}
+
+#shipment-summary .summary-route-title {
+  font-weight: bold;
+  color: #aaffcc;
+  margin-bottom: 2px;
 }
 
 #settlement-continue-btn {
@@ -408,6 +451,397 @@ canvas {
 }
 
 
+/* ==========================================================================
+   異世界物流手冊 (Manual UI) — book-style pause/tutorial/settings/codex menu.
+   ========================================================================== */
+
+#manual-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Never display:none — that would kill the open/close transition. Instead
+   * fully non-interactive + invisible while closed. */
+  opacity: 0;
+  pointer-events: none;
+}
+
+#manual-overlay.open {
+  opacity: 1;
+  pointer-events: all;
+}
+
+.manual-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0);
+  transition: background 0.25s ease;
+}
+
+#manual-overlay.open .manual-backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.manual-book {
+  position: relative;
+  width: min(920px, 92vw);
+  height: min(600px, 86vh);
+  background: linear-gradient(180deg, #3a2e22, #2c2219);
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), inset 0 0 0 2px rgba(200, 170, 120, 0.25);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  font-family: sans-serif;
+  color: #2a2118;
+  transform: translateY(60px) scale(0.94);
+  opacity: 0;
+  transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.3, 1), opacity 0.22s ease;
+}
+
+#manual-overlay.open .manual-book {
+  transform: translateY(0) scale(1);
+  opacity: 1;
+}
+
+#manual-close-btn {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: 5;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.35);
+  color: #f0e6d2;
+  font-size: 15px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+#manual-close-btn:hover {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.manual-bookmarks {
+  position: absolute;
+  right: -34px;
+  top: 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 4;
+}
+
+.manual-bookmarks button {
+  writing-mode: vertical-rl;
+  padding: 10px 6px;
+  border: none;
+  border-radius: 0 6px 6px 0;
+  background: #6b4a2e;
+  color: #f0e6d2;
+  font-family: sans-serif;
+  font-size: 13px;
+  cursor: pointer;
+  letter-spacing: 2px;
+}
+
+.manual-bookmarks button.active {
+  background: #a8763f;
+  color: #fff;
+}
+
+.manual-codex-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 8px 4px;
+}
+
+.manual-codex-tabs.hidden {
+  display: none;
+}
+
+.manual-codex-tabs button {
+  padding: 4px 16px;
+  border: 1px solid #a8763f;
+  border-radius: 4px;
+  background: transparent;
+  color: #f0e6d2;
+  cursor: pointer;
+}
+
+.manual-codex-tabs button.active {
+  background: #a8763f;
+  color: #fff;
+}
+
+.manual-pages {
+  flex: 1;
+  display: flex;
+  gap: 0;
+  min-height: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.25);
+}
+
+.manual-page {
+  flex: 1 1 50%;
+  min-width: 0;
+  background: #f3ead6;
+  padding: 20px 22px;
+  overflow-y: auto;
+}
+
+.manual-page-left {
+  border-radius: 4px 0 0 4px;
+}
+
+.manual-page-right {
+  border-radius: 0 4px 4px 0;
+}
+
+.manual-spine {
+  width: 6px;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.25), rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.25));
+  flex: 0 0 auto;
+}
+
+.manual-page-title {
+  margin: 0 0 12px 0;
+  font-size: 19px;
+  color: #4a3420;
+  border-bottom: 2px solid #c9ad7f;
+  padding-bottom: 6px;
+}
+
+.manual-subheading {
+  margin: 0 0 10px 0;
+  font-size: 15px;
+  color: #4a3420;
+}
+
+.manual-body-text {
+  font-size: 14px;
+  line-height: 1.7;
+  color: #3a2e22;
+  white-space: pre-line;
+}
+
+.manual-hint {
+  font-size: 12px;
+  color: #8a7860;
+  margin-top: 10px;
+}
+
+.manual-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.manual-list-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #3a2e22;
+}
+
+.manual-list-row:hover {
+  background: rgba(168, 118, 63, 0.18);
+}
+
+.manual-list-row.active {
+  background: rgba(168, 118, 63, 0.35);
+}
+
+.manual-list-row.locked {
+  color: #8a7860;
+}
+
+.manual-list-icon {
+  font-size: 16px;
+  width: 20px;
+  text-align: center;
+}
+
+.manual-placeholder {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #8a7860;
+  gap: 6px;
+}
+
+.manual-placeholder-icon {
+  font-size: 40px;
+  opacity: 0.6;
+}
+
+.manual-vehicle-preview {
+  font-size: 48px;
+  text-align: center;
+  margin: 6px 0 14px 0;
+}
+
+.manual-field {
+  margin-bottom: 16px;
+}
+
+.manual-field label {
+  display: block;
+  font-size: 13px;
+  color: #4a3420;
+  margin-bottom: 6px;
+}
+
+.manual-field-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.manual-field-row label {
+  margin-bottom: 0;
+}
+
+.manual-field input[type="range"] {
+  width: 75%;
+  vertical-align: middle;
+}
+
+.manual-value {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 12px;
+  color: #6b5a42;
+  min-width: 2ch;
+}
+
+.manual-btn-group {
+  display: flex;
+  gap: 6px;
+}
+
+.manual-btn {
+  padding: 6px 14px;
+  border: 1px solid #a8763f;
+  border-radius: 4px;
+  background: #f3ead6;
+  color: #4a3420;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.manual-btn:hover {
+  background: #e6d6b0;
+}
+
+.manual-btn.active {
+  background: #a8763f;
+  color: #fff;
+}
+
+.manual-key-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.manual-key-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(168, 118, 63, 0.08);
+}
+
+.manual-key-row.capturing {
+  background: rgba(255, 200, 80, 0.35);
+}
+
+.manual-key-label {
+  font-size: 13px;
+  color: #3a2e22;
+}
+
+.manual-tag {
+  font-size: 10px;
+  color: #a05a2c;
+  border: 1px solid #a05a2c;
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin-left: 6px;
+}
+
+.manual-key-btn {
+  min-width: 96px;
+  padding: 4px 10px;
+  border: 1px solid #a8763f;
+  border-radius: 4px;
+  background: #fff;
+  color: #4a3420;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.manual-key-btn:hover {
+  background: #e6d6b0;
+}
+
+.manual-data-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(168, 118, 63, 0.25);
+  font-size: 13px;
+  color: #3a2e22;
+}
+
+.manual-notice {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: rgba(80, 140, 90, 0.18);
+  color: #2f5c37;
+  font-size: 12px;
+}
+
+.manual-notice-warn {
+  background: rgba(180, 70, 60, 0.15);
+  color: #7a2d22;
+}
+
+/* Text-size setting (spec 十) — applies to manual body text and the
+ * in-world interaction prompt, per "系統提示/教學文字/圖鑑說明/手冊說明文字". */
+body.text-size-small .manual-body-text,
+body.text-size-small .manual-list-row,
+body.text-size-small .manual-data-row { font-size: 12px; }
+body.text-size-large .manual-body-text,
+body.text-size-large .manual-list-row,
+body.text-size-large .manual-data-row { font-size: 16px; }
+
+body.text-size-small #interaction-prompt { font-size: 12px; }
+body.text-size-large #interaction-prompt { font-size: 17px; }
+
+@media (max-width: 700px) {
+  .manual-pages { flex-direction: column; }
+  .manual-spine { width: auto; height: 4px; }
+}
+
 /* Overweight label button */
 .overweight-btn {
   background: #5a2a2a !important;
@@ -424,3 +858,4 @@ canvas {
   cursor: not-allowed !important;
   pointer-events: none;
 }
+
