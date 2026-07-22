@@ -23,19 +23,27 @@ export class EnvelopeSystem {
   private scene: THREE.Scene;
   private physics: PhysicsSystem;
   private interactables: Map<string, InteractableObject>;
-  private envelopeQueue: EnvelopeData[];
+  private enabled: boolean;
+  private envelopeQueue: EnvelopeData[] = [];
   envelopeDataMap: Map<string, EnvelopeData> = new Map();
   crateObj!: InteractableObject;
   interiorPlane!: THREE.Mesh;
 
+  /** `enabled` gates this whole system out of the scene (spec "每日貨品清空
+   * 核心流程" section 三: envelope work equipment must not appear this
+   * round) while keeping the class itself intact for a future round —
+   * see feature-flags.ts ENABLE_LEGACY_MAIL_FLOW. */
   constructor(
     scene: THREE.Scene,
     physics: PhysicsSystem,
-    interactables: Map<string, InteractableObject>
+    interactables: Map<string, InteractableObject>,
+    enabled: boolean
   ) {
     this.scene = scene;
     this.physics = physics;
     this.interactables = interactables;
+    this.enabled = enabled;
+    if (!enabled) return;
 
     this.envelopeQueue = createAllEnvelopes();
     console.log('Envelope queue created:', this.envelopeQueue.length);
@@ -56,6 +64,7 @@ export class EnvelopeSystem {
   }
 
   isPlayerNearCrate(playerPos: THREE.Vector3): boolean {
+    if (!this.enabled) return false;
     const cratePos = this.crateObj.mesh.position;
     const dx = playerPos.x - cratePos.x;
     const dz = playerPos.z - cratePos.z;

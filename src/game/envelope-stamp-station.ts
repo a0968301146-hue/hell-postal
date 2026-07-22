@@ -18,10 +18,11 @@ export const ENVELOPE_TABLE = {
 };
 
 export class EnvelopeStampStation {
-  tableMesh: THREE.Group;
+  tableMesh!: THREE.Group;
   tableTopMesh!: THREE.Mesh;
-  private sensorBox: THREE.Box3;
+  private sensorBox!: THREE.Box3;
   private interactables: Map<string, InteractableObject>;
+  private enabled: boolean;
   private stableTimer = 0;
   private stableThreshold = 0.25;
   private velocityThreshold = 0.5;
@@ -29,12 +30,20 @@ export class EnvelopeStampStation {
   readyEnvelopeId: string | null = null;
   statusMessage: string = '';
 
+  /** `enabled` gates the whole table out of the scene this round (spec
+   * "每日貨品清空核心流程" section 三 — see feature-flags.ts
+   * ENABLE_LEGACY_MAIL_FLOW). game.ts skips calling update() entirely when
+   * disabled, so tableMesh/sensorBox staying unbuilt is safe — the only
+   * other public method, isPlayerNearTable(), is guarded below. */
   constructor(
     scene: THREE.Scene,
     physics: PhysicsSystem,
-    interactables: Map<string, InteractableObject>
+    interactables: Map<string, InteractableObject>,
+    enabled: boolean
   ) {
     this.interactables = interactables;
+    this.enabled = enabled;
+    if (!enabled) return;
 
     this.tableMesh = this.createTableMesh();
     this.tableMesh.position.set(ENVELOPE_TABLE.posX, FLOOR_Y, ENVELOPE_TABLE.posZ);
@@ -161,6 +170,7 @@ export class EnvelopeStampStation {
   }
 
   isPlayerNearTable(playerPos: THREE.Vector3): boolean {
+    if (!this.enabled) return false;
     const dx = playerPos.x - ENVELOPE_TABLE.posX;
     const dz = playerPos.z - ENVELOPE_TABLE.posZ;
     return Math.sqrt(dx * dx + dz * dz) < SCENE_CONFIG.interactionDistance + 1;

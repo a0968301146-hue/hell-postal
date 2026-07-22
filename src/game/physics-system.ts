@@ -57,6 +57,21 @@ export class PhysicsSystem {
     this.world.createCollider(colliderDesc, body);
   }
 
+  /** Static cuboid tilted by an arbitrary quaternion — same purpose as
+   * createStaticCuboidRotatedX but not limited to the X axis (used by the
+   * unload chute, which tilts about Z since it runs along world X). */
+  createStaticCuboidRotated(x: number, y: number, z: number, hx: number, hy: number, hz: number, rotation: THREE.Quaternion, friction = 0.7): void {
+    const bodyDesc = RAPIER.RigidBodyDesc.fixed()
+      .setTranslation(x, y, z)
+      .setRotation({ x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w });
+    const body = this.world.createRigidBody(bodyDesc);
+    const colliderDesc = RAPIER.ColliderDesc.cuboid(hx, hy, hz)
+      .setCollisionGroups((GROUP_STATIC << 16) | (GROUP_PLAYER | GROUP_BOX))
+      .setFriction(friction)
+      .setRestitution(0.05);
+    this.world.createCollider(colliderDesc, body);
+  }
+
   /** Create a cuboid collider attached to an existing body with a local offset */
   addColliderToBody(body: RAPIER.RigidBody, localX: number, localY: number, localZ: number, hx: number, hy: number, hz: number): RAPIER.Collider {
     const colliderDesc = RAPIER.ColliderDesc.cuboid(hx, hy, hz)
@@ -124,6 +139,37 @@ export class PhysicsSystem {
       .setDensity(density)
       .setCollisionGroups((GROUP_BOX << 16) | (GROUP_STATIC | GROUP_PLAYER | GROUP_BOX))
       .setFriction(0.6)
+      .setRestitution(0.05);
+    const collider = this.world.createCollider(colliderDesc, body);
+
+    return { body, collider };
+  }
+
+  /** Dynamic cylinder body — for roller cargo (spec "每日貨品清空核心流程"
+   * section 十一). Rapier's cylinder collider, like Three's CylinderGeometry,
+   * has its axis along the body's LOCAL Y — callers that want it lying on
+   * its side (so it can roll) pass a `rotation` quaternion that tips that
+   * local Y axis onto a horizontal world axis (see cargo-system.ts
+   * spawnDailyRoller). Angular damping is deliberately lower than
+   * createBoxBody's (0.6 vs 1.5) so a nudged roller can actually roll a
+   * short distance instead of stopping dead on the first frame, while still
+   * settling down rather than spinning indefinitely. */
+  createCylinderBody(
+    x: number, y: number, z: number, halfHeight: number, radius: number, density: number,
+    rotation: { x: number; y: number; z: number; w: number }
+  ): { body: RAPIER.RigidBody; collider: RAPIER.Collider } {
+    const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
+      .setTranslation(x, y, z)
+      .setRotation(rotation)
+      .setLinearDamping(1.0)
+      .setAngularDamping(0.6)
+      .setCcdEnabled(true);
+    const body = this.world.createRigidBody(bodyDesc);
+
+    const colliderDesc = RAPIER.ColliderDesc.cylinder(halfHeight, radius)
+      .setDensity(density)
+      .setCollisionGroups((GROUP_BOX << 16) | (GROUP_STATIC | GROUP_PLAYER | GROUP_BOX))
+      .setFriction(0.7)
       .setRestitution(0.05);
     const collider = this.world.createCollider(colliderDesc, body);
 

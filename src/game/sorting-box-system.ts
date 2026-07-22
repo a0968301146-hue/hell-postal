@@ -21,10 +21,17 @@ export class SortingBoxSystem {
   private countTextures: Map<string, { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture }> = new Map();
   interiorPlanes: Map<string, THREE.Mesh> = new Map();
 
-  constructor(scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>) {
+  /** `enabled` gates all sorting boxes out of the scene this round (spec
+   * "每日貨品清空核心流程" section 三 — see feature-flags.ts
+   * ENABLE_LEGACY_MAIL_FLOW). Every query method here is already naturally
+   * safe when `boxes`/`interiorPlanes` stay empty (isSortingBox/isPlacedBox/
+   * getInteriorBottomY all fall through to a false/null miss), so no extra
+   * guards are needed beyond skipping createAllBoxes(). */
+  constructor(scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>, enabled: boolean) {
     this.scene = scene;
     this.physics = physics;
     this.interactables = interactables;
+    if (!enabled) return;
     this.createAllBoxes();
     console.log('Sorting boxes created:', this.boxes.size);
   }

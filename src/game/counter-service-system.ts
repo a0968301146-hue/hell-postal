@@ -41,19 +41,28 @@ export class CounterServiceSystem {
 
   private buttonPost!: THREE.Mesh;
   private buttonLabel!: THREE.Sprite;
+  private enabled: boolean;
 
+  /** `enabled` gates the 開業按鈕/NPC queue out of the scene this round
+   * (spec "每日貨品清空核心流程" section 三 — see feature-flags.ts
+   * ENABLE_LEGACY_COUNTER). isPlayerNear() is guarded below; `phase` stays
+   * at its default 'closed' when disabled, which is already the correct
+   * "not open" reading everywhere it's checked. */
   constructor(
     scene: THREE.Scene,
     physics: PhysicsSystem,
     interactables: Map<string, InteractableObject>,
     npcSystem: CounterNpcSystem,
-    hud: HUD
+    hud: HUD,
+    enabled: boolean
   ) {
     this.scene = scene;
     this.physics = physics;
     this.interactables = interactables;
     this.npcSystem = npcSystem;
     this.hud = hud;
+    this.enabled = enabled;
+    if (!enabled) return;
     this.buildButton();
   }
 
@@ -78,6 +87,7 @@ export class CounterServiceSystem {
   }
 
   isPlayerNear(playerPos: THREE.Vector3): boolean {
+    if (!this.enabled) return false;
     const dx = playerPos.x - OPEN_BUTTON_POS.x;
     const dz = playerPos.z - OPEN_BUTTON_POS.z;
     return Math.sqrt(dx * dx + dz * dz) < SCENE_CONFIG.interactionDistance + 1;

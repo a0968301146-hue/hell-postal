@@ -61,6 +61,7 @@ export class VehicleControlSystem {
   private onVehicleDiscovered?: (config: VehicleConfig) => void;
   private onCargoLoaded?: () => void;
   private onVehicleDeparted?: () => void;
+  private enabled = true;
 
   private landVehicle: VehicleSystem | null = null;
   private seaVehicle: VehicleSystem | null = null;
@@ -91,7 +92,8 @@ export class VehicleControlSystem {
     onPauseChange: (paused: boolean) => void,
     onVehicleDiscovered?: (config: VehicleConfig) => void,
     onCargoLoaded?: () => void,
-    onVehicleDeparted?: () => void
+    onVehicleDeparted?: () => void,
+    enabled: boolean = true
   ) {
     this.scene = scene;
     this.physics = physics;
@@ -103,10 +105,19 @@ export class VehicleControlSystem {
     this.onVehicleDiscovered = onVehicleDiscovered;
     this.onCargoLoaded = onCargoLoaded;
     this.onVehicleDeparted = onVehicleDeparted;
+    this.enabled = enabled;
 
     const { centerX, centerZ, spacing } = VEHICLE_CONTROL_POS;
     this.callButtonPos = new THREE.Vector3(centerX - spacing / 2, 0, centerZ);
     this.departButtonPos = new THREE.Vector3(centerX + spacing / 2, 0, centerZ);
+    // `enabled` gates the call/depart buttons (and everything behind them)
+    // out of the scene this round (spec "每日貨品清空核心流程" section 三 —
+    // see feature-flags.ts ENABLE_VEHICLE_LOADING_FLOW). callButtonPos/
+    // departButtonPos above are cheap position math, harmless either way;
+    // getNearestButton() below is the one place that must actually check
+    // `enabled` so a disabled system can't report a button that was never
+    // built as "nearby".
+    if (!enabled) return;
     this.buildButtons();
   }
 
@@ -145,6 +156,7 @@ export class VehicleControlSystem {
   }
 
   getNearestButton(pos: THREE.Vector3): ButtonId | null {
+    if (!this.enabled) return null;
     const dCall = this.distanceXZ(pos, this.callButtonPos);
     const dDepart = this.distanceXZ(pos, this.departButtonPos);
     const range = SCENE_CONFIG.interactionDistance + 1;

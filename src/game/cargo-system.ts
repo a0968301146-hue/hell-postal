@@ -4,9 +4,11 @@ import { InteractableObject, createInteractableObject } from './interactable-obj
 import {
   CargoData, CargoLabelPreset, CargoSize,
   CARGO_LABEL_PRESETS, createCargoData, pickCargoSize, pickLargeCargoSize,
+  createDailyCargoData,
 } from './cargo-data';
 import { attachCargoLabels } from './cargo-label-visuals';
 import { FRONT_OFFICE, BACK_AREA, CARGO_SPAWN_CONFIG, LARGE_CARGO_SPAWN_POSITIONS, LABELED_CARGO_SPAWN_POSITIONS } from './logistics-layout-data';
+import { DAILY_BOX_COLOR, DAILY_ROLLER_COLOR } from './daily-flow-data';
 
 const CARGO_COLORS = [0x8b5a2b, 0xa0703a, 0x7a4e24, 0x966032, 0x8b6f47, 0x9a7040];
 // Single consistent color for ALL large cargo — a deliberately different
@@ -42,8 +44,25 @@ export class CargoSystem {
   private nextId = 1;
   private nextLargeId = 1;
   private nextLabeledId = 1;
+  private nextDailyBoxId = 1;
+  private nextDailyRollerId = 1;
 
-  constructor(scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>) {
+  private scene: THREE.Scene;
+  private physics: PhysicsSystem;
+  private interactables: Map<string, InteractableObject>;
+
+  /** `legacyTestCargoEnabled` gates ONLY the old counter/vehicle-era test
+   * cargo this constructor used to always spawn (spec "每日貨品清空核心流程"
+   * section 三/十四: "不要生成舊的測試包裹") — daily-flow cargo is spawned
+   * separately, on demand, via spawnDailyBox/spawnDailyRoller below,
+   * regardless of this flag. */
+  constructor(scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>, legacyTestCargoEnabled: boolean) {
+    this.scene = scene;
+    this.physics = physics;
+    this.interactables = interactables;
+
+    if (!legacyTestCargoEnabled) return;
+
     const frontSpots = shuffle(
       gridPositions(CARGO_SPAWN_CONFIG.frontZone.minX, CARGO_SPAWN_CONFIG.frontZone.maxX, CARGO_SPAWN_CONFIG.frontZone.minZ, CARGO_SPAWN_CONFIG.frontZone.maxZ, 0.6)
     ).slice(0, CARGO_SPAWN_CONFIG.frontOfficeCount);
@@ -87,6 +106,86 @@ export class CargoSystem {
 
   getCargoData(id: string): CargoData | undefined {
     return this.cargoDataMap.get(id);
+  }
+
+  getInteractable(id: string): InteractableObject | undefined {
+    return this.interactables.get(id);
+  }
+
+  /** Daily-flow box cargo (spec section 十). No labels, no route/cargoType
+   * distinction — see createDailyCargoData. Registered into the SAME
+   * cargoDataMap/interactables map as every other cargo item so DollySystem's
+   * findCargoOnPlatform (which checks cargoSystem.getCargoData membership)
+   * picks it up automatically, with zero changes needed there. */
+  spawnDailyBox(size: CargoSize, x: number, y: number, z: number, rotY: number): string {
+    const id = `daily-box-${this.nextDailyBoxId++}`;
+    const geo = new THREE.BoxGeometry(size.width, size.height, size.depth);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: DAILY_BOX_COLOR }));
+    mesh.position.set(x, y, z);
+    mesh.rotation.y = rotY;
+    mesh.userData.shapeType = 'box';
+    this.scene.add(mesh);
+
+    const data = createDailyCargoData(id, 'box', size);
+    const obj = createInteractableObject(id, data.displayName, mesh, size.width, size.height, size.depth);
+    const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotY, 0));
+    const { body, collider } = this.physics.createBoxBody(x, y, z, size.width / 2, size.height / 2, size.depth / 2, 250);
+    body.setRotation({ x: quat.x, y: quat.y, z: quat.z, w: quat.w }, true);
+    obj.rigidBody = body;
+    obj.collider = collider;
+
+    this.interactables.set(id, obj);
+    this.cargoDataMap.set(id, data);
+    return id;
+  }
+
+  /** Daily-flow roller cargo — CylinderGeometry tipped 90° about Z so it
+   * rests lying on its side (barrel axis along world X) and can roll (spec
+   * 十一). `dimensions` on CargoData store the TIPPED world-space AABB
+   * (width=length, height=depth=diameter) — see physics-system.ts
+   * createCylinderBody doc comment for why the collider needs the same tip. */
+  spawnDailyRoller(radius: number, length: number, x: number, y: number, z: number, yawVariance: number): string {
+    const id = `daily-roller-${this.nextDailyRollerId++}`;
+    const diameter = radius * 2;
+    const geo = new THREE.CylinderGeometry(radius, radius, length, 16);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: DAILY_ROLLER_COLOR }));
+    mesh.position.set(x, y, z);
+    const tip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
+    const yaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yawVariance);
+    const rot = yaw.multiply(tip);
+    mesh.quaternion.copy(rot);
+    mesh.userData.shapeType = 'roller';
+    this.scene.add(mesh);
+
+    const data = createDailyCargoData(id, 'roller', { width: length, height: diameter, depth: diameter });
+    const obj = createInteractableObject(id, data.displayName, mesh, length, diameter, diameter);
+    const { body, collider } = this.physics.createCylinderBody(
+      x, y, z, length / 2, radius, 220, { x: rot.x, y: rot.y, z: rot.z, w: rot.w }
+    );
+    obj.rigidBody = body;
+    obj.collider = collider;
+
+    this.interactables.set(id, obj);
+    this.cargoDataMap.set(id, data);
+    return id;
+  }
+
+  /** Fully removes a daily cargo item once it's shipped (OutboundZoneSystem)
+   * — disables + removes its rigid body, removes the mesh, and drops it
+   * from both cargoDataMap and the shared interactables map so nothing
+   * (raycasting, dolly pinning, placement-surface overlap checks) can
+   * reference it again. */
+  removeCargo(id: string): void {
+    const obj = this.interactables.get(id);
+    if (obj) {
+      if (obj.rigidBody) this.physics.removeRigidBody(obj.rigidBody);
+      obj.mesh.parent?.remove(obj.mesh);
+      obj.mesh.geometry.dispose();
+      const mat = obj.mesh.material;
+      if (Array.isArray(mat)) mat.forEach(m => m.dispose()); else mat?.dispose();
+      this.interactables.delete(id);
+    }
+    this.cargoDataMap.delete(id);
   }
 
   private spawnOne(

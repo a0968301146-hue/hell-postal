@@ -61,6 +61,16 @@ export const BACK_AREA = {
   ceilingHeight: 6,
 };
 
+/** Gap in the back area's WEST wall for the daily unloading dock (spec
+ * round "貨物清空核心流程" section 五). Sits clear of the doorway/stairs,
+ * the dolly's parked spot (7,16) and the old work-furniture cluster (now
+ * disabled, see feature-flags.ts) — see daily-flow-data.ts for the gate/
+ * chute/unload-zone geometry built around this opening. */
+export const WEST_GATE = {
+  centerZ: 15,
+  halfWidth: 2.2,
+};
+
 /** Where the conveyor drops cargo, and the open floor around it — the
  * player's main package-handling area, right behind the window. */
 export const PACKAGE_WORK_ZONE = {

@@ -11,6 +11,8 @@ import { DollySystem } from './dolly-system';
 import { HUD } from './hud';
 import { PauseManager } from './pause-manager';
 import { SettingsManager } from './settings-manager';
+import { UnloadingSystem } from './unloading-system';
+import { DailyFlowSystem } from './daily-flow-system';
 
 export class InteractionSystem {
   private raycaster: THREE.Raycaster;
@@ -30,6 +32,9 @@ export class InteractionSystem {
   private dollySystem: DollySystem;
   private pauseManager: PauseManager;
   private settingsManager: SettingsManager;
+  private unloadingSystem: UnloadingSystem;
+  private dailyFlowSystem: DailyFlowSystem;
+  private onDollyUsed?: () => void;
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -46,7 +51,10 @@ export class InteractionSystem {
     counterServiceSystem: CounterServiceSystem,
     dollySystem: DollySystem,
     pauseManager: PauseManager,
-    settingsManager: SettingsManager
+    settingsManager: SettingsManager,
+    unloadingSystem: UnloadingSystem,
+    dailyFlowSystem: DailyFlowSystem,
+    onDollyUsed?: () => void
   ) {
     this.raycaster = new THREE.Raycaster();
     this.camera = camera;
@@ -64,6 +72,9 @@ export class InteractionSystem {
     this.dollySystem = dollySystem;
     this.pauseManager = pauseManager;
     this.settingsManager = settingsManager;
+    this.unloadingSystem = unloadingSystem;
+    this.dailyFlowSystem = dailyFlowSystem;
+    this.onDollyUsed = onDollyUsed;
 
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
   }
@@ -153,7 +164,20 @@ export class InteractionSystem {
       return;
     }
 
-    // Priority 3: vehicle call/depart buttons — the two sit close enough
+    // Priority 3 (daily flow round): 開始卸貨 / 結束今天 — same
+    // nearest-wins pattern isn't needed since these two buttons sit far
+    // apart (unload dock vs... actually co-located per spec, but each has
+    // its own dedicated isPlayerNear check rather than sharing one).
+    if (this.unloadingSystem.isPlayerNearButton(this.camera.position)) {
+      this.unloadingSystem.pressButton();
+      return;
+    }
+    if (this.dailyFlowSystem.isPlayerNearButton(this.camera.position)) {
+      this.dailyFlowSystem.pressEndDayButton();
+      return;
+    }
+
+    // Priority 3 (legacy, disabled this round): vehicle call/depart buttons — the two sit close enough
     // together that a naive per-button proximity check would overlap;
     // resolve to whichever one the player is actually nearer to.
     const nearestVehicleButton = this.vehicleControlSystem.getNearestButton(this.camera.position);
@@ -176,6 +200,7 @@ export class InteractionSystem {
     if (this.dollySystem.isPlayerNear(this.camera.position)) {
       this.dollySystem.startPush();
       this.playerData.state = 'pushing-dolly';
+      this.onDollyUsed?.();
       return;
     }
 
@@ -280,6 +305,30 @@ export class InteractionSystem {
         this.hud.setCrosshairActive(false);
       } else {
         this.hud.showInteractionPrompt('信封貼郵票桌', '請先將信封放到桌面');
+        this.hud.setCrosshairActive(false);
+      }
+      return;
+    }
+
+    // 開始卸貨 button
+    if (this.unloadingSystem.isPlayerNearButton(this.camera.position)) {
+      if (this.unloadingSystem.canStartUnloading) {
+        this.hud.showInteractionPrompt('開始卸貨', '按 E 開始卸貨');
+        this.hud.setCrosshairActive(true);
+      } else {
+        this.hud.showInteractionPrompt('開始卸貨', this.unloadingSystem.startBlockedMessage());
+        this.hud.setCrosshairActive(false);
+      }
+      return;
+    }
+
+    // 結束今天 button
+    if (this.dailyFlowSystem.isPlayerNearButton(this.camera.position)) {
+      if (this.dailyFlowSystem.canEndDay) {
+        this.hud.showInteractionPrompt('結束今天', '按 E 結束今天');
+        this.hud.setCrosshairActive(true);
+      } else {
+        this.hud.showInteractionPrompt('結束今天', this.dailyFlowSystem.endDayBlockedMessage());
         this.hud.setCrosshairActive(false);
       }
       return;

@@ -18,6 +18,13 @@ export interface CargoDimensions {
   depth: number;
 }
 
+/** Which physical shape this cargo item is — added for the "每日貨品清空
+ * 核心流程" round (daily-flow-data.ts / cargo-system.ts spawnDailyBox/
+ * spawnDailyRoller). 'box' covers every existing cargo item (normal/large/
+ * labeled), 'roller' is new this round (cylinder cargo, see
+ * physics-system.ts createCylinderBody). */
+export type CargoShapeType = 'box' | 'roller';
+
 export interface CargoData {
   id: string;
   cargoType: CargoType;
@@ -32,6 +39,17 @@ export interface CargoData {
   displayName: string;
   dimensions: CargoDimensions;
   isShipped: boolean;
+  /** Defaults to 'box' for every pre-existing cargo item (createCargoData
+   * below never sets it) — only daily cargo (createDailyCargoData) sets
+   * 'roller'. */
+  shapeType: CargoShapeType;
+  /** Daily-flow round only: set true once this item has spent >=0.5s
+   * stable on its matching sorting fixture (pallet for box, rack for
+   * roller — see pallet-system.ts / roller-rack-system.ts). Persists after
+   * leaving the fixture (spec 十三/十五) — OutboundZoneSystem is the only
+   * thing that reads it. Pre-existing cargo never sets this; it stays false
+   * and unused for anything not spawned via createDailyCargoData. */
+  organized: boolean;
 }
 
 const CARGO_TYPE_DISPLAY_NAME: Record<CargoType, string> = {
@@ -79,6 +97,29 @@ export function createCargoData(id: string, preset: CargoLabelPreset, dimensions
     displayName: routePrefix + CARGO_TYPE_DISPLAY_NAME[preset.cargoType],
     dimensions,
     isShipped: false,
+    shapeType: 'box',
+    organized: false,
+  };
+}
+
+/** Daily-flow round cargo (spec "每日貨品清空核心流程") — deliberately
+ * bypasses CARGO_LABEL_PRESETS entirely: this round's boxes/rollers spawn
+ * with no labels, no route/cargo-type distinction the player needs to read
+ * (spec 十: "不需要...載具相容性"). cargoType/routeType are still populated
+ * with harmless defaults so CargoData stays a single consistent shape
+ * (spec explicitly allows keeping unused fields), but nothing this round
+ * reads them for daily cargo. */
+export function createDailyCargoData(id: string, shapeType: CargoShapeType, dimensions: CargoDimensions): CargoData {
+  return {
+    id,
+    cargoType: 'normal',
+    routeType: 'domestic',
+    labels: [],
+    displayName: shapeType === 'roller' ? '滾筒貨品' : '方形貨品',
+    dimensions,
+    isShipped: false,
+    shapeType,
+    organized: false,
   };
 }
 

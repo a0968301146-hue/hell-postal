@@ -186,6 +186,25 @@ export class DollySystem {
     return { obj, body, label, platformTopMesh: platform };
   }
 
+  /** Snaps the dolly back to its parked config position/rotation — used at
+   * the end of each day (spec "每日貨品清空核心流程" section二十: "拖板車位置
+   *與旋轉"). Safe to call while pushing (releases first, same as a normal
+   * E-key stopPush — any pinned cargo re-enables physics in place before
+   * the dolly itself snaps back). By the time this runs, DailyFlowSystem
+   * has already refused to end the day unless dailyCargoIds is empty, so
+   * pinnedCargo is expected to already be empty in practice. */
+  resetToStart(): void {
+    if (this.isPushing) this.stopPush();
+    const config = DOLLY_CONFIGS[0];
+    const rootY = DOLLY_FLOOR_Y + 0.02;
+    this.dollyObj.mesh.position.set(config.posX, rootY, config.posZ);
+    this.dollyObj.mesh.rotation.set(0, 0, 0);
+    this.dollyObj.mesh.updateMatrixWorld(true);
+    const bodyY = rootY + this.dollyObj.height / 2;
+    this.body.setNextKinematicTranslation({ x: config.posX, y: bodyY, z: config.posZ });
+    this.body.setNextKinematicRotation({ x: 0, y: 0, z: 0, w: 1 });
+  }
+
   isPlayerNear(pos: THREE.Vector3): boolean {
     const dx = pos.x - this.dollyObj.mesh.position.x;
     const dz = pos.z - this.dollyObj.mesh.position.z;

@@ -7,6 +7,12 @@ export class HUD {
   private chargeBarFill: HTMLElement;
   private shipmentSummaryEl: HTMLElement;
   private tooFarTimer: number | null = null;
+  private dailyFlowEl: HTMLElement;
+  private dailyCompleteEl: HTMLElement;
+  private toastEl: HTMLElement;
+  private toastTimer: number | null = null;
+  private dayTransitionEl: HTMLElement;
+  private dayTransitionTimer: number | null = null;
 
   constructor() {
     const hud = document.createElement('div');
@@ -53,6 +59,63 @@ export class HUD {
       <p>Tab 開啟物流手冊</p>
     `;
     hud.appendChild(this.instructionsEl);
+
+    // Daily flow status panel (spec "每日貨品清空核心流程" section 十八) —
+    // top-right, deliberately not top-left where CompassUI already sits.
+    this.dailyFlowEl = document.createElement('div');
+    this.dailyFlowEl.id = 'daily-flow-panel';
+    hud.appendChild(this.dailyFlowEl);
+
+    this.dailyCompleteEl = document.createElement('div');
+    this.dailyCompleteEl.id = 'daily-complete-banner';
+    this.dailyCompleteEl.textContent = '今日貨品已全部清空';
+    hud.appendChild(this.dailyCompleteEl);
+
+    this.toastEl = document.createElement('div');
+    this.toastEl.id = 'daily-toast';
+    hud.appendChild(this.toastEl);
+
+    this.dayTransitionEl = document.createElement('div');
+    this.dayTransitionEl.id = 'day-transition';
+    hud.appendChild(this.dayTransitionEl);
+  }
+
+  /** Daily flow status panel — updated every frame from game.ts's loop
+   * (cheap text-only DOM write, same pattern CompassUI already uses). */
+  updateDailyFlow(params: { day: number; stateLabel: string; remaining: number; completed: number; total: number }): void {
+    const { day, stateLabel, remaining, completed, total } = params;
+    this.dailyFlowEl.innerHTML = `
+      <p class="daily-flow-day">第 ${day} 天</p>
+      <p>今日狀態：${stateLabel}</p>
+      <p>今日剩餘貨品：${remaining}</p>
+      <p>今日已完成：${completed} / ${total}</p>
+    `;
+    this.dailyCompleteEl.classList.toggle('visible', remaining === 0 && total > 0);
+  }
+
+  /** Brief, non-blocking message (spec: "不要使用 browser alert") — reused
+   * for both the outbound zone's "尚未完成整理"/"已送達出貨區" messages and
+   * the unload/end-day buttons' blocked reasons. */
+  showToast(text: string): void {
+    this.toastEl.textContent = text;
+    this.toastEl.classList.add('visible');
+    if (this.toastTimer !== null) window.clearTimeout(this.toastTimer);
+    this.toastTimer = window.setTimeout(() => {
+      this.toastEl.classList.remove('visible');
+      this.toastTimer = null;
+    }, 1800);
+  }
+
+  /** "第 X 天完成" transition text (spec 十九) — brief, auto-hides, does
+   * NOT pause the game (resetting happens instantly under it). */
+  showDayTransition(text: string): void {
+    this.dayTransitionEl.textContent = text;
+    this.dayTransitionEl.classList.add('visible');
+    if (this.dayTransitionTimer !== null) window.clearTimeout(this.dayTransitionTimer);
+    this.dayTransitionTimer = window.setTimeout(() => {
+      this.dayTransitionEl.classList.remove('visible');
+      this.dayTransitionTimer = null;
+    }, 2000);
   }
 
   showInstructions(): void { this.instructionsEl.classList.remove('hidden'); }

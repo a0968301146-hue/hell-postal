@@ -3,7 +3,7 @@ import { InteractableObject } from './interactable-object';
 import { PhysicsSystem } from './physics-system';
 import {
   WALL_THICKNESS, FRONT_OFFICE, CARGO_WINDOW, CARGO_RAMP, DOORWAY, STAIRS,
-  BACK_AREA, CARGO_ZONES, LAND_DOCKS, LAND_GATE, PIER, SEA_GATE, SEA_DOCKS,
+  BACK_AREA, CARGO_ZONES, LAND_DOCKS, LAND_GATE, PIER, SEA_GATE, SEA_DOCKS, WEST_GATE,
 } from './logistics-layout-data';
 import { NPC_DOOR, NPC_AREA, PLAYER_AREA, COUNTER, COUNTER_GLASS, COUNTER_WINDOW, COUNTER_ITEM_BACKSTOP } from './counter-layout-data';
 import { createFloatingLabel } from './world-label-system';
@@ -312,7 +312,16 @@ function buildBackArea(scene: THREE.Scene, physics: PhysicsSystem): THREE.Mesh {
 
   const wallMat = stdMat(0x707070, { side: THREE.DoubleSide });
   const midY = floorY + ceilingHeight / 2;
-  addWall(scene, physics, wallMat, minX, midY, cz, WALL_THICKNESS, ceilingHeight, depth); // west — fully solid
+
+  // West wall — gap for the daily-unloading dock (see daily-flow-data.ts /
+  // WEST_GATE in logistics-layout-data.ts). Physical opening only; the
+  // UnloadingSystem's own gate panel + chute fill it visually and the daily
+  // flow's cargo spawns just inside it, never actually needing to cross
+  // this plane from the outside.
+  const westGapL = WEST_GATE.centerZ - WEST_GATE.halfWidth;
+  const westGapR = WEST_GATE.centerZ + WEST_GATE.halfWidth;
+  addWall(scene, physics, wallMat, minX, midY, (minZ + westGapL) / 2, WALL_THICKNESS, ceilingHeight, westGapL - minZ);
+  addWall(scene, physics, wallMat, minX, midY, (westGapR + maxZ) / 2, WALL_THICKNESS, ceilingHeight, maxZ - westGapR);
 
   // East wall — gap where the pier opens onto the water (sea route)
   const seaGapL = SEA_GATE.centerZ - SEA_GATE.halfWidth;

@@ -21,6 +21,12 @@ import { CompassUI } from './compass-ui';
 import { PauseManager } from './pause-manager';
 import { SettingsManager } from './settings-manager';
 import { ManualUI } from './manual-ui';
+import { ENABLE_LEGACY_COUNTER, ENABLE_LEGACY_MAIL_FLOW, ENABLE_VEHICLE_LOADING_FLOW, ENABLE_LEGACY_TEST_CARGO } from './feature-flags';
+import { DailyFlowSystem } from './daily-flow-system';
+import { UnloadingSystem } from './unloading-system';
+import { PalletSystem } from './pallet-system';
+import { RollerRackSystem } from './roller-rack-system';
+import { OutboundZoneSystem } from './outbound-zone-system';
 
 export class Game {
   private worldScene: THREE.Scene;
@@ -48,6 +54,11 @@ export class Game {
   private compassUI!: CompassUI;
   private pauseManager!: PauseManager;
   private settingsManager!: SettingsManager;
+  private dailyFlowSystem!: DailyFlowSystem;
+  private unloadingSystem!: UnloadingSystem;
+  private palletSystem!: PalletSystem;
+  private rollerRackSystem!: RollerRackSystem;
+  private outboundZoneSystem!: OutboundZoneSystem;
 
   constructor() {
     this.worldScene = new THREE.Scene();
@@ -77,19 +88,24 @@ export class Game {
     const sceneData = createLogisticsScene(this.worldScene, this.physics);
     this.interactables = sceneData.interactables;
 
-    // Envelope system + station
-    this.envelopeSystem = new EnvelopeSystem(this.worldScene, this.physics, this.interactables);
-    this.envelopeStation = new EnvelopeStampStation(this.worldScene, this.physics, this.interactables);
+    // Envelope system + station — disabled this round (spec "每日貨品清空
+    // 核心流程" section 三: envelope work equipment must not appear in the
+    // main scene), classes kept intact via feature-flags.ts ENABLE_LEGACY_MAIL_FLOW.
+    this.envelopeSystem = new EnvelopeSystem(this.worldScene, this.physics, this.interactables, ENABLE_LEGACY_MAIL_FLOW);
+    this.envelopeStation = new EnvelopeStampStation(this.worldScene, this.physics, this.interactables, ENABLE_LEGACY_MAIL_FLOW);
 
-    // Mail sorting box system
-    this.mailBagSystem = new SortingBoxSystem(this.worldScene, this.physics, this.interactables);
+    // Mail sorting box system — same flag
+    this.mailBagSystem = new SortingBoxSystem(this.worldScene, this.physics, this.interactables, ENABLE_LEGACY_MAIL_FLOW);
     this.mailSortingSystem = new MailSortingSystem(
       this.mailBagSystem, this.interactables, this.physics, this.envelopeSystem.envelopeDataMap, this.hud,
       () => this.settingsManager.fireTutorialEvent('sorting')
     );
 
-    // Normal cargo prototype (spawned before pickupSystem so surfaces below register cleanly)
-    this.cargoSystem = new CargoSystem(this.worldScene, this.physics, this.interactables);
+    // Normal cargo prototype (spawned before pickupSystem so surfaces below
+    // register cleanly) — legacy test cargo (labeled/large/normal) is
+    // disabled this round (spec 三/十四: "不要生成舊的測試包裹"); daily-flow
+    // cargo spawns separately, on demand, via UnloadingSystem below.
+    this.cargoSystem = new CargoSystem(this.worldScene, this.physics, this.interactables, ENABLE_LEGACY_TEST_CARGO);
 
     // Back-area flatbed dolly — pushable, not hand-carried (see dolly-system.ts)
     this.dollySystem = new DollySystem(this.worldScene, this.physics, this.interactables, this.cargoSystem);
@@ -101,10 +117,12 @@ export class Game {
       () => this.settingsManager.fireTutorialEvent('conveyor')
     );
 
-    // Counter NPC service prototype (front office)
+    // Counter NPC service prototype (front office) — disabled this round
+    // (spec section 三: no NPC open-for-business button/queue in the main
+    // scene), see feature-flags.ts ENABLE_LEGACY_COUNTER.
     this.counterNpcSystem = new CounterNpcSystem(this.worldScene);
     this.counterServiceSystem = new CounterServiceSystem(
-      this.worldScene, this.physics, this.interactables, this.counterNpcSystem, this.hud
+      this.worldScene, this.physics, this.interactables, this.counterNpcSystem, this.hud, ENABLE_LEGACY_COUNTER
     );
 
     this.compassUI = new CompassUI();
@@ -120,8 +138,12 @@ export class Game {
       this.pauseManager, this.settingsManager
     );
 
-    // Register the envelope stamp table top as a placement surface
-    this.pickupSystem.addPlacementSurface(this.envelopeStation.tableTopMesh);
+    // Register the envelope stamp table top as a placement surface — only
+    // exists when the legacy mail flow is enabled (tableTopMesh stays
+    // unbuilt otherwise, see envelope-stamp-station.ts).
+    if (ENABLE_LEGACY_MAIL_FLOW) {
+      this.pickupSystem.addPlacementSurface(this.envelopeStation.tableTopMesh);
+    }
 
     // Register the back-area floor, pier deck and the conveyor ramp itself
     // (so players can precisely place cargo onto its high end, not just
@@ -143,14 +165,47 @@ export class Game {
     // players precisely place cargo onto it without pushing it around
     this.pickupSystem.addPlacementSurface(this.dollySystem.platformTopMesh);
 
-    // Vehicle spawn/depart control (hall center) — needs pickupSystem to
-    // register/deregister the cargo bed surface as vehicles come and go
+    // Vehicle spawn/depart control (hall center) — disabled this round
+    // (spec section 三: no 呼叫載具/載具出發 buttons in the main scene), see
+    // feature-flags.ts ENABLE_VEHICLE_LOADING_FLOW. Still needs pickupSystem
+    // to register/deregister the cargo bed surface as vehicles come and go
+    // when it IS enabled.
     this.vehicleControlSystem = new VehicleControlSystem(
       this.worldScene, this.physics, this.interactables, this.cargoSystem, this.pickupSystem, this.hud,
       (paused) => this.setPaused(paused),
       (config) => this.settingsManager.markVehicleDiscovered(config.id),
       () => this.settingsManager.fireTutorialEvent('cargoLoaded'),
-      () => this.settingsManager.fireTutorialEvent('vehicleDeparted')
+      () => this.settingsManager.fireTutorialEvent('vehicleDeparted'),
+      ENABLE_VEHICLE_LOADING_FLOW
+    );
+
+    // Daily unload -> sort -> ship loop (this round's core — spec "每日貨品
+    // 清空核心流程"). DailyFlowSystem owns the day/state/count bookkeeping
+    // and the 結束今天 button; UnloadingSystem owns the west gate/chute/
+    // spawn sequence and the 開始卸貨 button; both report into
+    // DailyFlowSystem rather than it reaching into them.
+    this.dailyFlowSystem = new DailyFlowSystem(
+      this.worldScene, this.physics, this.hud,
+      () => { this.dollySystem.resetToStart(); this.unloadingSystem.resetGate(); },
+      () => this.settingsManager.fireTutorialEvent('dayCompleted')
+    );
+    this.unloadingSystem = new UnloadingSystem(
+      this.worldScene, this.physics, this.cargoSystem, this.dailyFlowSystem,
+      () => this.settingsManager.fireTutorialEvent('unloadingStarted')
+    );
+    this.palletSystem = new PalletSystem(
+      this.worldScene, this.physics, this.cargoSystem, this.interactables,
+      () => this.settingsManager.fireTutorialEvent('palletUsed'),
+      () => this.settingsManager.fireTutorialEvent('boxOrganized')
+    );
+    this.pickupSystem.addPlacementSurface(this.palletSystem.topMesh);
+    this.rollerRackSystem = new RollerRackSystem(
+      this.worldScene, this.physics, this.cargoSystem, this.interactables,
+      () => this.settingsManager.fireTutorialEvent('rollerOrganized')
+    );
+    this.outboundZoneSystem = new OutboundZoneSystem(
+      this.worldScene, this.interactables, this.cargoSystem, this.dailyFlowSystem, this.hud,
+      () => this.settingsManager.fireTutorialEvent('outboundShipped')
     );
 
     // Interaction system
@@ -165,7 +220,10 @@ export class Game {
       this.counterServiceSystem,
       this.dollySystem,
       this.pauseManager,
-      this.settingsManager
+      this.settingsManager,
+      this.unloadingSystem,
+      this.dailyFlowSystem,
+      () => this.settingsManager.fireTutorialEvent('dollyUsed')
     );
 
     // 異世界物流手冊 — pause menu / tutorial / settings / codex (spec round).
@@ -175,6 +233,19 @@ export class Game {
 
     this.clock.start();
     this.loop();
+  }
+
+  /** HUD display text for DailyFlowSystem.state (spec 十八's exact 4 labels
+   * plus a 'resetting' fallback — resetting is synchronous/instantaneous in
+   * practice, so it's essentially never visible, but mapped for completeness). */
+  private dailyStateLabel(state: import('./daily-flow-system').DailyState): string {
+    switch (state) {
+      case 'ready': return '準備卸貨';
+      case 'unloading': return '卸貨中';
+      case 'sorting': return '整理中';
+      case 'completed': return '今日完成';
+      case 'resetting': return '準備中...';
+    }
   }
 
   /** Called when the manual opens, so a mid-hold/mid-placement/mid-push
@@ -290,17 +361,35 @@ export class Game {
 
       this.interactionSystem.update();
       this.pickupSystem.update(deltaTime);
-      this.envelopeStation.update(deltaTime);
-      this.mailSortingSystem.update(deltaTime);
-      this.vehicleControlSystem.update(deltaTime);
+      if (ENABLE_LEGACY_MAIL_FLOW) {
+        this.envelopeStation.update(deltaTime);
+        this.mailSortingSystem.update(deltaTime);
+      }
+      if (ENABLE_VEHICLE_LOADING_FLOW) this.vehicleControlSystem.update(deltaTime);
       if (this.dollySystem.isPushing) {
         const forward = new THREE.Vector3();
         this.camera.getWorldDirection(forward);
         this.dollySystem.update(this.camera.position, forward);
       }
       this.conveyorSystem.update(deltaTime);
-      this.counterNpcSystem.update(deltaTime);
-      this.counterServiceSystem.update(deltaTime);
+      if (ENABLE_LEGACY_COUNTER) {
+        this.counterNpcSystem.update(deltaTime);
+        this.counterServiceSystem.update(deltaTime);
+      }
+
+      // Daily unload -> sort -> ship loop (spec 二十二: paused alongside
+      // everything else above while the manual/settlement/minigame is open).
+      this.unloadingSystem.update(deltaTime);
+      this.palletSystem.update(deltaTime);
+      this.rollerRackSystem.update(deltaTime);
+      this.outboundZoneSystem.update(deltaTime);
+      this.hud.updateDailyFlow({
+        day: this.dailyFlowSystem.currentDay,
+        stateLabel: this.dailyStateLabel(this.dailyFlowSystem.state),
+        remaining: this.dailyFlowSystem.remainingCargoCount,
+        completed: this.dailyFlowSystem.completedCargoCount,
+        total: this.dailyFlowSystem.totalCargoCount,
+      });
     }
 
     this.compassUI.update(this.camera);

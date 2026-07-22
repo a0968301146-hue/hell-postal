@@ -20,6 +20,7 @@ export class PickupSystem {
   private hasFiredFirstPickup = false;
   private hasFiredCounterReceive = false;
   private hasFiredCargoLabelSeen = false;
+  private hasFiredCargoPileTouched = false;
 
   // ViewModel
   viewModelScene: THREE.Scene;
@@ -120,6 +121,13 @@ export class PickupSystem {
     if (!this.hasFiredCargoLabelSeen && obj.id.startsWith('cargo-')) {
       this.hasFiredCargoLabelSeen = true;
       this.settingsManager.fireTutorialEvent('cargoLabelSeen');
+    }
+    // "拆開貨堆" unlocks on the first pickup of any daily-flow cargo item —
+    // daily-flow ids are always prefixed 'daily-' by CargoSystem's
+    // spawnDailyBox/spawnDailyRoller (see cargo-system.ts).
+    if (!this.hasFiredCargoPileTouched && obj.id.startsWith('daily-')) {
+      this.hasFiredCargoPileTouched = true;
+      this.settingsManager.fireTutorialEvent('cargoPileTouched');
     }
 
     // If picking up a container, capture envelopes inside
@@ -483,9 +491,14 @@ export class PickupSystem {
       pos.y += 0.015;
     }
 
-    // Re-enable world mesh
+    // Re-enable world mesh. Roller cargo (spec "每日貨品清空核心流程" 十一)
+    // rests lying on its side, not identity rotation like every other
+    // object — see cargo-system.ts spawnDailyRoller for the same tip quaternion.
+    const isRoller = obj.mesh.userData.shapeType === 'roller';
+    const rollerQuat = isRoller ? new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, Math.PI / 2)) : null;
     obj.mesh.position.copy(pos);
-    obj.mesh.rotation.set(0, 0, 0);
+    if (rollerQuat) obj.mesh.quaternion.copy(rollerQuat);
+    else obj.mesh.rotation.set(0, 0, 0);
     obj.mesh.visible = true;
 
     // Re-enable physics (same order as throw: enable FIRST, then set position)
@@ -495,7 +508,7 @@ export class PickupSystem {
       const bodyY = isBottomOrigin ? pos.y + obj.height / 2 : pos.y;
       this.physics.setBodyEnabled(obj.rigidBody, true);
       obj.rigidBody.setTranslation({ x: pos.x, y: bodyY, z: pos.z }, true);
-      obj.rigidBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+      obj.rigidBody.setRotation(rollerQuat ?? { x: 0, y: 0, z: 0, w: 1 }, true);
       obj.rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
       obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
     }
@@ -565,16 +578,20 @@ export class PickupSystem {
       return;
     }
 
-    // Place box in world
+    // Place box in world. Roller cargo keeps its on-side tip instead of
+    // resetting to identity — see confirmPlacement's isRoller comment above.
+    const isThrownRoller = obj.mesh.userData.shapeType === 'roller';
+    const throwRollerQuat = isThrownRoller ? new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, Math.PI / 2)) : null;
     obj.mesh.position.copy(spawnPos);
-    obj.mesh.rotation.set(0, 0, 0);
+    if (throwRollerQuat) obj.mesh.quaternion.copy(throwRollerQuat);
+    else obj.mesh.rotation.set(0, 0, 0);
     obj.mesh.visible = true;
 
     // Re-enable physics
     if (obj.rigidBody) {
       this.physics.setBodyEnabled(obj.rigidBody, true);
       obj.rigidBody.setTranslation({ x: spawnPos.x, y: spawnPos.y, z: spawnPos.z }, true);
-      obj.rigidBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+      obj.rigidBody.setRotation(throwRollerQuat ?? { x: 0, y: 0, z: 0, w: 1 }, true);
       obj.rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
       obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
 
@@ -660,7 +677,7 @@ export class PickupSystem {
     for (const s of this.additionalSurfaces) {
       if (!s.userData.interiorPlane && !s.userData.surfaceType) {
         surfaces.push(s);
-      } else if (s.userData.surfaceType === 'stamp-table' || s.userData.surfaceType === 'envelope-table' || s.userData.surfaceType === 'cargo-ramp') {
+      } else if (s.userData.surfaceType === 'stamp-table' || s.userData.surfaceType === 'envelope-table' || s.userData.surfaceType === 'cargo-ramp' || s.userData.surfaceType === 'pallet-top') {
         surfaces.push(s);
       }
     }
