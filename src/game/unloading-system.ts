@@ -8,7 +8,7 @@ import {
   UNLOAD_BUTTON_POS, DAILY_BOX_COUNT, DAILY_ROLLER_COUNT,
   DAILY_BOX_SIZE_PRESETS, DAILY_ROLLER_SIZE_PRESETS,
 } from './daily-flow-data';
-import { FRONT_OFFICE } from './logistics-layout-data';
+import { BACK_AREA } from './logistics-layout-data';
 import { SCENE_CONFIG } from './scene-manager';
 import { createFloatingLabel, updateFloatingLabel } from './world-label-system';
 
@@ -63,7 +63,7 @@ export class UnloadingSystem {
 
   private buildChute(): void {
     const { topX, topY, topZ, bottomX, bottomZ, width, thickness } = UNLOAD_CHUTE;
-    const bottomY = FRONT_OFFICE.floorY;
+    const bottomY = BACK_AREA.floorY;
     const rise = topY - bottomY;
     const run = bottomZ - topZ;
     const length = Math.sqrt(rise * rise + run * run);
@@ -91,13 +91,13 @@ export class UnloadingSystem {
     // "卸貨區" floating label, centered over the drop zone — separate from
     // the gate's own label below (spec: "卸貨區漂浮文字改為：「卸貨區」").
     const zoneLabel = createFloatingLabel('卸貨區', { width: 0.8, bg: 'rgba(30,30,20,0.75)' });
-    zoneLabel.position.set(topX, FRONT_OFFICE.floorY + 1.6, (topZ + bottomZ) / 2 + 1.0);
+    zoneLabel.position.set(topX, BACK_AREA.floorY + 1.6, (topZ + bottomZ) / 2 + 1.0);
     this.scene.add(zoneLabel);
   }
 
   private buildGate(): void {
     const { centerX, centerZ, width, height, thickness, openOffsetY } = UNLOAD_GATE;
-    this.gateClosedY = FRONT_OFFICE.floorY + height / 2;
+    this.gateClosedY = BACK_AREA.floorY + height / 2;
     this.gateOpenY = this.gateClosedY + openOffsetY;
 
     const geo = new THREE.BoxGeometry(width, height, thickness);
@@ -112,7 +112,7 @@ export class UnloadingSystem {
     // cross this wall plane in either direction (spec: "防止貨品飛出場景的
     // 隱藏安全碰撞"). Cargo always spawns already on the room side of this
     // plane (see UNLOAD_SPAWN_POINT), so it never needs to cross it.
-    this.physics.createStaticCuboid(centerX, FRONT_OFFICE.floorY + FRONT_OFFICE.ceilingHeight / 2, centerZ, width / 2, FRONT_OFFICE.ceilingHeight / 2, thickness / 2);
+    this.physics.createStaticCuboid(centerX, BACK_AREA.floorY + BACK_AREA.ceilingHeight / 2, centerZ, width / 2, BACK_AREA.ceilingHeight / 2, thickness / 2);
 
     const label = createFloatingLabel('北側卸貨口', { width: 0.9, bg: 'rgba(30,30,20,0.75)' });
     label.position.set(centerX + 0.6, this.gateClosedY + height / 2 + 0.5, centerZ);
@@ -120,7 +120,7 @@ export class UnloadingSystem {
   }
 
   private buildButton(): void {
-    const floorY = FRONT_OFFICE.floorY;
+    const floorY = BACK_AREA.floorY;
     const postHeight = 0.9;
     const post = new THREE.Mesh(
       new THREE.BoxGeometry(0.22, postHeight, 0.22),

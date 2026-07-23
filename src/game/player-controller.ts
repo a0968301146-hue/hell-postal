@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { SCENE_CONFIG } from './scene-manager';
 import { PhysicsSystem } from './physics-system';
-import { PLAYER_SPAWN } from './counter-layout-data';
+import { PLAYER_SPAWN } from './logistics-layout-data';
 import { DOLLY_PUSH_SPEED_MULTIPLIER } from './dolly-data';
 import { PlayerInteractionData } from './interactable-object';
 import { HUD } from './hud';
@@ -46,7 +46,7 @@ export class PlayerController {
     domElement.ownerDocument.removeEventListener('mousemove', rawControls._onMouseMove);
     document.addEventListener('mousemove', (e) => this.onMouseMoveCustom(e));
 
-    this.camera.position.set(PLAYER_SPAWN.x, SCENE_CONFIG.playerEyeHeight, PLAYER_SPAWN.z);
+    this.camera.position.set(PLAYER_SPAWN.x, PLAYER_SPAWN.y, PLAYER_SPAWN.z);
     // Face +Z at spawn: the logistics layout (window/ramp/back area/pier)
     // extends toward +Z from the front-office spawn point, whereas a fresh
     // THREE.PerspectiveCamera defaults to looking down -Z.

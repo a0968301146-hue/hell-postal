@@ -1,7 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { SCENE_CONFIG } from './scene-manager';
-import { PLAYER_SPAWN } from './counter-layout-data';
+import { PLAYER_SPAWN } from './logistics-layout-data';
 
 // Collision groups
 export const GROUP_STATIC = 0x0001;
@@ -115,10 +114,9 @@ export class PhysicsSystem {
   private createPlayer(): void {
     const radius = 0.35;
     const halfHeight = 0.55; // total capsule height ~1.8m
-    const startY = SCENE_CONFIG.playerEyeHeight;
 
     const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased()
-      .setTranslation(PLAYER_SPAWN.x, startY - 0.3, PLAYER_SPAWN.z);
+      .setTranslation(PLAYER_SPAWN.x, PLAYER_SPAWN.y - 0.3, PLAYER_SPAWN.z);
     this.playerBody = this.world.createRigidBody(bodyDesc);
 
     const colliderDesc = RAPIER.ColliderDesc.capsule(halfHeight, radius)

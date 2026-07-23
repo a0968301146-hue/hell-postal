@@ -94,6 +94,3 @@ export const COUNTER_WINDOW = {
 
 /** Open-for-business button, player-area side, beside the counter. */
 export const OPEN_BUTTON_POS = { x: -4.5, z: COUNTER.z + 0.9 };
-
-/** Player spawns inside the player area now that the front office is split. */
-export const PLAYER_SPAWN = { x: 0, z: 7 };

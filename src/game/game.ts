@@ -14,7 +14,6 @@ import { MailSortingSystem } from './mail-sorting-system';
 import { CargoSystem } from './cargo-system';
 import { DollySystem } from './dolly-system';
 import { VehicleControlSystem } from './vehicle-control-system';
-import { ConveyorSystem } from './conveyor-system';
 import { CounterNpcSystem } from './counter-npc-system';
 import { CounterServiceSystem } from './counter-service-system';
 import { CompassUI } from './compass-ui';
@@ -47,7 +46,6 @@ export class Game {
   private cargoSystem!: CargoSystem;
   private dollySystem!: DollySystem;
   private vehicleControlSystem!: VehicleControlSystem;
-  private conveyorSystem!: ConveyorSystem;
   private counterNpcSystem!: CounterNpcSystem;
   private counterServiceSystem!: CounterServiceSystem;
   private compassUI!: CompassUI;
@@ -108,12 +106,11 @@ export class Game {
     // Back-area flatbed dolly — pushable, not hand-carried (see dolly-system.ts)
     this.dollySystem = new DollySystem(this.worldScene, this.physics, this.interactables, this.cargoSystem);
 
-    // Conveyor belt: drives cargo down the ramp from the window to the back area
-    this.conveyorSystem = new ConveyorSystem(
-      this.interactables, sceneData.ramp.topPos, sceneData.ramp.bottomPos, sceneData.ramp.width,
-      sceneData.ramp.mesh.userData.conveyorTexture ?? null,
-      () => this.settingsManager.fireTutorialEvent('conveyor')
-    );
+    // ConveyorSystem is intentionally NOT constructed this round — the
+    // cargo window + ramp it drove cargo along were part of the
+    // front-office/dividing-wall structure removed entirely in the "刪除北
+    // 邊房間" round (see scene-manager.ts). Its class file is kept for a
+    // possible future round.
 
     // Counter NPC service prototype (front office) — disabled this round
     // (spec section 三: no NPC open-for-business button/queue in the main
@@ -143,13 +140,11 @@ export class Game {
       this.pickupSystem.addPlacementSurface(this.envelopeStation.tableTopMesh);
     }
 
-    // Register the back-area floor, pier deck and the conveyor ramp itself
-    // (so players can precisely place cargo onto its high end, not just
-    // throw it through the window) — a docked vehicle registers/deregisters
+    // Register the pier deck as an additional placement surface (the main
+    // back-area floor is already PickupSystem's default surface, passed in
+    // above as sceneData.floor) — a docked vehicle registers/deregisters
     // its own cargo bed surface as it comes and goes.
-    this.pickupSystem.addPlacementSurface(sceneData.backFloor);
     this.pickupSystem.addPlacementSurface(sceneData.pierFloor);
-    this.pickupSystem.addPlacementSurface(sceneData.ramp.mesh);
 
     // Register sorting box interior planes as placement surfaces
     for (const plane of this.mailBagSystem.interiorPlanes.values()) {
@@ -379,7 +374,6 @@ export class Game {
         this.camera.getWorldDirection(forward);
         this.dollySystem.update(this.camera.position, forward);
       }
-      this.conveyorSystem.update(deltaTime);
       if (ENABLE_LEGACY_COUNTER) {
         this.counterNpcSystem.update(deltaTime);
         this.counterServiceSystem.update(deltaTime);

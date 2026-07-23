@@ -4,7 +4,7 @@ import { HUD } from './hud';
 import { CargoSystem } from './cargo-system';
 import { END_DAY_BUTTON_POS } from './daily-flow-data';
 import { SCENE_CONFIG } from './scene-manager';
-import { FRONT_OFFICE } from './logistics-layout-data';
+import { BACK_AREA } from './logistics-layout-data';
 import { createFloatingLabel, updateFloatingLabel } from './world-label-system';
 
 export type DailyState =
@@ -64,7 +64,7 @@ export class DailyFlowSystem {
   }
 
   private buildButton(scene: THREE.Scene, physics: PhysicsSystem): void {
-    const floorY = FRONT_OFFICE.floorY;
+    const floorY = BACK_AREA.floorY;
     const postHeight = 0.9;
     const postGeo = new THREE.BoxGeometry(0.22, postHeight, 0.22);
     const postMat = new THREE.MeshStandardMaterial({ color: 0x444444 });

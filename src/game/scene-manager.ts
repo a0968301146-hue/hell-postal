@@ -2,8 +2,7 @@ import * as THREE from 'three';
 import { InteractableObject } from './interactable-object';
 import { PhysicsSystem } from './physics-system';
 import {
-  WALL_THICKNESS, FRONT_OFFICE, CARGO_WINDOW, CARGO_RAMP, DOORWAY, STAIRS,
-  BACK_AREA, CARGO_ZONES, LAND_DOCKS, LAND_GATE, PIER, SEA_GATE, SEA_DOCKS, NORTH_GATE,
+  WALL_THICKNESS, BACK_AREA, CARGO_ZONES, LAND_DOCKS, LAND_GATE, PIER, SEA_GATE, SEA_DOCKS, NORTH_GATE,
 } from './logistics-layout-data';
 import { createFloatingLabel } from './world-label-system';
 
@@ -22,14 +21,13 @@ export const SCENE_CONFIG = {
 
 export interface SceneData {
   interactables: Map<string, InteractableObject>;
-  /** Front-office floor — used by PickupSystem as its default placement raycast floor. */
+  /** Back-area floor — now the single primary floor for the whole building
+   * (the north front-office room was removed entirely this round — see
+   * buildBackArea's north wall). Used by PickupSystem as its default
+   * placement raycast floor. */
   floor: THREE.Mesh;
-  /** Back-area floor — register as an additional PickupSystem placement surface. */
-  backFloor: THREE.Mesh;
   /** Pier deck — register as an additional PickupSystem placement surface. */
   pierFloor: THREE.Mesh;
-  /** Ramp/conveyor geometry, for ConveyorSystem to drive cargo down it. */
-  ramp: { mesh: THREE.Mesh; topPos: THREE.Vector3; bottomPos: THREE.Vector3; width: number };
 }
 
 function stdMat(color: number, opts: Partial<THREE.MeshStandardMaterialParameters> = {}): THREE.MeshStandardMaterial {
@@ -54,177 +52,14 @@ export function createLogisticsScene(scene: THREE.Scene, physics: PhysicsSystem)
   dirLight.position.set(6, 14, 4);
   scene.add(dirLight);
 
-  const floor = buildFrontOffice(scene, physics);
-  buildNorthGateWall(scene, physics);
-  buildDividingWall(scene, physics);
-  const ramp = buildRamp(scene, physics);
-  buildStairs(scene, physics);
-  const backFloor = buildBackArea(scene, physics);
+  const floor = buildBackArea(scene, physics);
   buildCargoZones(scene);
   buildLandDocks(scene);
   const pierFloor = buildPierAndWater(scene, physics);
   buildSeaDocks(scene);
 
   const interactables = new Map<string, InteractableObject>();
-  return { interactables, floor, backFloor, pierFloor, ramp };
-}
-
-function buildFrontOffice(scene: THREE.Scene, physics: PhysicsSystem): THREE.Mesh {
-  const { minX, maxX, minZ, maxZ, floorY, ceilingHeight } = FRONT_OFFICE;
-  const width = maxX - minX;
-  const depth = maxZ - minZ;
-  const cx = (minX + maxX) / 2;
-  const cz = (minZ + maxZ) / 2;
-
-  const floorGeo = new THREE.PlaneGeometry(width, depth);
-  const floor = new THREE.Mesh(floorGeo, stdMat(0x74746a));
-  floor.rotation.x = -Math.PI / 2;
-  floor.position.set(cx, floorY, cz);
-  scene.add(floor);
-  physics.createStaticCuboid(cx, floorY - WALL_THICKNESS / 2, cz, width / 2, WALL_THICKNESS / 2, depth / 2);
-
-  const ceilY = floorY + ceilingHeight;
-  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), stdMat(0x555555, { side: THREE.DoubleSide }));
-  ceiling.rotation.x = Math.PI / 2;
-  ceiling.position.set(cx, ceilY, cz);
-  scene.add(ceiling);
-  physics.createStaticCuboid(cx, ceilY + WALL_THICKNESS / 2, cz, width / 2, WALL_THICKNESS / 2, depth / 2);
-
-  const wallMat = stdMat(0x8a8a80, { side: THREE.DoubleSide });
-  const midY = floorY + ceilingHeight / 2;
-
-  addWall(scene, physics, wallMat, minX, midY, cz, WALL_THICKNESS, ceilingHeight, depth); // left
-  addWall(scene, physics, wallMat, maxX, midY, cz, WALL_THICKNESS, ceilingHeight, depth); // right
-  // minZ wall has the NPC door cut into it — built separately in buildNpcDoorWall().
-  // The maxZ wall is the dividing wall — built separately with window/door cutouts.
-
-  return floor;
-}
-
-/** Gap in the front office's NORTH wall (minZ) for the daily-unload dock
- * (spec "每日貨品清空核心流程" follow-up round section 三 — replaces the old
- * counter-era NPC door; the front office's former counter/glass/NPC-area
- * geometry has been removed entirely, see history for buildCounterWall/
- * buildCounterGlass/buildAreaLabels). Physical wall opening only —
- * UnloadingSystem's own gate panel + chute fill it visually, same pattern
- * as every other gate opening in this file (LAND_GATE/SEA_GATE). */
-function buildNorthGateWall(scene: THREE.Scene, physics: PhysicsSystem): void {
-  const { minX, maxX, floorY, ceilingHeight } = FRONT_OFFICE;
-  const z = FRONT_OFFICE.minZ;
-  const wallMat = stdMat(0x8a8a80, { side: THREE.DoubleSide });
-  const midY = floorY + ceilingHeight / 2;
-
-  const gapL = NORTH_GATE.centerX - NORTH_GATE.halfWidth;
-  const gapR = NORTH_GATE.centerX + NORTH_GATE.halfWidth;
-  addWall(scene, physics, wallMat, (minX + gapL) / 2, midY, z, gapL - minX, ceilingHeight, WALL_THICKNESS);
-  addWall(scene, physics, wallMat, (gapR + maxX) / 2, midY, z, maxX - gapR, ceilingHeight, WALL_THICKNESS);
-}
-
-function buildDividingWall(scene: THREE.Scene, physics: PhysicsSystem): void {
-  const { minX, maxX, floorY, ceilingHeight } = FRONT_OFFICE;
-  const z = FRONT_OFFICE.maxZ;
-  const wallMat = stdMat(0x8a8a80, { side: THREE.DoubleSide });
-  const blackMat = stdMat(0x141414);
-  const purpleMat = stdMat(0x7a3fb8);
-
-  const winL = CARGO_WINDOW.centerX - CARGO_WINDOW.halfWidth;
-  const winR = CARGO_WINDOW.centerX + CARGO_WINDOW.halfWidth;
-  const doorL = DOORWAY.centerX - DOORWAY.halfWidth;
-  const doorR = DOORWAY.centerX + DOORWAY.halfWidth;
-  const topY = floorY + ceilingHeight;
-  const midY = floorY + ceilingHeight / 2;
-
-  // Solid segments flanking the window and door openings
-  addWall(scene, physics, wallMat, (minX + winL) / 2, midY, z, winL - minX, ceilingHeight, WALL_THICKNESS);
-  addWall(scene, physics, wallMat, (winR + doorL) / 2, midY, z, doorL - winR, ceilingHeight, WALL_THICKNESS);
-  addWall(scene, physics, wallMat, (doorR + maxX) / 2, midY, z, maxX - doorR, ceilingHeight, WALL_THICKNESS);
-
-  // Black sill + lintel framing the cargo window opening
-  addWall(scene, physics, blackMat, CARGO_WINDOW.centerX, floorY + CARGO_WINDOW.bottomY / 2, z, CARGO_WINDOW.halfWidth * 2, CARGO_WINDOW.bottomY, WALL_THICKNESS);
-  const winLintelH = topY - CARGO_WINDOW.topY;
-  addWall(scene, physics, blackMat, CARGO_WINDOW.centerX, CARGO_WINDOW.topY + winLintelH / 2, z, CARGO_WINDOW.halfWidth * 2, winLintelH, WALL_THICKNESS);
-
-  // Purple lintel marking the door/stairs opening
-  const doorLintelH = topY - DOORWAY.height;
-  addWall(scene, physics, purpleMat, DOORWAY.centerX, DOORWAY.height + doorLintelH / 2, z, DOORWAY.halfWidth * 2, doorLintelH, WALL_THICKNESS);
-}
-
-/** Canvas-texture stripes across the belt so it visibly reads as a conveyor
- * (segments/rollers), not a plain painted ramp. Returns the texture so the
- * caller can scroll it over time for a "running" look. */
-function createConveyorTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 64;
-  canvas.height = 256;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#a02b2b';
-  ctx.fillRect(0, 0, 64, 256);
-  ctx.fillStyle = '#6b1b1b';
-  const stripeH = 24;
-  for (let y = 0; y < 256; y += stripeH) {
-    ctx.fillRect(0, y, 64, 6);
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(1, 3);
-  return texture;
-}
-
-function buildRamp(scene: THREE.Scene, physics: PhysicsSystem): SceneData['ramp'] {
-  const { topX, topY, topZ, bottomX, bottomZ, width, thickness } = CARGO_RAMP;
-  const bottomY = BACK_AREA.floorY;
-  const rise = topY - bottomY;
-  const run = bottomZ - topZ;
-  const length = Math.sqrt(rise * rise + run * run);
-  // Positive angle tilts the box's +Z-local end DOWN and further in +Z —
-  // i.e. the back-area end ends up lower than the window end, as intended.
-  // (A negative angle here was the earlier "reversed" belt bug.)
-  const angle = Math.atan2(rise, run);
-
-  const cx = (topX + bottomX) / 2;
-  const cy = (topY + bottomY) / 2;
-  const cz = (topZ + bottomZ) / 2;
-
-  const texture = createConveyorTexture();
-  const geo = new THREE.BoxGeometry(width, thickness, length);
-  const rampMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: texture, color: 0xffffff }));
-  rampMesh.position.set(cx, cy, cz);
-  rampMesh.rotation.x = angle;
-  rampMesh.userData.surfaceType = 'cargo-ramp';
-  rampMesh.userData.conveyorTexture = texture;
-  scene.add(rampMesh);
-
-  physics.createStaticCuboidRotatedX(cx, cy, cz, width / 2, thickness / 2, length / 2, angle, 0.25);
-
-  return {
-    mesh: rampMesh,
-    topPos: new THREE.Vector3(topX, topY, topZ),
-    bottomPos: new THREE.Vector3(bottomX, bottomY, bottomZ),
-    width,
-  };
-}
-
-function buildStairs(scene: THREE.Scene, physics: PhysicsSystem): void {
-  const { centerX, width, topZ, bottomZ, stepCount } = STAIRS;
-  const totalDrop = FRONT_OFFICE.floorY - BACK_AREA.floorY;
-  const totalRun = bottomZ - topZ;
-  const stepDepth = totalRun / stepCount;
-  const stepHeight = totalDrop / stepCount;
-  const purpleMat = stdMat(0x9a6fd8);
-
-  for (let i = 0; i < stepCount; i++) {
-    const stepTopY = FRONT_OFFICE.floorY - stepHeight * (i + 1);
-    const stepZ = topZ + stepDepth * i + stepDepth / 2;
-    const blockH = Math.max(stepTopY - BACK_AREA.floorY, 0.05);
-    const cy = BACK_AREA.floorY + blockH / 2;
-
-    const geo = new THREE.BoxGeometry(width, blockH, stepDepth * 0.98);
-    const stepMesh = new THREE.Mesh(geo, purpleMat);
-    stepMesh.position.set(centerX, cy, stepZ);
-    scene.add(stepMesh);
-    physics.createStaticCuboid(centerX, cy, stepZ, width / 2, blockH / 2, stepDepth * 0.49);
-  }
+  return { interactables, floor, pierFloor };
 }
 
 function buildBackArea(scene: THREE.Scene, physics: PhysicsSystem): THREE.Mesh {
@@ -244,8 +79,18 @@ function buildBackArea(scene: THREE.Scene, physics: PhysicsSystem): THREE.Mesh {
   const wallMat = stdMat(0x707070, { side: THREE.DoubleSide });
   const midY = floorY + ceilingHeight / 2;
 
-  // West wall — fully solid again (the daily-unload dock moved to the front
-  // office's north wall this round, see buildNorthGateWall/NORTH_GATE).
+  // North wall — gap for the daily-unload dock (spec "刪除北邊房間" round:
+  // the separate front-office room this used to sit in has been removed
+  // entirely; this back area is now the whole building, and its own north
+  // wall carries the unload dock directly — see NORTH_GATE/UnloadingSystem).
+  // Physical opening only — UnloadingSystem's own gate panel + chute fill
+  // it visually, same pattern as every other gate opening in this file.
+  const northGapL = NORTH_GATE.centerX - NORTH_GATE.halfWidth;
+  const northGapR = NORTH_GATE.centerX + NORTH_GATE.halfWidth;
+  addWall(scene, physics, wallMat, (minX + northGapL) / 2, midY, minZ, northGapL - minX, ceilingHeight, WALL_THICKNESS);
+  addWall(scene, physics, wallMat, (northGapR + maxX) / 2, midY, minZ, maxX - northGapR, ceilingHeight, WALL_THICKNESS);
+
+  // West wall — fully solid
   addWall(scene, physics, wallMat, minX, midY, cz, WALL_THICKNESS, ceilingHeight, depth);
 
   // East wall — gap where the pier opens onto the water (sea route)

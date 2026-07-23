@@ -4,54 +4,25 @@
 // scene-manager / physics / vehicle / shipment systems.
 //
 // Coordinate convention: X = left/right, Z = depth (increasing Z = further
-// from the front-office spawn, toward the back area and pier), Y = height.
+// from the north unload dock, toward the docks and pier), Y = height.
 
 export const WALL_THICKNESS = 0.2;
 
+/** Historical footprint of the old front-office room (counter/NPC area,
+ * later the north unload dock) — the room itself was removed entirely in
+ * the "刪除北邊房間" round (scene-manager.ts no longer builds any geometry
+ * from this). Kept as plain data only because counter-layout-data.ts's
+ * still-preserved (disabled) COUNTER/NPC_AREA/PLAYER_AREA/COUNTER_GLASS
+ * definitions are expressed relative to it, and cargo-system.ts's disabled
+ * legacy-test-cargo branch references FRONT_OFFICE.floorY — both are dead
+ * code paths this round (ENABLE_LEGACY_COUNTER/ENABLE_LEGACY_TEST_CARGO are
+ * false) that would otherwise fail to compile. Not used by WORLD_BOUNDS or
+ * any real scene geometry anymore. */
 export const FRONT_OFFICE = {
   minX: -6, maxX: 6, // width 12
   minZ: -2, maxZ: 10, // depth 12
   floorY: 0,
   ceilingHeight: 4,
-};
-
-/** Black cargo window in the dividing wall — player throws cargo through here. */
-export const CARGO_WINDOW = {
-  centerX: 0,
-  halfWidth: 0.8, // opening width 1.6
-  bottomY: 0.9, // sill height above front floor
-  topY: 2.3,
-  z: FRONT_OFFICE.maxZ, // sits on the dividing wall plane
-};
-
-/** Red conveyor — cargo enters at the window sill (high) and is driven down
- * to the back-area floor (low). Run is deliberately gentle (angle keeps the
- * surface normal comfortably above PickupSystem's 0.9 flat-enough-to-place
- * threshold) so players can precisely place cargo on it, not just throw. */
-export const CARGO_RAMP = {
-  topX: CARGO_WINDOW.centerX,
-  topY: CARGO_WINDOW.bottomY,
-  topZ: FRONT_OFFICE.maxZ,
-  bottomX: CARGO_WINDOW.centerX,
-  bottomZ: FRONT_OFFICE.maxZ + 6,
-  width: 1.6,
-  thickness: 0.15,
-};
-
-/** Purple door opening + stairs — player path between front office and back area. */
-export const DOORWAY = {
-  centerX: 3.5,
-  halfWidth: 0.8, // opening width 1.6
-  height: 2.2,
-  z: FRONT_OFFICE.maxZ,
-};
-
-export const STAIRS = {
-  centerX: DOORWAY.centerX,
-  width: 1.6,
-  topZ: FRONT_OFFICE.maxZ,
-  bottomZ: FRONT_OFFICE.maxZ + 4,
-  stepCount: 6,
 };
 
 export const BACK_AREA = {
@@ -61,15 +32,24 @@ export const BACK_AREA = {
   ceilingHeight: 6,
 };
 
-/** Gap in the front office's NORTH wall (minZ) for the daily unloading dock
- * (spec "每日貨品清空核心流程" follow-up round section 三: moved here from
- * the back area's west wall, after the front-office counter/NPC area was
- * removed). See daily-flow-data.ts for the gate/chute/unload-zone geometry
- * built around this opening. */
+/** Gap in the back area's own NORTH wall (minZ) for the daily unloading
+ * dock (spec "刪除北邊房間" round: the front-office room this used to sit
+ * in was removed entirely — the back area is now the whole building, and
+ * its own north wall carries the unload dock directly). See
+ * daily-flow-data.ts for the gate/chute/unload-zone geometry built around
+ * this opening. */
 export const NORTH_GATE = {
   centerX: 0,
   halfWidth: 2.0,
 };
+
+/** Player spawn point — inside the back area, a short distance south of
+ * the north unload dock's drop zone (spec "刪除北邊房間" round: previously
+ * inside the now-removed front-office room, at that room's own floor
+ * height). `y` bakes in SCENE_CONFIG.playerEyeHeight (1.6, see
+ * scene-manager.ts) on top of BACK_AREA's floor, since this is an absolute
+ * world-space spawn height, not floor-relative. */
+export const PLAYER_SPAWN = { x: 0, y: BACK_AREA.floorY + 1.6, z: 14.8 };
 
 /** Where the conveyor drops cargo, and the open floor around it — the
  * player's main package-handling area, right behind the window. */
@@ -126,10 +106,14 @@ export const SEA_DOCKS = [
 ];
 
 /** Overall world bounds, used only for a distant backdrop / sanity checks. */
+// NOTE (spec "刪除北邊房間" round): deliberately no longer folds in
+// FRONT_OFFICE — that room's floor no longer exists, so including its old
+// footprint here would let cargo/placement validation succeed in what is
+// now empty void space north of BACK_AREA's own wall.
 export const WORLD_BOUNDS = {
-  minX: Math.min(FRONT_OFFICE.minX, BACK_AREA.minX) - 1,
-  maxX: Math.max(FRONT_OFFICE.maxX, BACK_AREA.maxX, PIER.maxX) + 40, // generous — land/sea vehicles travel well beyond the walls
-  minZ: FRONT_OFFICE.minZ - 1,
+  minX: BACK_AREA.minX - 1,
+  maxX: Math.max(BACK_AREA.maxX, PIER.maxX) + 40, // generous — land/sea vehicles travel well beyond the walls
+  minZ: BACK_AREA.minZ - 1,
   maxZ: BACK_AREA.maxZ + 40,
 };
 

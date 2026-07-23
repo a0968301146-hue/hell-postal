@@ -3,17 +3,18 @@
 // logistics-layout-data.ts (which owns the older counter/vehicle-era zones)
 // so this round's new geometry isn't scattered across scene/system files.
 // NORTH_GATE is the one exception — it lives in logistics-layout-data.ts
-// because scene-manager.ts's buildNorthGateWall() needs it alongside the
+// because scene-manager.ts's buildBackArea() needs it alongside the
 // existing LAND_GATE/SEA_GATE constants it already imports from there.
 //
-// Follow-up round ("北側卸貨口/重新啟用呼叫載具"): the unload dock moved
-// from the back area's west wall to the FRONT OFFICE's north wall, after
-// the front-office counter/NPC area was removed — the whole front office
-// room is now the "北側卸貨區". PALLET_CONFIG/ROLLER_RACK_CONFIG stay in
-// the back area, unchanged (spec section 二十: "保持不變").
-import { FRONT_OFFICE, NORTH_GATE } from './logistics-layout-data';
+// "刪除北邊房間" round: the separate front-office room the unload dock used
+// to sit inside has been removed entirely — the back area is now the whole
+// building, and the unload dock is mounted directly on ITS OWN north wall
+// (all positions below are now BACK_AREA-relative). PALLET_CONFIG/
+// ROLLER_RACK_CONFIG stay unchanged (still back-area furniture, untouched
+// by this round).
+import { BACK_AREA, NORTH_GATE } from './logistics-layout-data';
 
-const FLOOR_Y = FRONT_OFFICE.floorY;
+const FLOOR_Y = BACK_AREA.floorY;
 
 /** How many cargo items spawn each day, fixed (spec: no infinite spawn, no
  * per-day variation of the total or the box/roller ratio). */
@@ -21,17 +22,17 @@ export const DAILY_BOX_COUNT = 8;
 export const DAILY_ROLLER_COUNT = 2;
 export const DAILY_CARGO_COUNT = DAILY_BOX_COUNT + DAILY_ROLLER_COUNT;
 
-/** Wall opening + short slide the gate sits in front of. Chute now runs
- * along Z (north->south, into the front office) instead of X. Gentle slope
- * (rise 0.35 over run 1.8, ~11°) — steep enough to visibly "slide" cargo
- * into the room, shallow enough that CCD-enabled dynamic boxes/rollers
- * don't build up enough speed to tunnel or fly on landing. */
+/** Wall opening + short slide the gate sits in front of. Chute runs along Z
+ * (north->south, into the back area) — gentle slope (rise 0.35 over run
+ * 1.8, ~11°) — steep enough to visibly "slide" cargo into the room,
+ * shallow enough that CCD-enabled dynamic boxes/rollers don't build up
+ * enough speed to tunnel or fly on landing. */
 export const UNLOAD_CHUTE = {
   topX: NORTH_GATE.centerX,
   topY: FLOOR_Y + 0.35,
-  topZ: FRONT_OFFICE.minZ + 0.15,
+  topZ: BACK_AREA.minZ + 0.15,
   bottomX: NORTH_GATE.centerX,
-  bottomZ: FRONT_OFFICE.minZ + 1.95,
+  bottomZ: BACK_AREA.minZ + 1.95,
   width: NORTH_GATE.halfWidth * 2 - 0.6,
   thickness: 0.12,
 };
@@ -46,11 +47,11 @@ export const UNLOAD_CHUTE = {
  * so nothing can ever physically cross this wall plane either way. */
 export const UNLOAD_GATE = {
   centerX: NORTH_GATE.centerX,
-  centerZ: FRONT_OFFICE.minZ,
+  centerZ: BACK_AREA.minZ,
   width: NORTH_GATE.halfWidth * 2 - 0.1,
-  height: FRONT_OFFICE.ceilingHeight,
+  height: BACK_AREA.ceilingHeight,
   thickness: 0.15,
-  openOffsetY: FRONT_OFFICE.ceilingHeight, // raises it fully clear of the opening
+  openOffsetY: BACK_AREA.ceilingHeight, // raises it fully clear of the opening
   openDuration: 0.8, // seconds, within spec's 0.6-1s window
 };
 
@@ -68,21 +69,21 @@ export const UNLOAD_SPAWN_JITTER_Z = 0.35;
  * 初速度". */
 export const UNLOAD_SPAWN_IMPULSE_Z = 1.1;
 
-/** Open floor where the pile lands and gets broken apart — the front
- * office's north end, well clear of the player spawn (z=7, see
- * counter-layout-data.ts PLAYER_SPAWN) and the dividing wall/doorway at
- * FRONT_OFFICE.maxZ=10. */
+/** Open floor where the pile lands and gets broken apart — the back area's
+ * own north end, well clear of the player spawn (z=14.8, see
+ * logistics-layout-data.ts PLAYER_SPAWN) and the pallet (z=15.5). */
 export const UNLOAD_ZONE = {
   minX: NORTH_GATE.centerX - NORTH_GATE.halfWidth + 0.3, maxX: NORTH_GATE.centerX + NORTH_GATE.halfWidth - 0.3,
-  minZ: FRONT_OFFICE.minZ + 0.3, maxZ: FRONT_OFFICE.minZ + 4.3,
+  minZ: BACK_AREA.minZ + 0.3, maxZ: BACK_AREA.minZ + 4.3,
 };
 
 /** Wall-side pos for the two unloading-control buttons — off to the west
  * side of the gate opening (clear of NORTH_GATE's own X range and the
- * chute/drop path), spaced apart from each other in Z. Both now sit inside
- * the front office (spec section 十九: grouped under "北側卸貨區"). */
-export const UNLOAD_BUTTON_POS = { x: NORTH_GATE.centerX - NORTH_GATE.halfWidth - 2.0, z: FRONT_OFFICE.minZ + 1.2 };
-export const END_DAY_BUTTON_POS = { x: NORTH_GATE.centerX - NORTH_GATE.halfWidth - 2.0, z: FRONT_OFFICE.minZ + 2.8 };
+ * chute/drop path), spaced apart from each other in Z. Both sit just inside
+ * the back area's own north wall (spec section 十九: grouped under "北側卸
+ * 貨區"). */
+export const UNLOAD_BUTTON_POS = { x: NORTH_GATE.centerX - NORTH_GATE.halfWidth - 2.0, z: BACK_AREA.minZ + 1.2 };
+export const END_DAY_BUTTON_POS = { x: NORTH_GATE.centerX - NORTH_GATE.halfWidth - 2.0, z: BACK_AREA.minZ + 2.8 };
 
 /** Central sorting platform — a wooden pallet, sized within spec's 1.0-1.2m
  * range. Unchanged from the previous round (spec section 二十: "保持不變") —
