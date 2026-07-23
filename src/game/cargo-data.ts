@@ -2,6 +2,8 @@
 // Intentionally does NOT reuse PackageData — normal cargo has no address,
 // stamp, weight or destination concept yet.
 
+import { CargoCategory, pickCargoCategory } from './cargo-category-data';
+
 export type CargoType = 'normal' | 'large' | 'fragile' | 'frozen' | 'live';
 export type RouteType = 'domestic' | 'overseas';
 
@@ -87,6 +89,14 @@ export interface CargoData {
   subtype: CargoSubtype | null;
   /** Coarse size grouping for `subtype` — null for pre-existing cargo. */
   sizeClass: CargoSizeClass | null;
+  /** "貨物種類準心檢視 UI" round only: fixed at spawn (see
+   * cargo-category-data.ts pickCargoCategory()), read by
+   * cargo-inspection-system.ts/cargo-inspection-ui.ts to show a floating
+   * "種類：一般/易碎品" label when the crosshair targets this item. Null for
+   * pre-existing non-daily cargo (createCargoData below never sets it) —
+   * unrelated to `cargoType`/`labels` above (the older domestic/overseas/
+   * fragile label system), which daily cargo never populates. */
+  category: CargoCategory | null;
 }
 
 const CARGO_TYPE_DISPLAY_NAME: Record<CargoType, string> = {
@@ -139,6 +149,7 @@ export function createCargoData(id: string, preset: CargoLabelPreset, dimensions
     organized: false,
     subtype: null,
     sizeClass: null,
+    category: null,
   };
 }
 
@@ -229,6 +240,10 @@ export function createDailyCargoData(id: string, preset: CargoSubtypePreset): Ca
     organized: false,
     subtype: preset.subtype,
     sizeClass: preset.sizeClass,
+    // "貨物種類準心檢視 UI" round: decided once, at spawn, and never
+    // re-derived from the mesh/subtype/size/color afterward — see
+    // cargo-category-data.ts pickCargoCategory().
+    category: pickCargoCategory(),
   };
 }
 

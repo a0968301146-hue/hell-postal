@@ -108,6 +108,26 @@ export class CargoSystem {
     return this.cargoDataMap.get(id);
   }
 
+  /** Resolves any raycast hit (root cargo mesh, a decoration child, or an
+   * existing surface label) back to its CargoData — walks up the Object3D
+   * parent chain looking for `userData.cargoId` (set on the ROOT mesh only,
+   * by spawnDailyBox/spawnDailyRoller above), never by inspecting the
+   * mesh's name/size/color. Returns null for anything that isn't cargo, or
+   * cargo that's already been removed (removeCargo() clears the id from
+   * cargoDataMap, so a stale mesh reference resolves to null too). Used by
+   * cargo-inspection-system.ts's crosshair targeting (spec 五). */
+  resolveCargoFromObject(object: THREE.Object3D): CargoData | null {
+    let current: THREE.Object3D | null = object;
+    while (current) {
+      const cargoId = current.userData.cargoId as string | undefined;
+      if (cargoId) {
+        return this.cargoDataMap.get(cargoId) ?? null;
+      }
+      current = current.parent;
+    }
+    return null;
+  }
+
   getInteractable(id: string): InteractableObject | undefined {
     return this.interactables.get(id);
   }
@@ -129,6 +149,10 @@ export class CargoSystem {
     mesh.position.set(x, y, z);
     mesh.rotation.y = rotY;
     mesh.userData.shapeType = preset.shapeType;
+    // Root-mesh cargo id — every decoration/label child added below is a
+    // plain mesh.add() child with no id of its own, so resolveCargoFromObject()
+    // walks the parent chain up to THIS mesh to find it (spec 五).
+    mesh.userData.cargoId = id;
     decorateCargoMesh(mesh, preset.subtype, preset.color, preset.dimensions);
     this.scene.add(mesh);
 
@@ -164,6 +188,7 @@ export class CargoSystem {
     const rot = yaw.multiply(tip);
     mesh.quaternion.copy(rot);
     mesh.userData.shapeType = 'roller';
+    mesh.userData.cargoId = id;
     decorateCargoMesh(mesh, preset.subtype, preset.color, preset.dimensions);
     this.scene.add(mesh);
 

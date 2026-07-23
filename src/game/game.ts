@@ -25,6 +25,8 @@ import { DailyFlowSystem, DailyState } from './daily-flow-system';
 import { UnloadingSystem } from './unloading-system';
 import { PalletSystem } from './pallet-system';
 import { RollerRackSystem } from './roller-rack-system';
+import { CargoInspectionSystem } from './cargo-inspection-system';
+import { CargoInspectionUI } from './cargo-inspection-ui';
 
 export class Game {
   private worldScene: THREE.Scene;
@@ -55,6 +57,8 @@ export class Game {
   private unloadingSystem!: UnloadingSystem;
   private palletSystem!: PalletSystem;
   private rollerRackSystem!: RollerRackSystem;
+  private cargoInspectionSystem!: CargoInspectionSystem;
+  private cargoInspectionUI!: CargoInspectionUI;
 
   constructor() {
     this.worldScene = new THREE.Scene();
@@ -216,6 +220,13 @@ export class Game {
     // now ships by riding along with a vehicle instead of walking into a
     // ground zone (spec section 八/九). Its file is kept for a possible
     // future round; see feature-flags.ts and outbound-zone-system.ts.
+
+    // 貨物種類準心檢視 UI — read-only crosshair inspection, entirely separate
+    // from pickup/interaction. See cargo-inspection-system.ts/
+    // cargo-inspection-ui.ts for the actual logic; Game only constructs and
+    // updates them.
+    this.cargoInspectionSystem = new CargoInspectionSystem(this.camera, this.worldScene, this.cargoSystem, this.pauseManager);
+    this.cargoInspectionUI = new CargoInspectionUI();
 
     // Interaction system
     this.interactionSystem = new InteractionSystem(
@@ -427,6 +438,18 @@ export class Game {
     }
 
     this.compassUI.update(this.camera);
+
+    // Runs unconditionally (not inside the isPaused block above) so a
+    // pause takes effect on the UI the SAME frame it begins — the system
+    // itself checks pauseManager.isPaused internally and reports no target
+    // while paused, rather than leaving a stale target from the frame
+    // before pause.
+    this.cargoInspectionSystem.update();
+    if (this.cargoInspectionSystem.currentCargo?.category) {
+      this.cargoInspectionUI.show(this.cargoInspectionSystem.currentCargo.category);
+    } else {
+      this.cargoInspectionUI.hide();
+    }
 
     // Render
     this.renderer.clear();
