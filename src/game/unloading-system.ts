@@ -4,11 +4,11 @@ import { CargoSystem } from './cargo-system';
 import { DailyFlowSystem } from './daily-flow-system';
 import {
   UNLOAD_GATE, UNLOAD_CHUTE, UNLOAD_SPAWN_POINT, UNLOAD_SPAWN_INTERVAL,
-  UNLOAD_SPAWN_JITTER_X, UNLOAD_SPAWN_JITTER_Z, UNLOAD_SPAWN_IMPULSE_X,
+  UNLOAD_SPAWN_JITTER_X, UNLOAD_SPAWN_JITTER_Z, UNLOAD_SPAWN_IMPULSE_Z,
   UNLOAD_BUTTON_POS, DAILY_BOX_COUNT, DAILY_ROLLER_COUNT,
   DAILY_BOX_SIZE_PRESETS, DAILY_ROLLER_SIZE_PRESETS,
 } from './daily-flow-data';
-import { BACK_AREA } from './logistics-layout-data';
+import { FRONT_OFFICE } from './logistics-layout-data';
 import { SCENE_CONFIG } from './scene-manager';
 import { createFloatingLabel, updateFloatingLabel } from './world-label-system';
 
@@ -21,12 +21,11 @@ type UnloadPhase = 'idle' | 'gateOpening' | 'spawning' | 'settling' | 'gateClosi
 type SpawnPlan = { kind: 'box'; presetIndex: number } | { kind: 'roller'; presetIndex: number };
 
 /**
- * Owns the west unload dock's physical performance: the gate panel's open/
+ * Owns the north unload dock's physical performance: the gate panel's open/
  * close animation, the short chute, and the timed one-at-a-time spawn
  * sequence — plus the 開始卸貨 button that kicks it off. Reports state
  * transitions to DailyFlowSystem (notifyUnloadingStarted/registerDailyCargo/
- * notifyUnloadingFinished) rather than owning the day's state itself (spec
- * "每日貨品清空核心流程" section 二十三).
+ * notifyUnloadingFinished) rather than owning the day's state itself.
  */
 export class UnloadingSystem {
   private scene: THREE.Scene;
@@ -64,35 +63,44 @@ export class UnloadingSystem {
 
   private buildChute(): void {
     const { topX, topY, topZ, bottomX, bottomZ, width, thickness } = UNLOAD_CHUTE;
-    const bottomY = BACK_AREA.floorY;
+    const bottomY = FRONT_OFFICE.floorY;
     const rise = topY - bottomY;
-    const run = bottomX - topX;
+    const run = bottomZ - topZ;
     const length = Math.sqrt(rise * rise + run * run);
-    const angle = -Math.atan2(rise, run); // tilt down toward +X (into the room)
+    // Same convention as scene-manager.ts's buildRamp(): positive angle
+    // tilts the box's +Z-local end DOWN and further +Z, i.e. sloping down
+    // from the gate (topZ) toward the room interior (bottomZ), matching the
+    // new north->south cargo flow (spec: "貨物由北向南滑入").
+    const angle = Math.atan2(rise, run);
 
     const cx = (topX + bottomX) / 2;
     const cy = (topY + bottomY) / 2;
     const cz = (topZ + bottomZ) / 2;
 
-    const geo = new THREE.BoxGeometry(length, thickness, width);
+    const geo = new THREE.BoxGeometry(width, thickness, length);
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x777a70 }));
     mesh.position.set(cx, cy, cz);
-    mesh.rotation.z = angle;
+    mesh.rotation.x = angle;
     this.scene.add(mesh);
 
     // Tilted static collider — same rotated-cuboid pattern the cargo ramp
-    // uses (createStaticCuboidRotatedX), but rotated about Z since this
-    // chute runs along world X instead of Z.
-    const quat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), angle);
-    this.physics.createStaticCuboidRotated(cx, cy, cz, length / 2, thickness / 2, width / 2, quat, 0.3);
+    // uses (createStaticCuboidRotatedX): chute runs along world Z, tilted
+    // about X.
+    this.physics.createStaticCuboidRotatedX(cx, cy, cz, width / 2, thickness / 2, length / 2, angle, 0.3);
+
+    // "卸貨區" floating label, centered over the drop zone — separate from
+    // the gate's own label below (spec: "卸貨區漂浮文字改為：「卸貨區」").
+    const zoneLabel = createFloatingLabel('卸貨區', { width: 0.8, bg: 'rgba(30,30,20,0.75)' });
+    zoneLabel.position.set(topX, FRONT_OFFICE.floorY + 1.6, (topZ + bottomZ) / 2 + 1.0);
+    this.scene.add(zoneLabel);
   }
 
   private buildGate(): void {
     const { centerX, centerZ, width, height, thickness, openOffsetY } = UNLOAD_GATE;
-    this.gateClosedY = BACK_AREA.floorY + height / 2;
+    this.gateClosedY = FRONT_OFFICE.floorY + height / 2;
     this.gateOpenY = this.gateClosedY + openOffsetY;
 
-    const geo = new THREE.BoxGeometry(thickness, height, width);
+    const geo = new THREE.BoxGeometry(width, height, thickness);
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x5a4a35 }));
     mesh.position.set(centerX, this.gateClosedY, centerZ);
     this.scene.add(mesh);
@@ -101,18 +109,18 @@ export class UnloadingSystem {
     // Permanent invisible safety collider spanning the FULL wall opening
     // (floor to ceiling) — stays solid at all times regardless of the
     // visual panel's open/close animation, so nothing can ever physically
-    // cross this wall plane in either direction (spec 五/九: "防止貨品飛出
-    // 場景的隱藏安全碰撞"). Cargo always spawns already on the room side of
-    // this plane (see UNLOAD_SPAWN_POINT), so it never needs to cross it.
-    this.physics.createStaticCuboid(centerX, BACK_AREA.floorY + BACK_AREA.ceilingHeight / 2, centerZ, thickness / 2, BACK_AREA.ceilingHeight / 2, width / 2);
+    // cross this wall plane in either direction (spec: "防止貨品飛出場景的
+    // 隱藏安全碰撞"). Cargo always spawns already on the room side of this
+    // plane (see UNLOAD_SPAWN_POINT), so it never needs to cross it.
+    this.physics.createStaticCuboid(centerX, FRONT_OFFICE.floorY + FRONT_OFFICE.ceilingHeight / 2, centerZ, width / 2, FRONT_OFFICE.ceilingHeight / 2, thickness / 2);
 
-    const label = createFloatingLabel('西側卸貨口', { width: 0.9, bg: 'rgba(30,30,20,0.75)' });
-    label.position.set(centerX + 0.4, this.gateClosedY + height / 2 + 0.5, centerZ);
+    const label = createFloatingLabel('北側卸貨口', { width: 0.9, bg: 'rgba(30,30,20,0.75)' });
+    label.position.set(centerX + 0.6, this.gateClosedY + height / 2 + 0.5, centerZ);
     this.scene.add(label);
   }
 
   private buildButton(): void {
-    const floorY = BACK_AREA.floorY;
+    const floorY = FRONT_OFFICE.floorY;
     const postHeight = 0.9;
     const post = new THREE.Mesh(
       new THREE.BoxGeometry(0.22, postHeight, 0.22),
@@ -135,10 +143,19 @@ export class UnloadingSystem {
     this.scene.add(this.buttonLabel);
   }
 
-  isPlayerNearButton(pos: THREE.Vector3): boolean {
+  /** Straight-line distance to this button — used by InteractionSystem to
+   * resolve the nearest-wins tie-break against DailyFlowSystem's 結束今天
+   * button, which sits close by in the same north unload-dock cluster (spec
+   * section 十九: "四個按鈕不要互相重疊" — same pattern as
+   * VehicleControlSystem's own call/depart nearest-button resolution). */
+  buttonDistance(pos: THREE.Vector3): number {
     const dx = pos.x - UNLOAD_BUTTON_POS.x;
     const dz = pos.z - UNLOAD_BUTTON_POS.z;
-    return Math.sqrt(dx * dx + dz * dz) < SCENE_CONFIG.interactionDistance + 1;
+    return Math.sqrt(dx * dx + dz * dz);
+  }
+
+  isPlayerNearButton(pos: THREE.Vector3): boolean {
+    return this.buttonDistance(pos) < SCENE_CONFIG.interactionDistance + 1;
   }
 
   get canStartUnloading(): boolean {
@@ -197,7 +214,7 @@ export class UnloadingSystem {
 
     const obj = this.cargoSystem.getInteractable(id);
     if (obj?.rigidBody) {
-      const impulse = { x: UNLOAD_SPAWN_IMPULSE_X * (0.8 + Math.random() * 0.4), y: 0, z: -jitterZ * 0.6 };
+      const impulse = { x: -jitterX * 0.6, y: 0, z: UNLOAD_SPAWN_IMPULSE_Z * (0.8 + Math.random() * 0.4) };
       obj.rigidBody.applyImpulse(impulse, true);
     }
     return id;

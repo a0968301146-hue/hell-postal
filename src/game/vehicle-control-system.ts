@@ -9,32 +9,32 @@ import { VEHICLE_CONTROL_POS, BACK_AREA } from './logistics-layout-data';
 import { SCENE_CONFIG } from './scene-manager';
 import { createFloatingLabel, updateFloatingLabel } from './world-label-system';
 import { HUD } from './hud';
-import { evaluateCargoOutcome, scoreForOutcome } from './cargo-compliance';
+import { DailyFlowSystem } from './daily-flow-system';
 
 /** Per-vehicle lifecycle. 'departed' is a terminal holding state — the
  * vehicle mesh/body is already gone, but the route stays 'departed' (not
- * reset to 'absent') until the COMBINED settlement (both routes departed)
- * has been shown and the player presses 繼續 — see checkCombinedSettlement. */
+ * reset to 'absent') until BOTH routes have departed and the day-complete
+ * summary has been shown and the player presses 繼續 — see
+ * checkBothDeparted(). */
 export type SingleVehicleState = 'absent' | 'arriving' | 'docked' | 'departing' | 'departed';
 type RouteVehicleType = 'land' | 'sea';
 type ButtonId = 'call' | 'depart';
 
-/** Per-route departure breakdown (spec section 十二) — no more label
- * correctness this round (every cargo item already spawns correctly
- * labeled — see cargo-data.ts), so every loaded item is simply either
- * successfully receivable by this vehicle or not: correctCount +
- * incompatibleCount always equals loadedCount. */
-export interface RouteDepartureResult {
-  vehicleName: string;
-  loadedCount: number;
-  correctCount: number;
-  incompatibleCount: number;
-  scoreChange: number;
-}
-
 const CALL_IDLE_TEXT = '呼叫載具\n按 E 同時呼叫陸運與海運';
 const DEPART_IDLE_TEXT = '載具出發\n按 E 讓兩台載具一起離場';
 const DEPART_BLOCKED_TEXT = '載具尚未全部停靠';
+const NOT_UNLOADED_TEXT = '請先接收今日貨物';
+const ALREADY_HAVE_TEXT = '目前已有載具';
+const NOT_ORGANIZED_TOAST = '這件貨品尚未完成整理';
+
+/** Cargo must sit stable inside a docked vehicle's cargoBounds for this long
+ * before it counts as shipped (mirrors PalletSystem/RollerRackSystem's own
+ * 0.5s organize threshold). */
+const SHIP_STABLE_THRESHOLD = 0.5;
+const SHIP_VELOCITY_THRESHOLD = 0.4;
+/** Minimum time between repeat "尚未完成整理" toasts for the SAME item, so
+ * an unorganized item just sitting in a vehicle doesn't spam every frame. */
+const TOAST_COOLDOWN_MS = 3000;
 
 /**
  * One shared per-route state machine, driven twice (once for 'land', once
@@ -49,7 +49,6 @@ const DEPART_BLOCKED_TEXT = '載具尚未全部停靠';
 export class VehicleControlSystem {
   landState: SingleVehicleState = 'absent';
   seaState: SingleVehicleState = 'absent';
-  totalScore = 0;
 
   private scene: THREE.Scene;
   private physics: PhysicsSystem;
@@ -57,8 +56,10 @@ export class VehicleControlSystem {
   private cargoSystem: CargoSystem;
   private pickupSystem: PickupSystem;
   private hud: HUD;
+  private dailyFlowSystem: DailyFlowSystem;
   private onPauseChange: (paused: boolean) => void;
   private onVehicleDiscovered?: (config: VehicleConfig) => void;
+  private onVehicleCalled?: () => void;
   private onCargoLoaded?: () => void;
   private onVehicleDeparted?: () => void;
   private enabled = true;
@@ -67,9 +68,15 @@ export class VehicleControlSystem {
   private seaVehicle: VehicleSystem | null = null;
   private landPinnedCargo: InteractableObject[] = [];
   private seaPinnedCargo: InteractableObject[] = [];
-  private landResult: RouteDepartureResult | null = null;
-  private seaResult: RouteDepartureResult | null = null;
-  private settlementActive = false;
+  private dayCompleteShown = false;
+
+  /** Per-item stability timers for the shipment scan (spec section 十三:
+   * "至少 0.5 秒") — separate from PalletSystem/RollerRackSystem's own
+   * timers (different map, different fixture). */
+  private shipStableTimers: Map<string, number> = new Map();
+  /** Last time (performance.now()) each item's "尚未完成整理" toast fired —
+   * see TOAST_COOLDOWN_MS. */
+  private toastCooldowns: Map<string, number> = new Map();
 
   /** Round-robin indices — land and sea each cycle through their OWN config
    * list independently (spec section 十六): calling 呼叫載具 advances BOTH
@@ -89,8 +96,10 @@ export class VehicleControlSystem {
     cargoSystem: CargoSystem,
     pickupSystem: PickupSystem,
     hud: HUD,
+    dailyFlowSystem: DailyFlowSystem,
     onPauseChange: (paused: boolean) => void,
     onVehicleDiscovered?: (config: VehicleConfig) => void,
+    onVehicleCalled?: () => void,
     onCargoLoaded?: () => void,
     onVehicleDeparted?: () => void,
     enabled: boolean = true
@@ -101,8 +110,10 @@ export class VehicleControlSystem {
     this.cargoSystem = cargoSystem;
     this.pickupSystem = pickupSystem;
     this.hud = hud;
+    this.dailyFlowSystem = dailyFlowSystem;
     this.onPauseChange = onPauseChange;
     this.onVehicleDiscovered = onVehicleDiscovered;
+    this.onVehicleCalled = onVehicleCalled;
     this.onCargoLoaded = onCargoLoaded;
     this.onVehicleDeparted = onVehicleDeparted;
     this.enabled = enabled;
@@ -165,26 +176,41 @@ export class VehicleControlSystem {
   }
 
   get isPaused(): boolean {
-    return this.settlementActive;
+    return this.dayCompleteShown;
   }
 
+  /** Allowed only once today's cargo has actually been unloaded (spec
+   * section 七: sorting/loading), and only while no vehicle already exists
+   * for this route pair. */
   get canCall(): boolean {
-    return this.landState === 'absent' && this.seaState === 'absent';
+    const flowState = this.dailyFlowSystem.state;
+    const flowAllows = flowState === 'sorting' || flowState === 'loading';
+    return flowAllows && this.landState === 'absent' && this.seaState === 'absent';
   }
 
+  /** Allowed only once BOTH routes are docked AND every daily cargo item
+   * has been shipped (spec section 十四) — dailyFlowSystem.state only
+   * reaches 'completed' once refreshCompletion() confirms 100% shipped, so
+   * checking it here covers conditions 2/3/5 from the spec in one read. */
   get canDepart(): boolean {
-    return this.landState === 'docked' && this.seaState === 'docked';
+    return this.landState === 'docked' && this.seaState === 'docked' && this.dailyFlowSystem.state === 'completed';
   }
 
   callBlockedMessage(): string {
-    if (this.settlementActive) return '結算尚未完成';
-    const anyMoving = this.landState === 'arriving' || this.landState === 'departing'
-      || this.seaState === 'arriving' || this.seaState === 'departing';
-    if (anyMoving) return '載具正在移動';
-    return '目前已有載具';
+    const flowState = this.dailyFlowSystem.state;
+    if (flowState === 'ready' || flowState === 'unloading') return NOT_UNLOADED_TEXT;
+    if (this.landState !== 'absent' || this.seaState !== 'absent') {
+      const anyMoving = this.landState === 'arriving' || this.landState === 'departing'
+        || this.seaState === 'arriving' || this.seaState === 'departing';
+      return anyMoving ? '載具正在移動' : ALREADY_HAVE_TEXT;
+    }
+    return ALREADY_HAVE_TEXT;
   }
 
   departBlockedMessage(): string {
+    if (this.landState !== 'docked' || this.seaState !== 'docked') return DEPART_BLOCKED_TEXT;
+    const remaining = this.dailyFlowSystem.remainingCargoCount;
+    if (remaining > 0) return `還有 ${remaining} 件今日貨物尚未裝載`;
     return DEPART_BLOCKED_TEXT;
   }
 
@@ -204,6 +230,7 @@ export class VehicleControlSystem {
     }
     this.spawnVehicle('land');
     this.spawnVehicle('sea');
+    this.onVehicleCalled?.();
   }
 
   private spawnVehicle(type: RouteVehicleType): void {
@@ -221,37 +248,25 @@ export class VehicleControlSystem {
     this.onVehicleDiscovered?.(config);
   }
 
-  /** 載具出發 — only proceeds once BOTH routes are docked. Each object is
-   * assigned to at most one route's pinned-cargo list: normally the two
-   * cargoBounds never overlap (land dock and sea docks are far apart), but
-   * if one ever did fall inside both, it's assigned to whichever bay center
-   * is nearer — a deterministic, explicit tie-break rather than double-
-   * counting it or leaving it ambiguous. */
+  /** 載具出發 — only proceeds once canDepart is true (both docked, every
+   * daily cargo item shipped — see canDepart's doc comment). Pinned lists
+   * come straight from each item's already-known shippedVehicleType (set by
+   * the per-frame shipment scan below) rather than re-scanning cargoBounds
+   * here, since by now every daily cargo item is guaranteed shipped=true
+   * under exactly one route. */
   pressDepartButton(): void {
     if (!this.canDepart || !this.landVehicle || !this.seaVehicle) {
       this.flash(this.departLabel, this.departBlockedMessage(), DEPART_IDLE_TEXT);
       return;
     }
 
-    const land = this.landVehicle;
-    const sea = this.seaVehicle;
     const landValid: InteractableObject[] = [];
     const seaValid: InteractableObject[] = [];
-
-    for (const obj of this.interactables.values()) {
-      if (!this.cargoSystem.getCargoData(obj.id)) continue;
-      if (obj.isHeld) continue;
-      const inLand = land.isInCargoBay(obj.mesh.position);
-      const inSea = sea.isInCargoBay(obj.mesh.position);
-      if (inLand && inSea) {
-        const dLand = this.distanceXZ(obj.mesh.position, land.position);
-        const dSea = this.distanceXZ(obj.mesh.position, sea.position);
-        (dLand <= dSea ? landValid : seaValid).push(obj);
-      } else if (inLand) {
-        landValid.push(obj);
-      } else if (inSea) {
-        seaValid.push(obj);
-      }
+    for (const id of this.dailyFlowSystem.dailyCargoIds) {
+      const data = this.cargoSystem.getCargoData(id);
+      const obj = this.interactables.get(id);
+      if (!data || !obj || !data.shipped) continue; // defensive — canDepart already guarantees this
+      (data.shippedVehicleType === 'sea' ? seaValid : landValid).push(obj);
     }
 
     this.landPinnedCargo = landValid;
@@ -260,9 +275,9 @@ export class VehicleControlSystem {
     this.pinCargoPhysics(seaValid);
     this.landState = 'departing';
     this.seaState = 'departing';
+    this.dailyFlowSystem.notifyDeparting();
 
     this.onVehicleDeparted?.();
-    if (landValid.length + seaValid.length > 0) this.onCargoLoaded?.();
   }
 
   private pinCargoPhysics(list: InteractableObject[]): void {
@@ -279,6 +294,7 @@ export class VehicleControlSystem {
   update(deltaTime: number): void {
     this.updateRoute('land', deltaTime);
     this.updateRoute('sea', deltaTime);
+    this.scanCargoForShipment(deltaTime);
   }
 
   private updateRoute(type: RouteVehicleType, deltaTime: number): void {
@@ -290,6 +306,9 @@ export class VehicleControlSystem {
       const arrived = vehicle.moveToward(vehicle.config.dockPosition, deltaTime, []);
       if (arrived) {
         if (type === 'land') this.landState = 'docked'; else this.seaState = 'docked';
+        // Player can start loading into whichever vehicle just arrived,
+        // without waiting for the other route (spec section 六/七).
+        this.dailyFlowSystem.notifyVehicleDocked();
       }
       return;
     }
@@ -301,37 +320,101 @@ export class VehicleControlSystem {
     }
   }
 
-  /** Evaluates each pinned item's outcome ONLY here, at actual departure —
-   * never at load time or button-press time (spec 十: "出發前不會顯示錯誤
-   * 提示"). An incompatible item still ships; it just contributes -1
-   * instead of +1 (spec 十一). */
+  /** Continuously scans every daily cargo item against whichever vehicles
+   * are currently 'docked' — organized cargo that sits stable inside a
+   * cargoBounds for SHIP_STABLE_THRESHOLD seconds gets marked shipped
+   * (spec section 九). Un-organized cargo in a bounds gets a throttled
+   * "尚未完成整理" toast instead (spec 十一). Anything previously shipped
+   * that leaves the bounds (or gets picked back up) immediately un-ships
+   * (spec 十三) — no debounce needed on that direction since it only
+   * happens from a deliberate player action, not physics jitter. */
+  private scanCargoForShipment(deltaTime: number): void {
+    const land = this.landState === 'docked' ? this.landVehicle : null;
+    const sea = this.seaState === 'docked' ? this.seaVehicle : null;
+    if (!land && !sea) return;
+
+    let anyChanged = false;
+    const now = performance.now();
+
+    for (const id of this.dailyFlowSystem.dailyCargoIds) {
+      const obj = this.interactables.get(id);
+      const data = this.cargoSystem.getCargoData(id);
+      if (!obj || !data) continue;
+
+      if (obj.isHeld || !obj.mesh.visible) {
+        this.shipStableTimers.delete(id);
+        if (data.shipped) { data.shipped = false; data.shippedVehicleType = null; anyChanged = true; }
+        continue;
+      }
+
+      const inLand = land ? land.isInCargoBay(obj.mesh.position) : false;
+      const inSea = sea ? sea.isInCargoBay(obj.mesh.position) : false;
+      let targetType: RouteVehicleType | null = null;
+      if (inLand && inSea) {
+        const dLand = this.distanceXZ(obj.mesh.position, land!.position);
+        const dSea = this.distanceXZ(obj.mesh.position, sea!.position);
+        targetType = dLand <= dSea ? 'land' : 'sea';
+      } else if (inLand) targetType = 'land';
+      else if (inSea) targetType = 'sea';
+
+      if (!targetType) {
+        this.shipStableTimers.delete(id);
+        if (data.shipped) { data.shipped = false; data.shippedVehicleType = null; anyChanged = true; }
+        continue;
+      }
+
+      if (!data.organized) {
+        this.shipStableTimers.delete(id);
+        if (data.shipped) { data.shipped = false; data.shippedVehicleType = null; anyChanged = true; }
+        const lastToast = this.toastCooldowns.get(id) ?? 0;
+        if (now - lastToast > TOAST_COOLDOWN_MS) {
+          this.toastCooldowns.set(id, now);
+          this.hud.showToast(NOT_ORGANIZED_TOAST);
+        }
+        continue;
+      }
+
+      if (data.shipped) {
+        if (data.shippedVehicleType !== targetType) data.shippedVehicleType = targetType;
+        continue;
+      }
+
+      let stable = true;
+      if (obj.rigidBody) {
+        const lv = obj.rigidBody.linvel();
+        const av = obj.rigidBody.angvel();
+        const speed = Math.sqrt(lv.x ** 2 + lv.y ** 2 + lv.z ** 2);
+        const angSpeed = Math.sqrt(av.x ** 2 + av.y ** 2 + av.z ** 2);
+        stable = speed < SHIP_VELOCITY_THRESHOLD && angSpeed < SHIP_VELOCITY_THRESHOLD;
+      }
+      const prev = this.shipStableTimers.get(id) ?? 0;
+      const next = stable ? prev + deltaTime : 0;
+      this.shipStableTimers.set(id, next);
+
+      if (next >= SHIP_STABLE_THRESHOLD) {
+        data.shipped = true;
+        data.shippedVehicleType = targetType;
+        this.shipStableTimers.delete(id);
+        anyChanged = true;
+        this.onCargoLoaded?.();
+      }
+    }
+
+    if (anyChanged) this.dailyFlowSystem.refreshCompletion();
+  }
+
+  /** Destroys each pinned item's mesh/collider/CargoData entirely — only
+   * once the vehicle carrying it has actually left the scene (spec section
+   * 十: "載具離開場景後,才正式銷毀"), never at load time or button-press
+   * time. Reuses CargoSystem's own removeCargo (spec: "不要另寫第二套互相
+   * 衝突的附著系統"). */
   private finishOneDeparture(type: RouteVehicleType): void {
     const vehicle = type === 'land' ? this.landVehicle : this.seaVehicle;
     const pinned = type === 'land' ? this.landPinnedCargo : this.seaPinnedCargo;
     if (!vehicle) return;
 
-    let correctCount = 0;
-    let incompatibleCount = 0;
-    let scoreChange = 0;
-
     for (const obj of pinned) {
-      const cargo = this.cargoSystem.getCargoData(obj.id);
-      if (!cargo) continue; // pressDepartButton only pins objects with cargo data
-      const outcome = evaluateCargoOutcome(cargo, vehicle.config);
-      if (outcome.successful) correctCount++;
-      else incompatibleCount++;
-      scoreChange += scoreForOutcome(outcome);
-    }
-
-    const result: RouteDepartureResult = {
-      vehicleName: vehicle.config.displayName,
-      loadedCount: pinned.length,
-      correctCount, incompatibleCount, scoreChange,
-    };
-
-    for (const obj of pinned) {
-      obj.mesh.visible = false;
-      this.interactables.delete(obj.id);
+      this.cargoSystem.removeCargo(obj.id);
     }
     this.pickupSystem.removePlacementSurface(vehicle.cargoBedTopMesh);
     vehicle.dispose();
@@ -340,50 +423,44 @@ export class VehicleControlSystem {
       this.landVehicle = null;
       this.landPinnedCargo = [];
       this.landState = 'departed';
-      this.landResult = result;
     } else {
       this.seaVehicle = null;
       this.seaPinnedCargo = [];
       this.seaState = 'departed';
-      this.seaResult = result;
     }
 
-    this.checkCombinedSettlement();
+    this.checkBothDeparted();
   }
 
   /** Only fires once both routes have independently finished departing —
-   * `settlementActive` guards against either route's transition re-firing
-   * this after the panel is already up (both will be 'departed' the whole
+   * `dayCompleteShown` guards against either route's transition re-firing
+   * this after the panel is already up (both stay 'departed' the whole
    * time the panel is open, since they only reset to 'absent' on 繼續). */
-  private checkCombinedSettlement(): void {
-    if (this.landState === 'departed' && this.seaState === 'departed' && !this.settlementActive) {
-      this.settlementActive = true;
-      this.showCombinedSettlement();
+  private checkBothDeparted(): void {
+    if (this.landState === 'departed' && this.seaState === 'departed' && !this.dayCompleteShown) {
+      this.dayCompleteShown = true;
+      this.showDayCompleteSummary();
     }
   }
 
-  private showCombinedSettlement(): void {
-    const land = this.landResult!;
-    const sea = this.seaResult!;
-    const totalCount = land.loadedCount + sea.loadedCount;
-    const totalCorrect = land.correctCount + sea.correctCount;
-    const totalScoreChange = land.scoreChange + sea.scoreChange;
-    // Cumulative score is a progress threshold, not a spendable currency —
-    // never allowed below 0 (spec 十四), and past unlocks never re-lock
-    // just because a later run dips the score (nothing in this codebase
-    // gates an unlock on the CURRENT score value, only on historical events).
-    this.totalScore = Math.max(0, this.totalScore + totalScoreChange);
+  /** Simplified completion screen (this round drops the old score/
+   * correct-vs-incompatible breakdown entirely — spec section 十六: no more
+   * 正確受理/不相容貨物/國內海外判定/加分扣分). By the time both vehicles
+   * have departed, every daily cargo item has already been destroyed
+   * (finishOneDeparture above), so the three counts are all just
+   * totalCargoCount — canDepart already guaranteed 100% organized+shipped
+   * before departure could begin. */
+  private showDayCompleteSummary(): void {
+    const total = this.dailyFlowSystem.totalCargoCount;
 
+    this.dailyFlowSystem.notifyDayComplete();
     this.onPauseChange(true);
-    this.hud.showVehicleSettlement({
-      land, sea, totalCount, totalCorrect, totalIncorrect: totalCount - totalCorrect,
-      totalScoreChange, cumulativeScore: this.totalScore,
+    this.hud.showDayCompleteSummary({
+      total, organized: total, loaded: total,
       onContinue: () => {
         this.landState = 'absent';
         this.seaState = 'absent';
-        this.landResult = null;
-        this.seaResult = null;
-        this.settlementActive = false;
+        this.dayCompleteShown = false;
         this.onPauseChange(false);
       },
     });

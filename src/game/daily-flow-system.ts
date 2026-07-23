@@ -1,45 +1,62 @@
 import * as THREE from 'three';
 import { PhysicsSystem } from './physics-system';
 import { HUD } from './hud';
+import { CargoSystem } from './cargo-system';
 import { END_DAY_BUTTON_POS } from './daily-flow-data';
 import { SCENE_CONFIG } from './scene-manager';
-import { BACK_AREA } from './logistics-layout-data';
+import { FRONT_OFFICE } from './logistics-layout-data';
 import { createFloatingLabel, updateFloatingLabel } from './world-label-system';
 
-export type DailyState = 'ready' | 'unloading' | 'sorting' | 'completed' | 'resetting';
+export type DailyState =
+  | 'ready' | 'unloading' | 'sorting' | 'loading' | 'completed'
+  | 'departing' | 'dayComplete' | 'resetting';
 
 const IDLE_TEXT = '結束今天\n按 E 結束';
-const BLOCKED_TEXT = '結束今天\n請先清空今日所有貨品';
+const BLOCKED_TEXT = '結束今天\n請先完成今日出貨';
 
 /**
- * Owns the abstract "one day" state machine for the daily unload->sort->ship
- * loop (spec "每日貨品清空核心流程" section 七) — currentDay/state/counts/
- * dailyCargoIds — plus the 結束今天 button, since pressing it is exactly
- * what drives the state transition this class is responsible for.
+ * Owns the abstract "one day" state machine for the daily unload->sort->
+ * ship-via-vehicle loop — currentDay/state/dailyCargoIds — plus the 結束
+ * 今天 button, since pressing it is exactly what drives the state
+ * transition this class is responsible for.
+ *
+ * remaining/organized/shipped counts are all DERIVED getters that re-scan
+ * dailyCargoIds against CargoSystem's live CargoData each time they're
+ * read, rather than separately-tracked counters that could drift out of
+ * sync with the real per-item organized/shipped flags (which
+ * PalletSystem/RollerRackSystem/VehicleControlSystem mutate directly) —
+ * this sidesteps the whole class of double-count/stale-count bugs the spec
+ * explicitly worries about, at the cost of an O(dailyCargoIds) scan per
+ * read (10 items, negligible).
  *
  * Deliberately does NOT know how to spawn cargo or animate the gate
- * (UnloadingSystem's job) or judge organized-ness (PalletSystem/
- * RollerRackSystem's job) or remove shipped cargo (OutboundZoneSystem's
- * job) — those systems call INTO this one (registerDailyCargo/
- * notifyUnloadingStarted/notifyUnloadingFinished/markCompleted) rather than
- * this class reaching into them, keeping the state machine itself the
- * single source of truth for "what day is it / are we allowed to X".
+ * (UnloadingSystem's job), judge organized-ness (PalletSystem/
+ * RollerRackSystem's job), or judge/pin/destroy shipped cargo
+ * (VehicleControlSystem's job) — those systems call INTO this one
+ * (registerDailyCargo/notifyUnloadingStarted/notifyUnloadingFinished/
+ * notifyVehicleDocked/refreshCompletion/notifyDeparting/notifyDayComplete)
+ * rather than this class reaching into them, keeping the state machine
+ * itself the single source of truth for "what day is it / are we allowed
+ * to X".
  */
 export class DailyFlowSystem {
   currentDay = 1;
   state: DailyState = 'ready';
   dailyCargoIds: Set<string> = new Set();
   totalCargoCount = 0;
-  remainingCargoCount = 0;
-  completedCargoCount = 0;
   hasUnloadedToday = false;
 
+  private cargoSystem: CargoSystem;
   private hud: HUD;
   private resetTools: () => void;
   private onDayCompleted?: () => void;
   private buttonLabel!: THREE.Sprite;
 
-  constructor(scene: THREE.Scene, physics: PhysicsSystem, hud: HUD, resetTools: () => void, onDayCompleted?: () => void) {
+  constructor(
+    scene: THREE.Scene, physics: PhysicsSystem, cargoSystem: CargoSystem, hud: HUD,
+    resetTools: () => void, onDayCompleted?: () => void
+  ) {
+    this.cargoSystem = cargoSystem;
     this.hud = hud;
     this.resetTools = resetTools;
     this.onDayCompleted = onDayCompleted;
@@ -47,7 +64,7 @@ export class DailyFlowSystem {
   }
 
   private buildButton(scene: THREE.Scene, physics: PhysicsSystem): void {
-    const floorY = BACK_AREA.floorY;
+    const floorY = FRONT_OFFICE.floorY;
     const postHeight = 0.9;
     const postGeo = new THREE.BoxGeometry(0.22, postHeight, 0.22);
     const postMat = new THREE.MeshStandardMaterial({ color: 0x444444 });
@@ -68,18 +85,53 @@ export class DailyFlowSystem {
     scene.add(this.buttonLabel);
   }
 
-  isPlayerNearButton(pos: THREE.Vector3): boolean {
+  /** Straight-line distance to this button — see UnloadingSystem's
+   * buttonDistance doc comment for why (nearest-wins tie-break with the
+   * nearby 開始卸貨 button). */
+  buttonDistance(pos: THREE.Vector3): number {
     const dx = pos.x - END_DAY_BUTTON_POS.x;
     const dz = pos.z - END_DAY_BUTTON_POS.z;
-    return Math.sqrt(dx * dx + dz * dz) < SCENE_CONFIG.interactionDistance + 1;
+    return Math.sqrt(dx * dx + dz * dz);
+  }
+
+  isPlayerNearButton(pos: THREE.Vector3): boolean {
+    return this.buttonDistance(pos) < SCENE_CONFIG.interactionDistance + 1;
+  }
+
+  /** How many of today's cargo have organized === true. */
+  get organizedCount(): number {
+    let n = 0;
+    for (const id of this.dailyCargoIds) {
+      if (this.cargoSystem.getCargoData(id)?.organized) n++;
+    }
+    return n;
+  }
+  get unorganizedCount(): number {
+    return this.totalCargoCount - this.organizedCount;
+  }
+
+  /** How many of today's cargo have shipped === true (i.e. riding in a
+   * vehicle right now). */
+  get shippedCount(): number {
+    let n = 0;
+    for (const id of this.dailyCargoIds) {
+      if (this.cargoSystem.getCargoData(id)?.shipped) n++;
+    }
+    return n;
+  }
+  get remainingCargoCount(): number {
+    return this.totalCargoCount - this.shippedCount;
+  }
+  get completedCargoCount(): number {
+    return this.shippedCount;
   }
 
   get canEndDay(): boolean {
-    return this.state === 'completed' && this.dailyCargoIds.size === 0;
+    return this.state === 'dayComplete';
   }
 
   endDayBlockedMessage(): string {
-    return '請先清空今日所有貨品';
+    return '請先完成今日出貨';
   }
 
   /** Called once by UnloadingSystem right as its spawn sequence begins. */
@@ -89,12 +141,10 @@ export class DailyFlowSystem {
   }
 
   /** Called once by UnloadingSystem's spawn sequence, passing every id it
-   * just created (spec 八: "所有每日貨品生成後都必須登記到 dailyCargoIds"). */
+   * just created (all of today's cargo must be registered here). */
   registerDailyCargo(ids: string[]): void {
     this.dailyCargoIds = new Set(ids);
     this.totalCargoCount = ids.length;
-    this.remainingCargoCount = ids.length;
-    this.completedCargoCount = 0;
   }
 
   /** Called once by UnloadingSystem after the gate has closed again. */
@@ -102,19 +152,37 @@ export class DailyFlowSystem {
     if (this.state === 'unloading') this.state = 'sorting';
   }
 
-  /** Called by OutboundZoneSystem — id must be a currently-registered daily
-   * cargo id (spec 十七: "只接受本日 dailyCargoIds 中的貨品"). Returns false
-   * (no-op) if it's already been removed, so a stray double-call can never
-   * double-count. */
-  markCompleted(id: string): boolean {
-    if (!this.dailyCargoIds.has(id)) return false;
-    this.dailyCargoIds.delete(id);
-    this.completedCargoCount++;
-    this.remainingCargoCount = Math.max(0, this.remainingCargoCount - 1);
-    if (this.dailyCargoIds.size === 0 && this.state === 'sorting') {
+  /** Called by VehicleControlSystem once at least one route reaches
+   * 'docked' — the player can start loading into whichever vehicle has
+   * already arrived, without waiting for both. */
+  notifyVehicleDocked(): void {
+    if (this.state === 'sorting') this.state = 'loading';
+  }
+
+  /** Called by VehicleControlSystem's per-frame shipment scan whenever a
+   * cargo item's shipped flag flips (either direction) — re-derives
+   * whether all daily cargo is now shipped, transitioning sorting/loading
+   * -> completed, or reverting completed -> loading if something gets
+   * pulled back out (spec: shipped 取消後 remainingCargoCount 要恢復). */
+  refreshCompletion(): void {
+    if (this.dailyCargoIds.size === 0) return;
+    const allShipped = this.shippedCount >= this.totalCargoCount;
+    if (allShipped && (this.state === 'loading' || this.state === 'sorting')) {
       this.state = 'completed';
+    } else if (!allShipped && this.state === 'completed') {
+      this.state = 'loading';
     }
-    return true;
+  }
+
+  /** Called by VehicleControlSystem once 載具出發 is actually pressed. */
+  notifyDeparting(): void {
+    this.state = 'departing';
+  }
+
+  /** Called by VehicleControlSystem once BOTH routes have finished
+   * departing and their shipped cargo has been destroyed. */
+  notifyDayComplete(): void {
+    this.state = 'dayComplete';
   }
 
   pressEndDayButton(): void {
@@ -134,8 +202,6 @@ export class DailyFlowSystem {
     this.currentDay++;
     this.dailyCargoIds = new Set();
     this.totalCargoCount = 0;
-    this.remainingCargoCount = 0;
-    this.completedCargoCount = 0;
     this.hasUnloadedToday = false;
     this.resetTools();
 

@@ -81,16 +81,33 @@ export class HUD {
   }
 
   /** Daily flow status panel — updated every frame from game.ts's loop
-   * (cheap text-only DOM write, same pattern CompassUI already uses). */
-  updateDailyFlow(params: { day: number; stateLabel: string; remaining: number; completed: number; total: number }): void {
-    const { day, stateLabel, remaining, completed, total } = params;
+   * (cheap text-only DOM write, same pattern CompassUI already uses).
+   * organized/loaded track two independent things now that shipping goes
+   * through a vehicle's cargoBounds instead of a ground zone: a box/roller
+   * can be fully organized (on its pallet/rack) well before it's actually
+   * carried into a docked vehicle and shipped. */
+  updateDailyFlow(params: {
+    day: number; stateLabel: string; total: number;
+    unorganized: number; organized: number; remaining: number; loaded: number;
+    /** Emphasized banner text (spec: "今日貨物已全部裝載" / "今日貨物已全部
+     * 送出"), or null to hide the banner — game.ts derives this from
+     * DailyFlowSystem.state so HUD doesn't need to know state semantics. */
+    bannerText: string | null;
+  }): void {
+    const { day, stateLabel, total, unorganized, organized, remaining, loaded, bannerText } = params;
     this.dailyFlowEl.innerHTML = `
       <p class="daily-flow-day">第 ${day} 天</p>
       <p>今日狀態：${stateLabel}</p>
-      <p>今日剩餘貨品：${remaining}</p>
-      <p>今日已完成：${completed} / ${total}</p>
+      <p>今日貨物總數：${total}</p>
+      <p>尚未完成整理：${unorganized}　已完成整理：${organized}</p>
+      <p>尚未裝載：${remaining}　已裝載：${loaded} / ${total}</p>
     `;
-    this.dailyCompleteEl.classList.toggle('visible', remaining === 0 && total > 0);
+    if (bannerText) {
+      this.dailyCompleteEl.textContent = bannerText;
+      this.dailyCompleteEl.classList.add('visible');
+    } else {
+      this.dailyCompleteEl.classList.remove('visible');
+    }
   }
 
   /** Brief, non-blocking message (spec: "不要使用 browser alert") — reused
@@ -219,5 +236,28 @@ export class HUD {
 
   hideVehicleSettlement(): void {
     this.shipmentSummaryEl.classList.remove('visible');
+  }
+
+  /** Simplified day-complete panel (spec "北側卸貨口/重新啟用呼叫載具"
+   * section 十六) — shown once BOTH routes have finished departing, reuses
+   * the same DOM element/pause-then-繼續 pattern as the old
+   * showVehicleSettlement (kept intact above, just no longer called from
+   * this round's flow) but drops every score/correctness field entirely. */
+  showDayCompleteSummary(params: { total: number; organized: number; loaded: number; onContinue: () => void }): void {
+    const { total, organized, loaded, onContinue } = params;
+    this.shipmentSummaryEl.innerHTML = `
+      <p class="summary-title">兩台載具已出發</p>
+      <p>今日總貨物：${total}</p>
+      <p>已整理：${organized}</p>
+      <p>已裝載：${loaded}</p>
+      <p class="summary-title">今日貨物已全部送出</p>
+      <button id="settlement-continue-btn">繼續</button>
+    `;
+    this.shipmentSummaryEl.classList.add('visible');
+    const btn = this.shipmentSummaryEl.querySelector('#settlement-continue-btn') as HTMLButtonElement;
+    btn.addEventListener('click', () => {
+      this.hideVehicleSettlement();
+      onContinue();
+    }, { once: true });
   }
 }

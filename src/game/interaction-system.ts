@@ -164,22 +164,19 @@ export class InteractionSystem {
       return;
     }
 
-    // Priority 3 (daily flow round): 開始卸貨 / 結束今天 — same
-    // nearest-wins pattern isn't needed since these two buttons sit far
-    // apart (unload dock vs... actually co-located per spec, but each has
-    // its own dedicated isPlayerNear check rather than sharing one).
-    if (this.unloadingSystem.isPlayerNearButton(this.camera.position)) {
-      this.unloadingSystem.pressButton();
-      return;
-    }
-    if (this.dailyFlowSystem.isPlayerNearButton(this.camera.position)) {
-      this.dailyFlowSystem.pressEndDayButton();
-      return;
+    // Priority 3: 開始卸貨 / 結束今天 — co-located near the north unload
+    // dock close enough together that a naive per-button proximity check
+    // would overlap; resolve to whichever one the player is actually
+    // nearer to (same pattern as VehicleControlSystem's call/depart).
+    switch (this.nearestUnloadClusterButton()) {
+      case 'unload': this.unloadingSystem.pressButton(); return;
+      case 'endDay': this.dailyFlowSystem.pressEndDayButton(); return;
     }
 
-    // Priority 3 (legacy, disabled this round): vehicle call/depart buttons — the two sit close enough
-    // together that a naive per-button proximity check would overlap;
-    // resolve to whichever one the player is actually nearer to.
+    // Priority 4: vehicle call/depart buttons (re-enabled — see
+    // feature-flags.ts ENABLE_VEHICLE_LOADING_FLOW) — the two sit close
+    // enough together that a naive per-button proximity check would
+    // overlap; resolve to whichever one the player is actually nearer to.
     const nearestVehicleButton = this.vehicleControlSystem.getNearestButton(this.camera.position);
     if (nearestVehicleButton === 'call') {
       this.vehicleControlSystem.pressCallButton();
@@ -190,13 +187,13 @@ export class InteractionSystem {
       return;
     }
 
-    // Priority 4: counter open-for-business button
+    // Priority 5: counter open-for-business button
     if (this.counterServiceSystem.isPlayerNear(this.camera.position)) {
       this.counterServiceSystem.pressButton();
       return;
     }
 
-    // Priority 5: start pushing the dolly
+    // Priority 6: start pushing the dolly
     if (this.dollySystem.isPlayerNear(this.camera.position)) {
       this.dollySystem.startPush();
       this.playerData.state = 'pushing-dolly';
@@ -207,6 +204,19 @@ export class InteractionSystem {
     if (this.checkFarTarget()) {
       this.hud.showTooFar();
     }
+  }
+
+  /** Nearest-wins resolution between the co-located 開始卸貨/結束今天
+   * buttons (spec section 十九: "四個按鈕不要互相重疊") — mirrors
+   * VehicleControlSystem.getNearestButton()'s own tie-break pattern. */
+  private nearestUnloadClusterButton(): 'unload' | 'endDay' | null {
+    const pos = this.camera.position;
+    const unloadNear = this.unloadingSystem.isPlayerNearButton(pos);
+    const endDayNear = this.dailyFlowSystem.isPlayerNearButton(pos);
+    if (!unloadNear && !endDayNear) return null;
+    if (unloadNear && !endDayNear) return 'unload';
+    if (!unloadNear && endDayNear) return 'endDay';
+    return this.unloadingSystem.buttonDistance(pos) <= this.dailyFlowSystem.buttonDistance(pos) ? 'unload' : 'endDay';
   }
 
   private checkFarTarget(): boolean {
@@ -310,8 +320,9 @@ export class InteractionSystem {
       return;
     }
 
-    // 開始卸貨 button
-    if (this.unloadingSystem.isPlayerNearButton(this.camera.position)) {
+    // 開始卸貨 / 結束今天 buttons — same nearest-button resolution as onKeyDown
+    const nearestUnloadCluster = this.nearestUnloadClusterButton();
+    if (nearestUnloadCluster === 'unload') {
       if (this.unloadingSystem.canStartUnloading) {
         this.hud.showInteractionPrompt('開始卸貨', '按 E 開始卸貨');
         this.hud.setCrosshairActive(true);
@@ -321,9 +332,7 @@ export class InteractionSystem {
       }
       return;
     }
-
-    // 結束今天 button
-    if (this.dailyFlowSystem.isPlayerNearButton(this.camera.position)) {
+    if (nearestUnloadCluster === 'endDay') {
       if (this.dailyFlowSystem.canEndDay) {
         this.hud.showInteractionPrompt('結束今天', '按 E 結束今天');
         this.hud.setCrosshairActive(true);

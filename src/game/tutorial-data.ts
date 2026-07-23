@@ -6,7 +6,7 @@ export type TutorialEventKey =
   | 'move' | 'pickup' | 'counterReceive' | 'stamp'
   | 'conveyor' | 'sorting' | 'cargoLoaded' | 'vehicleDeparted' | 'cargoLabelSeen'
   | 'unloadingStarted' | 'cargoPileTouched' | 'boxOrganized' | 'rollerOrganized'
-  | 'palletUsed' | 'dollyUsed' | 'outboundShipped' | 'dayCompleted';
+  | 'palletUsed' | 'dollyUsed' | 'outboundShipped' | 'dayCompleted' | 'vehicleCalled';
 
 export interface TutorialEntry {
   id: string;
@@ -21,11 +21,11 @@ export interface TutorialEntry {
   body: string;
 }
 
-// This round's main teaching sequence is the daily unload->sort->ship loop
-// (spec "每日貨品清空核心流程" section 二十一). The old counter/envelope/
-// vehicle-loading entries are NOT deleted (their systems still exist,
-// disabled — see feature-flags.ts) but are force-locked so they never
-// surface as reachable content in the main tutorial list this round.
+// This round's main teaching sequence is the daily unload->sort->ship-via-
+// vehicle loop. The old counter/envelope/ground-outbound-zone entries are
+// NOT deleted (their systems still exist, disabled/unused — see
+// feature-flags.ts and outbound-zone-system.ts) but are force-locked so
+// they never surface as reachable content in the main tutorial list.
 export const TUTORIAL_ENTRIES: TutorialEntry[] = [
   {
     id: 'basic-movement',
@@ -41,51 +41,72 @@ export const TUTORIAL_ENTRIES: TutorialEntry[] = [
   },
   {
     id: 'start-unloading',
-    title: '啟動卸貨',
+    title: '啟動北側卸貨口',
     unlockEvent: 'unloadingStarted',
-    body: '走到西側卸貨口旁的「開始卸貨」按鈕，按下互動鍵即可啟動卸貨：閘門打開後，今日的貨品會依序滑落進卸貨區。同一天只能卸貨一次，必須先清空當日所有貨品才能再次卸貨。',
+    body: '走到北側卸貨口旁的「開始卸貨」按鈕，按下互動鍵即可啟動卸貨：閘門打開後，今日的貨品會依序由北向南滑落進卸貨區。同一天只能卸貨一次，必須先完成當日所有貨品的出貨才能再次卸貨。',
   },
   {
     id: 'break-up-pile',
     title: '拆開貨堆',
     unlockEvent: 'cargoPileTouched',
-    body: '貨品卸下後會在卸貨區堆成一團。拿起、搬運或推開貨品即可拆開貨堆、清出走道，方便將貨品一一搬往整理區。',
+    body: '貨品卸下後會在北側卸貨區堆成一團。拿起、搬運或推開貨品即可拆開貨堆、清出走道，方便將貨品一一搬往中央整理區。',
   },
   {
-    id: 'organize-box',
-    title: '整理方形貨品',
-    unlockEvent: 'boxOrganized',
-    body: '將方形貨品放上中央的整理托盤，保持穩定靜置一小段時間後，該件貨品就會被標記為已完成整理，之後即可送往出貨區。',
+    id: 'use-pallet',
+    title: '使用托盤整理方形貨物',
+    unlockEvent: 'palletUsed',
+    body: '將方形貨品放上中央的整理托盤，可以直接用放置模式精準疊放，不需要對齊特定格位。保持穩定靜置一小段時間後，該件貨品就會被標記為已完成整理。',
   },
   {
     id: 'organize-roller',
-    title: '整理滾筒貨品',
+    title: '使用滾筒架整理滾筒貨物',
     unlockEvent: 'rollerOrganized',
     body: '滾筒形貨品要放進牆邊的滾筒固定架，保持穩定靜置一小段時間後即完成整理。滾筒放上托盤、或方形貨品放進滾筒架，都不會被視為完成整理。',
   },
   {
-    id: 'use-pallet',
-    title: '使用托盤',
-    unlockEvent: 'palletUsed',
-    body: '托盤是本輪整理方形貨品的固定平台，可以直接用放置模式將貨品精準疊放在托盤上，不需要對齊特定格位。',
+    id: 'call-vehicle',
+    title: '呼叫載具',
+    unlockEvent: 'vehicleCalled',
+    body: '今日卸貨完成後，即可在大廳中央按下「呼叫載具」，同時呼叫陸運與海運兩台載具：陸運從南側進場，海運從東側進場，各自停靠既有碼頭。當天已有載具時無法重複呼叫。',
   },
   {
-    id: 'use-dolly',
-    title: '使用拖板車',
-    unlockEvent: 'dollyUsed',
-    body: '靠近拖板車按下互動鍵即可推行，車上範圍內的貨品會一起跟著移動，方便一次搬運多件已整理完成的貨品前往出貨區。再按一次互動鍵即可放開。',
+    id: 'load-vehicle',
+    title: '將整理完成的貨物裝入載具',
+    unlockEvent: 'cargoLoaded',
+    body: '把已完成整理的貨品搬進任一台已停靠載具的貨艙範圍，保持穩定一小段時間後即完成出貨、計入今日已裝載數量，並保留在載具上供你查看。尚未完成整理的貨品放進貨艙不會被計入，畫面會提示「這件貨品尚未完成整理」；已出貨的貨品若被重新拿出貨艙，也會恢復為未出貨狀態。',
   },
   {
-    id: 'ship-to-outbound',
-    title: '送往出貨區',
-    unlockEvent: 'outboundShipped',
-    body: '已完成整理的貨品搬到東側出貨區即會自動被送出、計入今日完成數量。尚未完成整理的貨品進入出貨區不會被移除，畫面會提示「這件貨品尚未完成整理」。',
+    id: 'vehicle-departure',
+    title: '讓載具出發',
+    unlockEvent: 'vehicleDeparted',
+    body: '今日貨品全部裝載完成後，在大廳中央按下「載具出發」，兩台載具會一起固定貨物並離場。等待兩台都完成離場後，畫面會顯示今日完成的簡單總結。',
   },
   {
     id: 'end-day',
     title: '結束今天',
     unlockEvent: 'dayCompleted',
-    body: '今日貨品全部清空後，畫面會顯示「今日貨品已全部清空」。走到「結束今天」按鈕旁按下互動鍵，場地與工具（托盤範圍、拖板車、卸貨閘門）就會重置，進入下一天。',
+    body: '兩台載具都離場後，走到「結束今天」按鈕旁按下互動鍵，場地與工具（托盤、拖板車、卸貨閘門）就會重置，進入下一天。',
+  },
+  {
+    id: 'organize-box',
+    title: '整理方形貨品',
+    unlockEvent: null,
+    forceLocked: true,
+    body: '',
+  },
+  {
+    id: 'use-dolly',
+    title: '使用拖板車',
+    unlockEvent: null,
+    forceLocked: true,
+    body: '',
+  },
+  {
+    id: 'ship-to-outbound',
+    title: '送往出貨區',
+    unlockEvent: null,
+    forceLocked: true,
+    body: '',
   },
   {
     id: 'counter-receive',
@@ -127,14 +148,7 @@ export const TUTORIAL_ENTRIES: TutorialEntry[] = [
     title: '貨物裝載',
     unlockEvent: null,
     forceLocked: true,
-    body: '將貨物放置於載具貨艙範圍內即完成裝載，普通貨物與大型貨物都可以自由堆放，不需要對齊固定格位。',
-  },
-  {
-    id: 'vehicle-departure',
-    title: '送出載具',
-    unlockEvent: null,
-    forceLocked: true,
-    body: '在大廳中央按下「載具出發」，已停靠的載具會固定貨物並離場，離場後會顯示本次的結算內容。',
+    body: '',
   },
   {
     id: 'lost-and-found',

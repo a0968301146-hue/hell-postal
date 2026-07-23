@@ -3,9 +3,8 @@ import { InteractableObject } from './interactable-object';
 import { PhysicsSystem } from './physics-system';
 import {
   WALL_THICKNESS, FRONT_OFFICE, CARGO_WINDOW, CARGO_RAMP, DOORWAY, STAIRS,
-  BACK_AREA, CARGO_ZONES, LAND_DOCKS, LAND_GATE, PIER, SEA_GATE, SEA_DOCKS, WEST_GATE,
+  BACK_AREA, CARGO_ZONES, LAND_DOCKS, LAND_GATE, PIER, SEA_GATE, SEA_DOCKS, NORTH_GATE,
 } from './logistics-layout-data';
-import { NPC_DOOR, NPC_AREA, PLAYER_AREA, COUNTER, COUNTER_GLASS, COUNTER_WINDOW, COUNTER_ITEM_BACKSTOP } from './counter-layout-data';
 import { createFloatingLabel } from './world-label-system';
 
 export const SCENE_CONFIG = {
@@ -56,10 +55,7 @@ export function createLogisticsScene(scene: THREE.Scene, physics: PhysicsSystem)
   scene.add(dirLight);
 
   const floor = buildFrontOffice(scene, physics);
-  buildNpcDoorWall(scene, physics);
-  buildCounterWall(scene, physics);
-  buildCounterGlass(scene, physics);
-  buildAreaLabels(scene);
+  buildNorthGateWall(scene, physics);
   buildDividingWall(scene, physics);
   const ramp = buildRamp(scene, physics);
   buildStairs(scene, physics);
@@ -105,88 +101,23 @@ function buildFrontOffice(scene: THREE.Scene, physics: PhysicsSystem): THREE.Mes
   return floor;
 }
 
-/** NPC entry/exit door, cut into the front office's far (minZ) wall. */
-function buildNpcDoorWall(scene: THREE.Scene, physics: PhysicsSystem): void {
+/** Gap in the front office's NORTH wall (minZ) for the daily-unload dock
+ * (spec "每日貨品清空核心流程" follow-up round section 三 — replaces the old
+ * counter-era NPC door; the front office's former counter/glass/NPC-area
+ * geometry has been removed entirely, see history for buildCounterWall/
+ * buildCounterGlass/buildAreaLabels). Physical wall opening only —
+ * UnloadingSystem's own gate panel + chute fill it visually, same pattern
+ * as every other gate opening in this file (LAND_GATE/SEA_GATE). */
+function buildNorthGateWall(scene: THREE.Scene, physics: PhysicsSystem): void {
   const { minX, maxX, floorY, ceilingHeight } = FRONT_OFFICE;
   const z = FRONT_OFFICE.minZ;
   const wallMat = stdMat(0x8a8a80, { side: THREE.DoubleSide });
-  const purpleMat = stdMat(0x7a3fb8);
-
-  const doorL = NPC_DOOR.centerX - NPC_DOOR.halfWidth;
-  const doorR = NPC_DOOR.centerX + NPC_DOOR.halfWidth;
-  const topY = floorY + ceilingHeight;
   const midY = floorY + ceilingHeight / 2;
 
-  addWall(scene, physics, wallMat, (minX + doorL) / 2, midY, z, doorL - minX, ceilingHeight, WALL_THICKNESS);
-  addWall(scene, physics, wallMat, (doorR + maxX) / 2, midY, z, maxX - doorR, ceilingHeight, WALL_THICKNESS);
-  const lintelH = topY - NPC_DOOR.height;
-  addWall(scene, physics, purpleMat, NPC_DOOR.centerX, NPC_DOOR.height + lintelH / 2, z, NPC_DOOR.halfWidth * 2, lintelH, WALL_THICKNESS);
-}
-
-/** Counter wall splitting the front office into an NPC area and a player
- * area — solid up to counter height (blocks walking through on both sides),
- * with a flat top surface where the counter item spawns. */
-function buildCounterWall(scene: THREE.Scene, physics: PhysicsSystem): void {
-  const { minX, maxX } = COUNTER;
-  const floorY = FRONT_OFFICE.floorY;
-  const width = maxX - minX;
-  const cy = floorY + COUNTER.height / 2;
-
-  const counterMat = stdMat(0x6b5a3a);
-  const geo = new THREE.BoxGeometry(width, COUNTER.height, COUNTER.thickness);
-  const mesh = new THREE.Mesh(geo, counterMat);
-  mesh.position.set((minX + maxX) / 2, cy, COUNTER.z);
-  scene.add(mesh);
-  physics.createStaticCuboid((minX + maxX) / 2, cy, COUNTER.z, width / 2, COUNTER.height / 2, COUNTER.thickness / 2);
-
-  // Invisible backstop on the counter top, right at the NPC/player boundary
-  // — collider only (no mesh, so it doesn't obstruct the window sightline
-  // above it) — physically stops a spawned item from ever being pushed past
-  // this line back toward the NPC side (see COUNTER_ITEM_BACKSTOP doc comment).
-  const { minX: bMinX, maxX: bMaxX, z: bz, thickness: bt, height: bh } = COUNTER_ITEM_BACKSTOP;
-  const bWidth = bMaxX - bMinX;
-  const bCy = floorY + COUNTER.height + bh / 2;
-  physics.createStaticCuboid((bMinX + bMaxX) / 2, bCy, bz, bWidth / 2, bh / 2, bt / 2);
-}
-
-/** Glass partition sealing the NPC/player boundary above counter height —
- * the counter itself already blocks floor-to-counter-height, this closes
- * the open-air gap up to the ceiling so nothing (player, NPC, thrown cargo)
- * can cross above it — EXCEPT a service-window opening (COUNTER_WINDOW)
- * centered over the counter item spot, so the player can look straight at
- * the NPC being served. Built as three solid segments flanking/above the
- * opening (left, right, top-of-window), same pattern as the cargo window
- * cut into the dividing wall below. Semi-transparent so both sides stay
- * clearly visible through the solid parts too. */
-function buildCounterGlass(scene: THREE.Scene, physics: PhysicsSystem): void {
-  const { minX, maxX, z, thickness, bottomY, topY } = COUNTER_GLASS;
-
-  const glassMat = new THREE.MeshStandardMaterial({
-    color: 0x5ec8e8, transparent: true, opacity: 0.5, side: THREE.DoubleSide,
-    metalness: 0.1, roughness: 0.05,
-    emissive: 0x2f7a94, emissiveIntensity: 0.4,
-  });
-
-  const winL = COUNTER_WINDOW.centerX - COUNTER_WINDOW.halfWidth;
-  const winR = COUNTER_WINDOW.centerX + COUNTER_WINDOW.halfWidth;
-
-  // Left segment, full height
-  addWall(scene, physics, glassMat, (minX + winL) / 2, (bottomY + topY) / 2, z, winL - minX, topY - bottomY, thickness);
-  // Right segment, full height
-  addWall(scene, physics, glassMat, (winR + maxX) / 2, (bottomY + topY) / 2, z, maxX - winR, topY - bottomY, thickness);
-  // Segment above the window opening
-  const aboveH = topY - COUNTER_WINDOW.topY;
-  addWall(scene, physics, glassMat, COUNTER_WINDOW.centerX, COUNTER_WINDOW.topY + aboveH / 2, z, winR - winL, aboveH, thickness);
-}
-
-function buildAreaLabels(scene: THREE.Scene): void {
-  const npcLabel = createFloatingLabel('NPC 等候區', { width: 1.0, bg: 'rgba(40,25,50,0.75)' });
-  npcLabel.position.set(0, FRONT_OFFICE.ceilingHeight - 0.6, (NPC_AREA.minZ + NPC_AREA.maxZ) / 2);
-  scene.add(npcLabel);
-
-  const playerLabel = createFloatingLabel('臨櫃工作區', { width: 1.0, bg: 'rgba(25,40,50,0.75)' });
-  playerLabel.position.set(0, FRONT_OFFICE.ceilingHeight - 0.6, (PLAYER_AREA.minZ + PLAYER_AREA.maxZ) / 2);
-  scene.add(playerLabel);
+  const gapL = NORTH_GATE.centerX - NORTH_GATE.halfWidth;
+  const gapR = NORTH_GATE.centerX + NORTH_GATE.halfWidth;
+  addWall(scene, physics, wallMat, (minX + gapL) / 2, midY, z, gapL - minX, ceilingHeight, WALL_THICKNESS);
+  addWall(scene, physics, wallMat, (gapR + maxX) / 2, midY, z, maxX - gapR, ceilingHeight, WALL_THICKNESS);
 }
 
 function buildDividingWall(scene: THREE.Scene, physics: PhysicsSystem): void {
@@ -313,15 +244,9 @@ function buildBackArea(scene: THREE.Scene, physics: PhysicsSystem): THREE.Mesh {
   const wallMat = stdMat(0x707070, { side: THREE.DoubleSide });
   const midY = floorY + ceilingHeight / 2;
 
-  // West wall — gap for the daily-unloading dock (see daily-flow-data.ts /
-  // WEST_GATE in logistics-layout-data.ts). Physical opening only; the
-  // UnloadingSystem's own gate panel + chute fill it visually and the daily
-  // flow's cargo spawns just inside it, never actually needing to cross
-  // this plane from the outside.
-  const westGapL = WEST_GATE.centerZ - WEST_GATE.halfWidth;
-  const westGapR = WEST_GATE.centerZ + WEST_GATE.halfWidth;
-  addWall(scene, physics, wallMat, minX, midY, (minZ + westGapL) / 2, WALL_THICKNESS, ceilingHeight, westGapL - minZ);
-  addWall(scene, physics, wallMat, minX, midY, (westGapR + maxZ) / 2, WALL_THICKNESS, ceilingHeight, maxZ - westGapR);
+  // West wall — fully solid again (the daily-unload dock moved to the front
+  // office's north wall this round, see buildNorthGateWall/NORTH_GATE).
+  addWall(scene, physics, wallMat, minX, midY, cz, WALL_THICKNESS, ceilingHeight, depth);
 
   // East wall — gap where the pier opens onto the water (sea route)
   const seaGapL = SEA_GATE.centerZ - SEA_GATE.halfWidth;

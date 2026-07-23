@@ -104,7 +104,11 @@ export class OutboundZoneSystem {
       this.hud.showToast('貨品已送達出貨區');
       const wasFirst = !this.hasShipped;
       this.hasShipped = true;
-      this.dailyFlowSystem.markCompleted(id);
+      // NOT the main flow's completion path this round (see DailyFlowSystem
+      // — cargo ships by riding a vehicle now, not a ground zone), kept only
+      // so this file still compiles/works standalone if reused later.
+      data.shipped = true;
+      this.dailyFlowSystem.refreshCompletion();
       this.cargoSystem.removeCargo(id);
       this.warnedIds.delete(id);
       if (wasFirst) this.onFirstShipped?.();

@@ -22,11 +22,10 @@ import { PauseManager } from './pause-manager';
 import { SettingsManager } from './settings-manager';
 import { ManualUI } from './manual-ui';
 import { ENABLE_LEGACY_COUNTER, ENABLE_LEGACY_MAIL_FLOW, ENABLE_VEHICLE_LOADING_FLOW, ENABLE_LEGACY_TEST_CARGO } from './feature-flags';
-import { DailyFlowSystem } from './daily-flow-system';
+import { DailyFlowSystem, DailyState } from './daily-flow-system';
 import { UnloadingSystem } from './unloading-system';
 import { PalletSystem } from './pallet-system';
 import { RollerRackSystem } from './roller-rack-system';
-import { OutboundZoneSystem } from './outbound-zone-system';
 
 export class Game {
   private worldScene: THREE.Scene;
@@ -58,7 +57,6 @@ export class Game {
   private unloadingSystem!: UnloadingSystem;
   private palletSystem!: PalletSystem;
   private rollerRackSystem!: RollerRackSystem;
-  private outboundZoneSystem!: OutboundZoneSystem;
 
   constructor() {
     this.worldScene = new THREE.Scene();
@@ -165,30 +163,36 @@ export class Game {
     // players precisely place cargo onto it without pushing it around
     this.pickupSystem.addPlacementSurface(this.dollySystem.platformTopMesh);
 
-    // Vehicle spawn/depart control (hall center) — disabled this round
-    // (spec section 三: no 呼叫載具/載具出發 buttons in the main scene), see
-    // feature-flags.ts ENABLE_VEHICLE_LOADING_FLOW. Still needs pickupSystem
-    // to register/deregister the cargo bed surface as vehicles come and go
-    // when it IS enabled.
+    // Daily unload -> sort -> ship-via-vehicle loop (this round's core).
+    // DailyFlowSystem owns the day/state/count bookkeeping and the 結束今天
+    // button; UnloadingSystem owns the north gate/chute/spawn sequence and
+    // the 開始卸貨 button; VehicleControlSystem (re-enabled this round —
+    // spec "北側卸貨口/重新啟用呼叫載具" section 六) now also owns the
+    // organized-cargo-into-cargoBounds shipment judgment. All three report
+    // into DailyFlowSystem rather than it reaching into them. Constructed
+    // BEFORE VehicleControlSystem/UnloadingSystem since both need it.
+    this.dailyFlowSystem = new DailyFlowSystem(
+      this.worldScene, this.physics, this.cargoSystem, this.hud,
+      () => { this.dollySystem.resetToStart(); this.unloadingSystem.resetGate(); },
+      () => this.settingsManager.fireTutorialEvent('dayCompleted')
+    );
+
+    // Vehicle spawn/depart control (hall center) — re-enabled this round
+    // (see feature-flags.ts ENABLE_VEHICLE_LOADING_FLOW). Needs
+    // pickupSystem to register/deregister the cargo bed surface as vehicles
+    // come and go, and dailyFlowSystem to gate 呼叫/出發 on today's
+    // unload/shipment progress instead of the old always-available rule.
     this.vehicleControlSystem = new VehicleControlSystem(
       this.worldScene, this.physics, this.interactables, this.cargoSystem, this.pickupSystem, this.hud,
+      this.dailyFlowSystem,
       (paused) => this.setPaused(paused),
       (config) => this.settingsManager.markVehicleDiscovered(config.id),
+      () => this.settingsManager.fireTutorialEvent('vehicleCalled'),
       () => this.settingsManager.fireTutorialEvent('cargoLoaded'),
       () => this.settingsManager.fireTutorialEvent('vehicleDeparted'),
       ENABLE_VEHICLE_LOADING_FLOW
     );
 
-    // Daily unload -> sort -> ship loop (this round's core — spec "每日貨品
-    // 清空核心流程"). DailyFlowSystem owns the day/state/count bookkeeping
-    // and the 結束今天 button; UnloadingSystem owns the west gate/chute/
-    // spawn sequence and the 開始卸貨 button; both report into
-    // DailyFlowSystem rather than it reaching into them.
-    this.dailyFlowSystem = new DailyFlowSystem(
-      this.worldScene, this.physics, this.hud,
-      () => { this.dollySystem.resetToStart(); this.unloadingSystem.resetGate(); },
-      () => this.settingsManager.fireTutorialEvent('dayCompleted')
-    );
     this.unloadingSystem = new UnloadingSystem(
       this.worldScene, this.physics, this.cargoSystem, this.dailyFlowSystem,
       () => this.settingsManager.fireTutorialEvent('unloadingStarted')
@@ -203,10 +207,10 @@ export class Game {
       this.worldScene, this.physics, this.cargoSystem, this.interactables,
       () => this.settingsManager.fireTutorialEvent('rollerOrganized')
     );
-    this.outboundZoneSystem = new OutboundZoneSystem(
-      this.worldScene, this.interactables, this.cargoSystem, this.dailyFlowSystem, this.hud,
-      () => this.settingsManager.fireTutorialEvent('outboundShipped')
-    );
+    // OutboundZoneSystem is intentionally NOT constructed this round — cargo
+    // now ships by riding along with a vehicle instead of walking into a
+    // ground zone (spec section 八/九). Its file is kept for a possible
+    // future round; see feature-flags.ts and outbound-zone-system.ts.
 
     // Interaction system
     this.interactionSystem = new InteractionSystem(
@@ -235,15 +239,19 @@ export class Game {
     this.loop();
   }
 
-  /** HUD display text for DailyFlowSystem.state (spec 十八's exact 4 labels
-   * plus a 'resetting' fallback — resetting is synchronous/instantaneous in
-   * practice, so it's essentially never visible, but mapped for completeness). */
-  private dailyStateLabel(state: import('./daily-flow-system').DailyState): string {
+  /** HUD display text for DailyFlowSystem.state (spec section 十八's exact
+   * 7 labels, plus a 'resetting' fallback — resetting is synchronous/
+   * instantaneous in practice, so it's essentially never visible, but
+   * mapped for completeness). */
+  private dailyStateLabel(state: DailyState): string {
     switch (state) {
       case 'ready': return '準備卸貨';
       case 'unloading': return '卸貨中';
-      case 'sorting': return '整理中';
-      case 'completed': return '今日完成';
+      case 'sorting': return '整理貨物';
+      case 'loading': return '裝載貨物';
+      case 'completed': return '今日貨物已全部裝載';
+      case 'departing': return '載具出發中';
+      case 'dayComplete': return '今日貨物已全部送出';
       case 'resetting': return '準備中...';
     }
   }
@@ -377,18 +385,26 @@ export class Game {
         this.counterServiceSystem.update(deltaTime);
       }
 
-      // Daily unload -> sort -> ship loop (spec 二十二: paused alongside
+      // Daily unload -> sort -> ship-via-vehicle loop (paused alongside
       // everything else above while the manual/settlement/minigame is open).
+      // vehicleControlSystem.update() above already runs the organized-
+      // cargo-into-cargoBounds shipment scan every frame it's enabled.
       this.unloadingSystem.update(deltaTime);
       this.palletSystem.update(deltaTime);
       this.rollerRackSystem.update(deltaTime);
-      this.outboundZoneSystem.update(deltaTime);
+      const flowState = this.dailyFlowSystem.state;
+      const bannerText = flowState === 'completed' ? '今日貨物已全部裝載'
+        : flowState === 'dayComplete' ? '今日貨物已全部送出'
+        : null;
       this.hud.updateDailyFlow({
         day: this.dailyFlowSystem.currentDay,
-        stateLabel: this.dailyStateLabel(this.dailyFlowSystem.state),
-        remaining: this.dailyFlowSystem.remainingCargoCount,
-        completed: this.dailyFlowSystem.completedCargoCount,
+        stateLabel: this.dailyStateLabel(flowState),
         total: this.dailyFlowSystem.totalCargoCount,
+        unorganized: this.dailyFlowSystem.unorganizedCount,
+        organized: this.dailyFlowSystem.organizedCount,
+        remaining: this.dailyFlowSystem.remainingCargoCount,
+        loaded: this.dailyFlowSystem.completedCargoCount,
+        bannerText,
       });
     }
 

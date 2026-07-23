@@ -38,7 +38,17 @@ export interface CargoData {
   labels: CargoLabel[];
   displayName: string;
   dimensions: CargoDimensions;
-  isShipped: boolean;
+  /** Daily-flow round only: set true once this item has spent >=0.5s stable
+   * inside a docked vehicle's cargoBounds while already organized (see
+   * vehicle-control-system.ts's per-frame shipment scan). Cleared back to
+   * false if the player pulls it back out of the vehicle (spec "北側卸貨口/
+   * 重新啟用呼叫載具" section 十三). Pre-existing cargo never sets this. */
+  shipped: boolean;
+  /** Which route's vehicle this item is currently shipped under — null
+   * whenever `shipped` is false. Set alongside `shipped` so a later re-scan
+   * always knows which pinned-cargo list (land/sea) to destroy the item
+   * from once that route actually departs (spec 十三: "只能歸屬一台載具"). */
+  shippedVehicleType: 'land' | 'sea' | null;
   /** Defaults to 'box' for every pre-existing cargo item (createCargoData
    * below never sets it) — only daily cargo (createDailyCargoData) sets
    * 'roller'. */
@@ -46,8 +56,7 @@ export interface CargoData {
   /** Daily-flow round only: set true once this item has spent >=0.5s
    * stable on its matching sorting fixture (pallet for box, rack for
    * roller — see pallet-system.ts / roller-rack-system.ts). Persists after
-   * leaving the fixture (spec 十三/十五) — OutboundZoneSystem is the only
-   * thing that reads it. Pre-existing cargo never sets this; it stays false
+   * leaving the fixture. Pre-existing cargo never sets this; it stays false
    * and unused for anything not spawned via createDailyCargoData. */
   organized: boolean;
 }
@@ -96,7 +105,8 @@ export function createCargoData(id: string, preset: CargoLabelPreset, dimensions
     labels: preset.labels,
     displayName: routePrefix + CARGO_TYPE_DISPLAY_NAME[preset.cargoType],
     dimensions,
-    isShipped: false,
+    shipped: false,
+    shippedVehicleType: null,
     shapeType: 'box',
     organized: false,
   };
@@ -117,7 +127,8 @@ export function createDailyCargoData(id: string, shapeType: CargoShapeType, dime
     labels: [],
     displayName: shapeType === 'roller' ? '滾筒貨品' : '方形貨品',
     dimensions,
-    isShipped: false,
+    shipped: false,
+    shippedVehicleType: null,
     shapeType,
     organized: false,
   };
