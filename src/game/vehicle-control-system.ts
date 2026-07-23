@@ -26,16 +26,12 @@ const DEPART_IDLE_TEXT = '載具出發\n按 E 讓兩台載具一起離場';
 const DEPART_BLOCKED_TEXT = '載具尚未全部停靠';
 const NOT_UNLOADED_TEXT = '請先接收今日貨物';
 const ALREADY_HAVE_TEXT = '目前已有載具';
-const NOT_ORGANIZED_TOAST = '這件貨品尚未完成整理';
 
 /** Cargo must sit stable inside a docked vehicle's cargoBounds for this long
- * before it counts as shipped (mirrors PalletSystem/RollerRackSystem's own
- * 0.5s organize threshold). */
+ * before it counts as shipped — no organized/pallet/rack prerequisite (see
+ * scanCargoForShipment's doc comment). */
 const SHIP_STABLE_THRESHOLD = 0.5;
 const SHIP_VELOCITY_THRESHOLD = 0.4;
-/** Minimum time between repeat "尚未完成整理" toasts for the SAME item, so
- * an unorganized item just sitting in a vehicle doesn't spam every frame. */
-const TOAST_COOLDOWN_MS = 3000;
 
 /**
  * One shared per-route state machine, driven twice (once for 'land', once
@@ -71,13 +67,10 @@ export class VehicleControlSystem {
   private seaPinnedCargo: InteractableObject[] = [];
   private dayCompleteShown = false;
 
-  /** Per-item stability timers for the shipment scan (spec section 十三:
-   * "至少 0.5 秒") — separate from PalletSystem/RollerRackSystem's own
-   * timers (different map, different fixture). */
+  /** Per-item stability timers for the shipment scan ("至少 0.5 秒") —
+   * separate from PalletSystem/RollerRackSystem's own timers (different
+   * map, different fixture). */
   private shipStableTimers: Map<string, number> = new Map();
-  /** Last time (performance.now()) each item's "尚未完成整理" toast fired —
-   * see TOAST_COOLDOWN_MS. */
-  private toastCooldowns: Map<string, number> = new Map();
 
   /** Round-robin indices — land and sea each cycle through their OWN config
    * list independently (spec section 十六): calling 呼叫載具 advances BOTH
@@ -335,20 +328,22 @@ export class VehicleControlSystem {
   }
 
   /** Continuously scans every daily cargo item against whichever vehicles
-   * are currently 'docked' — organized cargo that sits stable inside a
-   * cargoBounds for SHIP_STABLE_THRESHOLD seconds gets marked shipped
-   * (spec section 九). Un-organized cargo in a bounds gets a throttled
-   * "尚未完成整理" toast instead (spec 十一). Anything previously shipped
-   * that leaves the bounds (or gets picked back up) immediately un-ships
-   * (spec 十三) — no debounce needed on that direction since it only
-   * happens from a deliberate player action, not physics jitter. */
+   * are currently 'docked' — any cargo that sits stable inside a cargoBounds
+   * for SHIP_STABLE_THRESHOLD seconds gets marked shipped ("Fix vehicle
+   * cargo loading and departure gate" round: loading no longer requires
+   * organized=true, or ever having touched the pallet/roller rack — being
+   * inside a docked vehicle's cargo bay and settling for 0.5s is the whole
+   * rule). Anything previously shipped that leaves the bounds (or gets
+   * picked back up) immediately un-ships (spec: "貨物在發車前被拿出
+   * cargoBounds，要取消 loaded/shipped 並更新數量") — no debounce needed on
+   * that direction since it only happens from a deliberate player action,
+   * not physics jitter. */
   private scanCargoForShipment(deltaTime: number): void {
     const land = this.landState === 'docked' ? this.landVehicle : null;
     const sea = this.seaState === 'docked' ? this.seaVehicle : null;
     if (!land && !sea) return;
 
     let anyChanged = false;
-    const now = performance.now();
 
     for (const id of this.dailyFlowSystem.dailyCargoIds) {
       const obj = this.interactables.get(id);
@@ -374,17 +369,6 @@ export class VehicleControlSystem {
       if (!targetType) {
         this.shipStableTimers.delete(id);
         if (data.shipped) { data.shipped = false; data.shippedVehicleType = null; anyChanged = true; }
-        continue;
-      }
-
-      if (!data.organized) {
-        this.shipStableTimers.delete(id);
-        if (data.shipped) { data.shipped = false; data.shippedVehicleType = null; anyChanged = true; }
-        const lastToast = this.toastCooldowns.get(id) ?? 0;
-        if (now - lastToast > TOAST_COOLDOWN_MS) {
-          this.toastCooldowns.set(id, now);
-          this.hud.showToast(NOT_ORGANIZED_TOAST);
-        }
         continue;
       }
 
