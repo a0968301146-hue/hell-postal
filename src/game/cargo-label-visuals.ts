@@ -13,7 +13,7 @@
 import * as THREE from 'three';
 import { CargoLabel } from './cargo-data';
 
-type FaceId = 'front' | 'back' | 'right' | 'left' | 'top';
+export type FaceId = 'front' | 'back' | 'right' | 'left' | 'top';
 
 // 'domestic' and 'overseas' are mutually exclusive on any one cargo item
 // (spec section 三), so they can safely share the same face slot — freeing
@@ -39,7 +39,7 @@ const BADGE_COLOR: Record<CargoLabel, string> = {
 
 const EPS = 0.008;
 
-function faceTransform(face: FaceId, halfW: number, halfH: number, halfD: number) {
+export function faceTransform(face: FaceId, halfW: number, halfH: number, halfD: number) {
   switch (face) {
     case 'front': return { pos: new THREE.Vector3(0, 0, halfD + EPS), rot: new THREE.Euler(0, 0, 0), faceW: halfW * 2, faceH: halfH * 2 };
     case 'back': return { pos: new THREE.Vector3(0, 0, -halfD - EPS), rot: new THREE.Euler(0, Math.PI, 0), faceW: halfW * 2, faceH: halfH * 2 };

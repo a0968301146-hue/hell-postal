@@ -13,6 +13,7 @@ import { PauseManager } from './pause-manager';
 import { SettingsManager } from './settings-manager';
 import { UnloadingSystem } from './unloading-system';
 import { DailyFlowSystem } from './daily-flow-system';
+import { PalletSystem } from './pallet-system';
 
 export class InteractionSystem {
   private raycaster: THREE.Raycaster;
@@ -34,6 +35,7 @@ export class InteractionSystem {
   private settingsManager: SettingsManager;
   private unloadingSystem: UnloadingSystem;
   private dailyFlowSystem: DailyFlowSystem;
+  private palletSystem: PalletSystem;
   private onDollyUsed?: () => void;
 
   constructor(
@@ -54,6 +56,7 @@ export class InteractionSystem {
     settingsManager: SettingsManager,
     unloadingSystem: UnloadingSystem,
     dailyFlowSystem: DailyFlowSystem,
+    palletSystem: PalletSystem,
     onDollyUsed?: () => void
   ) {
     this.raycaster = new THREE.Raycaster();
@@ -74,6 +77,7 @@ export class InteractionSystem {
     this.settingsManager = settingsManager;
     this.unloadingSystem = unloadingSystem;
     this.dailyFlowSystem = dailyFlowSystem;
+    this.palletSystem = palletSystem;
     this.onDollyUsed = onDollyUsed;
 
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
@@ -116,6 +120,19 @@ export class InteractionSystem {
     }
 
     if (this.playerData.state === 'holding-item') {
+      // Sorting pallet: its own world-space carry/place flow (see
+      // pallet-system.ts's class doc comment for why it can't go through
+      // PickupSystem's generic viewmodel-clone flow like every other held
+      // item below) — a second E press here commits the placement if the
+      // live preview is valid, or stays held with a toast otherwise.
+      if (this.playerData.heldObjectId === this.palletSystem.palletId) {
+        if (this.palletSystem.tryPlace()) {
+          this.playerData.state = 'empty-handed';
+          this.playerData.heldObjectId = null;
+          this.hud.hideInteractionPrompt();
+        }
+        return;
+      }
       // Check if aiming at sorting box interior - direct placement
       const heldId = this.playerData.heldObjectId;
       const heldObj = heldId ? this.interactables.get(heldId) : null;
@@ -150,8 +167,18 @@ export class InteractionSystem {
 
     if (this.playerData.state !== 'empty-handed') return;
 
-    // Priority 1: pick up targeted object (envelope, package, or crate)
+    // Priority 1: pick up targeted object (envelope, package, crate, or the
+    // sorting pallet). The pallet goes through its own pickUp() (world-space
+    // group-carry, not PickupSystem's viewmodel clone) — see pallet-system.ts.
     if (this.currentTarget) {
+      if (this.currentTarget.id === this.palletSystem.palletId) {
+        this.palletSystem.pickUp();
+        this.playerData.state = 'holding-item';
+        this.playerData.heldObjectId = this.palletSystem.palletId;
+        this.clearHighlight(this.currentTarget);
+        this.currentTarget = null;
+        return;
+      }
       this.pickupSystem.pickUp(this.currentTarget);
       this.clearHighlight(this.currentTarget);
       this.currentTarget = null;
@@ -244,6 +271,15 @@ export class InteractionSystem {
         this.currentTarget = null;
         this.playerData.targetedObjectId = null;
       }
+      if (this.playerData.heldObjectId === this.palletSystem.palletId) {
+        if (this.palletSystem.previewValid) {
+          this.hud.showInteractionPrompt('整理托盤', 'E：放置整理托盤');
+          this.hud.setCrosshairActive(true);
+        } else {
+          this.hud.showInteractionPrompt('整理托盤', '此處無法放置');
+          this.hud.setCrosshairActive(false);
+        }
+      }
       return;
     }
 
@@ -279,6 +315,8 @@ export class InteractionSystem {
           this.hud.showInteractionPrompt(newTarget.displayName, '按 E 拿起');
         } else if (this.envelopeSystem.isCrate(newTarget)) {
           this.hud.showInteractionPrompt(newTarget.displayName, `E：拿起信封箱\nF：取出信封 (剩餘${this.envelopeSystem.remainingCount})`);
+        } else if (newTarget.id === this.palletSystem.palletId) {
+          this.hud.showInteractionPrompt(newTarget.displayName, 'E：拿起整理托盤');
         } else {
           this.hud.showInteractionPrompt(newTarget.displayName, '按 E 拿起');
         }

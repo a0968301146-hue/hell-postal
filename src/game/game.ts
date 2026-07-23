@@ -168,7 +168,7 @@ export class Game {
     // BEFORE VehicleControlSystem/UnloadingSystem since both need it.
     this.dailyFlowSystem = new DailyFlowSystem(
       this.worldScene, this.physics, this.cargoSystem, this.hud,
-      () => { this.dollySystem.resetToStart(); this.unloadingSystem.resetGate(); },
+      () => { this.dollySystem.resetToStart(); this.unloadingSystem.resetGate(); this.palletSystem.resetToStart(); },
       () => this.settingsManager.fireTutorialEvent('dayCompleted')
     );
 
@@ -190,13 +190,23 @@ export class Game {
 
     this.unloadingSystem = new UnloadingSystem(
       this.worldScene, this.physics, this.cargoSystem, this.dailyFlowSystem,
-      () => this.settingsManager.fireTutorialEvent('unloadingStarted')
+      () => {
+        this.settingsManager.fireTutorialEvent('unloadingStarted');
+        // Cargo carries its category label the moment it bursts into the
+        // room, so "辨識貨品種類" unlocks alongside "啟動北側卸貨口" rather
+        // than needing a separate dedicated trigger.
+        this.settingsManager.fireTutorialEvent('cargoLabelSeen');
+      }
     );
     this.palletSystem = new PalletSystem(
-      this.worldScene, this.physics, this.cargoSystem, this.interactables,
+      this.worldScene, this.physics, this.cargoSystem, this.interactables, this.hud,
       () => this.settingsManager.fireTutorialEvent('palletUsed'),
       () => this.settingsManager.fireTutorialEvent('boxOrganized')
     );
+    // Still registered as a normal PickupSystem placement surface — a
+    // single cargo item can still be manually placed onto the pallet's top
+    // the normal way (spec: this round only adds the ABILITY to also pick
+    // up the whole pallet, it doesn't remove normal single-item placement).
     this.pickupSystem.addPlacementSurface(this.palletSystem.topMesh);
     this.rollerRackSystem = new RollerRackSystem(
       this.worldScene, this.physics, this.cargoSystem, this.interactables,
@@ -222,6 +232,7 @@ export class Game {
       this.settingsManager,
       this.unloadingSystem,
       this.dailyFlowSystem,
+      this.palletSystem,
       () => this.settingsManager.fireTutorialEvent('dollyUsed')
     );
 
@@ -369,11 +380,12 @@ export class Game {
         this.mailSortingSystem.update(deltaTime);
       }
       if (ENABLE_VEHICLE_LOADING_FLOW) this.vehicleControlSystem.update(deltaTime);
+      const cameraForward = new THREE.Vector3();
+      this.camera.getWorldDirection(cameraForward);
       if (this.dollySystem.isPushing) {
-        const forward = new THREE.Vector3();
-        this.camera.getWorldDirection(forward);
-        this.dollySystem.update(this.camera.position, forward);
+        this.dollySystem.update(this.camera.position, cameraForward);
       }
+      this.palletSystem.update(deltaTime, this.camera.position, cameraForward);
       if (ENABLE_LEGACY_COUNTER) {
         this.counterNpcSystem.update(deltaTime);
         this.counterServiceSystem.update(deltaTime);
@@ -384,7 +396,6 @@ export class Game {
       // vehicleControlSystem.update() above already runs the organized-
       // cargo-into-cargoBounds shipment scan every frame it's enabled.
       this.unloadingSystem.update(deltaTime);
-      this.palletSystem.update(deltaTime);
       this.rollerRackSystem.update(deltaTime);
       const flowState = this.dailyFlowSystem.state;
       const bannerText = flowState === 'completed' ? '今日貨物已全部裝載'

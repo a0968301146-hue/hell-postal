@@ -16,11 +16,20 @@ import { BACK_AREA, NORTH_GATE } from './logistics-layout-data';
 
 const FLOOR_Y = BACK_AREA.floorY;
 
-/** How many cargo items spawn each day, fixed (spec: no infinite spawn, no
- * per-day variation of the total or the box/roller ratio). */
-export const DAILY_BOX_COUNT = 8;
-export const DAILY_ROLLER_COUNT = 2;
-export const DAILY_CARGO_COUNT = DAILY_BOX_COUNT + DAILY_ROLLER_COUNT;
+/** How many cargo items spawn each day, fixed (spec "貨品外型與比例有更多
+ * 變化" round section二: no infinite spawn, no per-day variation of the
+ * total or the box/roller/large ratio). This is the ONE place the daily
+ * total is defined — UnloadingSystem builds its spawn plan from these
+ * counts, and DailyFlowSystem/HUD/vehicle-shipment counting all read the
+ * ACTUAL number of ids UnloadingSystem registers (registerDailyCargo),
+ * never this constant directly, so nothing needs to change if it's edited
+ * again later (spec: "不要在多個系統中分別寫死18"). */
+export const DAILY_CARGO_CONFIG = {
+  total: 18,
+  boxCount: 12,
+  rollerCount: 4,
+  largeCount: 2,
+};
 
 /** Wall opening + short slide the gate sits in front of. Chute runs along Z
  * (north->south, into the back area) — gentle slope (rise 0.35 over run
@@ -55,19 +64,48 @@ export const UNLOAD_GATE = {
   openDuration: 0.8, // seconds, within spec's 0.6-1s window
 };
 
-/** Where newly-spawned cargo appears, one at a time, sliding down the
- * chute — small per-item X/Z jitter keeps them from spawning exactly
- * stacked on each other. */
-export const UNLOAD_SPAWN_POINT = {
-  x: UNLOAD_CHUTE.topX,
-  z: UNLOAD_CHUTE.topZ + 0.3,
+/** Several distinct spawn points spread across the gate's own width (spec
+ * "貨品外型與比例有更多變化" round section四: "必要時使用數個不同噴射生成
+ * 點，而不是所有貨物共用完全相同座標") — each still comfortably inside the
+ * physical chute (chute half-width ~1.7, these stay within ±0.8). */
+export const UNLOAD_SPAWN_POINTS = [
+  { x: UNLOAD_CHUTE.topX - 0.8, z: UNLOAD_CHUTE.topZ + 0.2 },
+  { x: UNLOAD_CHUTE.topX, z: UNLOAD_CHUTE.topZ + 0.3 },
+  { x: UNLOAD_CHUTE.topX + 0.8, z: UNLOAD_CHUTE.topZ + 0.2 },
+];
+/** Small per-item spawn-point jitter on top of whichever UNLOAD_SPAWN_POINTS
+ * entry is used, so consecutive items from the same point still don't spawn
+ * exactly stacked. */
+export const UNLOAD_SPAWN_JITTER_X = 0.3;
+export const UNLOAD_SPAWN_JITTER_Z = 0.25;
+
+/** Burst/jet unload performance (spec section三/四/五) — replaces the old
+ * one-at-a-time gentle slide. All spawn-sequence timing/velocity tuning
+ * lives here, not scattered across UnloadingSystem's methods. */
+export const UNLOAD_BURST_CONFIG = {
+  /** How many waves the day's cargo splits into, and a brief charge-up
+   * before the first wave fires (spec 三: "裝置短暫蓄力"). */
+  waveCount: 3,
+  chargeUpDuration: 0.4,
+  /** Pause between waves (spec四: "每波之間短暫停頓"). */
+  waveGapMin: 0.5,
+  waveGapMax: 0.7,
+  /** Per-item spacing within one wave (spec四: "0.08~0.18秒"). */
+  itemIntervalMin: 0.08,
+  itemIntervalMax: 0.18,
+  /** Launch velocity ranges (spec四). Forward = +Z (into the room), up = +Y,
+   * lateral = world X. */
+  forwardSpeedMin: 4, forwardSpeedMax: 7,
+  upSpeedMin: 0.5, upSpeedMax: 2,
+  lateralSpeedMin: -1.5, lateralSpeedMax: 1.5,
+  /** Angular velocity range applied at launch (rad/s per axis) — spec: "貨
+   * 物在空中帶有不同角度與旋轉". */
+  angularSpeedMax: 4,
+  /** How long after the last item launches before the gate starts closing
+   * (lets the burst finish settling — spec三 step7 "最後一件噴出後，閘門關
+   * 閉" — a short buffer avoids clipping the last item's flight). */
+  settleAfterLastItem: 0.8,
 };
-export const UNLOAD_SPAWN_INTERVAL = 0.22; // seconds between each item
-export const UNLOAD_SPAWN_JITTER_X = 0.5;
-export const UNLOAD_SPAWN_JITTER_Z = 0.35;
-/** Light nudge toward the room interior (+Z, south) — "輕微朝卸貨區方向的
- * 初速度". */
-export const UNLOAD_SPAWN_IMPULSE_Z = 1.1;
 
 /** Open floor where the pile lands and gets broken apart — the back area's
  * own north end, well clear of the player spawn (z=14.8, see
@@ -130,25 +168,8 @@ export const OUTBOUND_ZONE = {
   minZ: 23.5, maxZ: 28.0,
 };
 
-/** Fixed size presets for daily box cargo — same overall bounds discipline
- * as the old CARGO_SIZE_PRESETS (cargo-data.ts) so nothing is too flat/thin
- * to grab or too big for the doorway/stairs, but a distinct list (this
- * round's boxes don't need label/route-compatibility concerns). */
-export const DAILY_BOX_SIZE_PRESETS = [
-  { width: 0.32, height: 0.30, depth: 0.32 },
-  { width: 0.40, height: 0.28, depth: 0.34 },
-  { width: 0.30, height: 0.42, depth: 0.30 },
-  { width: 0.44, height: 0.32, depth: 0.38 },
-  { width: 0.34, height: 0.36, depth: 0.44 },
-];
-
-/** Fixed size presets for daily roller cargo — {radius, length}. Kept
- * modest so a barrel can pass through the doorway (opening 1.6m) lying on
- * its side. */
-export const DAILY_ROLLER_SIZE_PRESETS = [
-  { radius: 0.22, length: 0.55 },
-  { radius: 0.19, length: 0.62 },
-];
-
-export const DAILY_BOX_COLOR = 0x9a7a4a;
-export const DAILY_ROLLER_COLOR = 0x6b5638;
+// Daily box/roller/large size+shape+color+label presets moved to
+// cargo-data.ts (CARGO_BOX_PRESETS/CARGO_ROLLER_PRESETS/CARGO_LARGE_PRESETS,
+// spec "貨品外型與比例有更多變化" round section六/七/八) — cargo identity is
+// now bound together in ONE place alongside its subtype/label, rather than
+// living here as a bare size list.

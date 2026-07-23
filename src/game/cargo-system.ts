@@ -2,13 +2,13 @@ import * as THREE from 'three';
 import { PhysicsSystem } from './physics-system';
 import { InteractableObject, createInteractableObject } from './interactable-object';
 import {
-  CargoData, CargoLabelPreset, CargoSize,
+  CargoData, CargoLabelPreset, CargoSize, CargoSubtypePreset,
   CARGO_LABEL_PRESETS, createCargoData, pickCargoSize, pickLargeCargoSize,
   createDailyCargoData,
 } from './cargo-data';
 import { attachCargoLabels } from './cargo-label-visuals';
+import { decorateCargoMesh, attachCargoSubtypeLabel } from './cargo-visuals';
 import { FRONT_OFFICE, BACK_AREA, CARGO_SPAWN_CONFIG, LARGE_CARGO_SPAWN_POSITIONS, LABELED_CARGO_SPAWN_POSITIONS } from './logistics-layout-data';
-import { DAILY_BOX_COLOR, DAILY_ROLLER_COLOR } from './daily-flow-data';
 
 const CARGO_COLORS = [0x8b5a2b, 0xa0703a, 0x7a4e24, 0x966032, 0x8b6f47, 0x9a7040];
 // Single consistent color for ALL large cargo — a deliberately different
@@ -112,24 +112,32 @@ export class CargoSystem {
     return this.interactables.get(id);
   }
 
-  /** Daily-flow box cargo (spec section 十). No labels, no route/cargoType
-   * distinction — see createDailyCargoData. Registered into the SAME
+  /** Daily-flow box/large cargo (spec "貨品外型與比例有更多變化" round) —
+   * takes a full CargoSubtypePreset (shape/size/color/label all bound
+   * together, see cargo-data.ts) rather than a raw size, so every daily box
+   * item is fully described by picking a preset. Adds subtype-specific
+   * decoration + the visible category label (spec section七/九/十), both as
+   * mesh children — zero extra dynamic bodies. Registered into the SAME
    * cargoDataMap/interactables map as every other cargo item so DollySystem's
    * findCargoOnPlatform (which checks cargoSystem.getCargoData membership)
    * picks it up automatically, with zero changes needed there. */
-  spawnDailyBox(size: CargoSize, x: number, y: number, z: number, rotY: number): string {
+  spawnDailyBox(preset: CargoSubtypePreset, x: number, y: number, z: number, rotY: number): string {
     const id = `daily-box-${this.nextDailyBoxId++}`;
-    const geo = new THREE.BoxGeometry(size.width, size.height, size.depth);
-    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: DAILY_BOX_COLOR }));
+    const { width, height, depth } = preset.dimensions;
+    const geo = new THREE.BoxGeometry(width, height, depth);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: preset.color }));
     mesh.position.set(x, y, z);
     mesh.rotation.y = rotY;
-    mesh.userData.shapeType = 'box';
+    mesh.userData.shapeType = preset.shapeType;
+    decorateCargoMesh(mesh, preset.subtype, preset.color, preset.dimensions);
     this.scene.add(mesh);
 
-    const data = createDailyCargoData(id, 'box', size);
-    const obj = createInteractableObject(id, data.displayName, mesh, size.width, size.height, size.depth);
+    const data = createDailyCargoData(id, preset);
+    attachCargoSubtypeLabel(mesh, preset.shapeType, preset.label, preset.dimensions);
+
+    const obj = createInteractableObject(id, data.displayName, mesh, width, height, depth);
     const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotY, 0));
-    const { body, collider } = this.physics.createBoxBody(x, y, z, size.width / 2, size.height / 2, size.depth / 2, 250);
+    const { body, collider } = this.physics.createBoxBody(x, y, z, width / 2, height / 2, depth / 2, 250);
     body.setRotation({ x: quat.x, y: quat.y, z: quat.z, w: quat.w }, true);
     obj.rigidBody = body;
     obj.collider = collider;
@@ -144,21 +152,25 @@ export class CargoSystem {
    * 十一). `dimensions` on CargoData store the TIPPED world-space AABB
    * (width=length, height=depth=diameter) — see physics-system.ts
    * createCylinderBody doc comment for why the collider needs the same tip. */
-  spawnDailyRoller(radius: number, length: number, x: number, y: number, z: number, yawVariance: number): string {
+  spawnDailyRoller(preset: CargoSubtypePreset, x: number, y: number, z: number, yawVariance: number): string {
     const id = `daily-roller-${this.nextDailyRollerId++}`;
-    const diameter = radius * 2;
+    const length = preset.dimensions.width;
+    const radius = preset.dimensions.height / 2;
     const geo = new THREE.CylinderGeometry(radius, radius, length, 16);
-    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: DAILY_ROLLER_COLOR }));
+    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: preset.color }));
     mesh.position.set(x, y, z);
     const tip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
     const yaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yawVariance);
     const rot = yaw.multiply(tip);
     mesh.quaternion.copy(rot);
     mesh.userData.shapeType = 'roller';
+    decorateCargoMesh(mesh, preset.subtype, preset.color, preset.dimensions);
     this.scene.add(mesh);
 
-    const data = createDailyCargoData(id, 'roller', { width: length, height: diameter, depth: diameter });
-    const obj = createInteractableObject(id, data.displayName, mesh, length, diameter, diameter);
+    const data = createDailyCargoData(id, preset);
+    attachCargoSubtypeLabel(mesh, preset.shapeType, preset.label, preset.dimensions);
+
+    const obj = createInteractableObject(id, data.displayName, mesh, length, radius * 2, radius * 2);
     const { body, collider } = this.physics.createCylinderBody(
       x, y, z, length / 2, radius, 220, { x: rot.x, y: rot.y, z: rot.z, w: rot.w }
     );
@@ -170,19 +182,24 @@ export class CargoSystem {
     return id;
   }
 
-  /** Fully removes a daily cargo item once it's shipped (OutboundZoneSystem)
-   * — disables + removes its rigid body, removes the mesh, and drops it
-   * from both cargoDataMap and the shared interactables map so nothing
-   * (raycasting, dolly pinning, placement-surface overlap checks) can
-   * reference it again. */
+  /** Fully removes a daily cargo item once it's shipped (VehicleControlSystem)
+   * — disables + removes its rigid body, removes the mesh (and every
+   * decoration/label child's own geometry/material, see cargo-visuals.ts),
+   * and drops it from both cargoDataMap and the shared interactables map so
+   * nothing (raycasting, dolly pinning, placement-surface overlap checks)
+   * can reference it again. */
   removeCargo(id: string): void {
     const obj = this.interactables.get(id);
     if (obj) {
       if (obj.rigidBody) this.physics.removeRigidBody(obj.rigidBody);
       obj.mesh.parent?.remove(obj.mesh);
-      obj.mesh.geometry.dispose();
-      const mat = obj.mesh.material;
-      if (Array.isArray(mat)) mat.forEach(m => m.dispose()); else mat?.dispose();
+      obj.mesh.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry?.dispose();
+          const mat = child.material;
+          if (Array.isArray(mat)) mat.forEach(m => m.dispose()); else mat?.dispose();
+        }
+      });
       this.interactables.delete(id);
     }
     this.cargoDataMap.delete(id);

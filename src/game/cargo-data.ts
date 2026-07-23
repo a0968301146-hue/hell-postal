@@ -20,10 +20,27 @@ export interface CargoDimensions {
 
 /** Which physical shape this cargo item is — added for the "每日貨品清空
  * 核心流程" round (daily-flow-data.ts / cargo-system.ts spawnDailyBox/
- * spawnDailyRoller). 'box' covers every existing cargo item (normal/large/
- * labeled), 'roller' is new this round (cylinder cargo, see
- * physics-system.ts createCylinderBody). */
-export type CargoShapeType = 'box' | 'roller';
+ * spawnDailyRoller). 'box' and 'large' are both cuboid (built + collided
+ * identically, see cargo-system.ts spawnDailyBox — 'large' is just a
+ * bigger/heavier size class of the same shape), 'roller' is cylinder cargo
+ * (see physics-system.ts createCylinderBody). */
+export type CargoShapeType = 'box' | 'roller' | 'large';
+
+/** Coarse size grouping, independent of shapeType — a 'box' can be small/
+ * medium/large, while every 'large' shapeType item is itself large/
+ * extraLarge (spec "貨品外型與比例有更多變化" round section 八). Used only
+ * for display/reporting; nothing this round branches game logic on it. */
+export type CargoSizeClass = 'small' | 'medium' | 'large' | 'extraLarge';
+
+/** Every daily-cargo silhouette this round generates (spec section 六/七/
+ * 八 — the exact identifiers double as the visible category-label text via
+ * CARGO_SUBTYPE_PRESETS below, so "不要依 Mesh 名稱反向判定種類": the
+ * subtype IS the source of truth, the mesh is just built to match it). */
+export type CargoSubtype =
+  | 'small-box' | 'medium-box' | 'reinforced-box' | 'long-crate' | 'tall-crate'
+  | 'flat-case' | 'wide-box' | 'handled-box'
+  | 'wooden-barrel' | 'metal-drum' | 'fabric-roll' | 'spool'
+  | 'large-crate' | 'large-long-crate' | 'large-tall-crate';
 
 export interface CargoData {
   id: string;
@@ -34,7 +51,10 @@ export interface CargoData {
    * truth for both the on-mesh visual badges (cargo-label-visuals.ts) and
    * the departure judgment (cargo-compliance.ts only reads
    * routeType/cargoType directly, never this array — labels are for the
-   * PLAYER to read, not for the system to re-derive rules from). */
+   * PLAYER to read, not for the system to re-derive rules from). Unrelated
+   * to the daily-flow subtype label below — this array stays empty for all
+   * daily cargo (spec "貨品外型與比例有更多變化" round 九: 不要加入國內/海外/
+   * 易碎/冷凍/活物/地址/郵票 this round). */
   labels: CargoLabel[];
   displayName: string;
   dimensions: CargoDimensions;
@@ -51,14 +71,22 @@ export interface CargoData {
   shippedVehicleType: 'land' | 'sea' | null;
   /** Defaults to 'box' for every pre-existing cargo item (createCargoData
    * below never sets it) — only daily cargo (createDailyCargoData) sets
-   * 'roller'. */
+   * 'roller'/'large'. */
   shapeType: CargoShapeType;
   /** Daily-flow round only: set true once this item has spent >=0.5s
-   * stable on its matching sorting fixture (pallet for box, rack for
+   * stable on its matching sorting fixture (pallet for box/large, rack for
    * roller — see pallet-system.ts / roller-rack-system.ts). Persists after
    * leaving the fixture. Pre-existing cargo never sets this; it stays false
    * and unused for anything not spawned via createDailyCargoData. */
   organized: boolean;
+  /** Daily-flow round only: which exact silhouette this item is (null for
+   * pre-existing non-daily cargo). Drives both the decorative mesh built at
+   * spawn (cargo-visuals.ts decorateCargoMesh) and the visible category
+   * label text (cargo-visuals.ts attachCargoSubtypeLabel) — see
+   * CARGO_SUBTYPE_PRESETS. */
+  subtype: CargoSubtype | null;
+  /** Coarse size grouping for `subtype` — null for pre-existing cargo. */
+  sizeClass: CargoSizeClass | null;
 }
 
 const CARGO_TYPE_DISPLAY_NAME: Record<CargoType, string> = {
@@ -109,28 +137,98 @@ export function createCargoData(id: string, preset: CargoLabelPreset, dimensions
     shippedVehicleType: null,
     shapeType: 'box',
     organized: false,
+    subtype: null,
+    sizeClass: null,
   };
 }
 
+/** A named daily-flow cargo silhouette — the ONE place shape/size/label/
+ * color are bound together for a given subtype (spec "貨品外型與比例有更多
+ * 變化" round section八: "資料必須集中，不要依 Mesh 名稱反向判定種類").
+ * cargo-system.ts's spawnDailyBox/spawnDailyRoller take one of these
+ * directly rather than a raw size, so every daily cargo item is fully
+ * described by picking a preset, never by hand-assembling dimensions. */
+export interface CargoSubtypePreset {
+  subtype: CargoSubtype;
+  shapeType: CargoShapeType;
+  sizeClass: CargoSizeClass;
+  /** Visible category-label text (spec section九/十) — e.g. "小型方箱". */
+  label: string;
+  /** Base material color for the main mesh. Decoration accent colors are
+   * derived from this in cargo-visuals.ts, not hand-picked per subtype. */
+  color: number;
+  /** Box/large: width/height/depth. Roller: width=depth=diameter,
+   * height=length (same "tipped AABB" convention cargo-system.ts already
+   * uses for roller cargo). */
+  dimensions: CargoDimensions;
+}
+
+/** Box-class silhouettes (spec section六: "方箱類至少加入7種"；section七
+ * gives the visual-style names folded in here rather than as separate
+ * subtypes — e.g. reinforced-box IS the "木條加固箱" style at a
+ * medium-large size). */
+export const CARGO_BOX_PRESETS: Record<string, CargoSubtypePreset> = {
+  smallBox: { subtype: 'small-box', shapeType: 'box', sizeClass: 'small', label: '小型方箱', color: 0x9a7a4a, dimensions: { width: 0.28, height: 0.26, depth: 0.28 } },
+  mediumBox: { subtype: 'medium-box', shapeType: 'box', sizeClass: 'medium', label: '中型方箱', color: 0xa8824f, dimensions: { width: 0.42, height: 0.38, depth: 0.40 } },
+  reinforcedBox: { subtype: 'reinforced-box', shapeType: 'box', sizeClass: 'medium', label: '加固木箱', color: 0x8a6a3a, dimensions: { width: 0.48, height: 0.46, depth: 0.46 } },
+  longCrate: { subtype: 'long-crate', shapeType: 'box', sizeClass: 'medium', label: '長型貨箱', color: 0x93733f, dimensions: { width: 0.35, height: 0.32, depth: 0.78 } },
+  tallCrate: { subtype: 'tall-crate', shapeType: 'box', sizeClass: 'medium', label: '高型貨箱', color: 0x8f7248, dimensions: { width: 0.36, height: 0.74, depth: 0.36 } },
+  flatCase: { subtype: 'flat-case', shapeType: 'box', sizeClass: 'small', label: '扁平貨箱', color: 0x6b6b6b, dimensions: { width: 0.56, height: 0.18, depth: 0.38 } },
+  wideBox: { subtype: 'wide-box', shapeType: 'box', sizeClass: 'medium', label: '寬型貨箱', color: 0xa07f4a, dimensions: { width: 0.64, height: 0.34, depth: 0.42 } },
+  handledBox: { subtype: 'handled-box', shapeType: 'box', sizeClass: 'small', label: '提把貨箱', color: 0x9c7c48, dimensions: { width: 0.32, height: 0.30, depth: 0.34 } },
+};
+
+/** Roller-class silhouettes (spec section六: 至少4種). */
+export const CARGO_ROLLER_PRESETS: Record<string, CargoSubtypePreset> = {
+  woodenBarrel: { subtype: 'wooden-barrel', shapeType: 'roller', sizeClass: 'small', label: '木桶', color: 0x7a5730, dimensions: { width: 0.52, height: 0.40, depth: 0.40 } },
+  metalDrum: { subtype: 'metal-drum', shapeType: 'roller', sizeClass: 'medium', label: '金屬桶', color: 0x6b7278, dimensions: { width: 0.50, height: 0.54, depth: 0.54 } },
+  fabricRoll: { subtype: 'fabric-roll', shapeType: 'roller', sizeClass: 'medium', label: '布料捲', color: 0x8a5a6a, dimensions: { width: 0.88, height: 0.34, depth: 0.34 } },
+  spool: { subtype: 'spool', shapeType: 'roller', sizeClass: 'small', label: '線軸貨物', color: 0x5a6a4a, dimensions: { width: 0.36, height: 0.50, depth: 0.50 } },
+};
+
+/** Large-class silhouettes (spec section六: 至少3種，最大約寬1.2-1.7／高
+ * 1.0-1.6／深1.0-1.8m — kept toward the smaller end of that range so at
+ * least the bigger land/sea vehicles can still take one, spec: "仍有機會放
+ * 入目前載具貨艙"). */
+export const CARGO_LARGE_PRESETS: Record<string, CargoSubtypePreset> = {
+  largeCrate: { subtype: 'large-crate', shapeType: 'large', sizeClass: 'large', label: '大型木箱', color: 0x4a6fa5, dimensions: { width: 1.2, height: 1.0, depth: 1.2 } },
+  largeLongCrate: { subtype: 'large-long-crate', shapeType: 'large', sizeClass: 'large', label: '大型長箱', color: 0x3f6193, dimensions: { width: 1.3, height: 1.05, depth: 1.7 } },
+  largeTallCrate: { subtype: 'large-tall-crate', shapeType: 'large', sizeClass: 'extraLarge', label: '大型高箱', color: 0x5a4a8f, dimensions: { width: 1.15, height: 1.55, depth: 1.15 } },
+};
+
+export const CARGO_SUBTYPE_PRESETS: Record<string, CargoSubtypePreset> = {
+  ...CARGO_BOX_PRESETS, ...CARGO_ROLLER_PRESETS, ...CARGO_LARGE_PRESETS,
+};
+
+/** Category label background color (spec section十: "顏色必須集中設定，不
+ * 要散落在生成函式") — read by cargo-visuals.ts's label-badge builder. */
+export const CARGO_CATEGORY_LABEL_BG: Record<CargoShapeType, string> = {
+  box: 'rgba(120, 90, 45, 0.92)',
+  roller: 'rgba(50, 88, 108, 0.92)',
+  large: 'rgba(70, 55, 130, 0.92)',
+};
+
 /** Daily-flow round cargo (spec "每日貨品清空核心流程") — deliberately
- * bypasses CARGO_LABEL_PRESETS entirely: this round's boxes/rollers spawn
- * with no labels, no route/cargo-type distinction the player needs to read
- * (spec 十: "不需要...載具相容性"). cargoType/routeType are still populated
- * with harmless defaults so CargoData stays a single consistent shape
- * (spec explicitly allows keeping unused fields), but nothing this round
- * reads them for daily cargo. */
-export function createDailyCargoData(id: string, shapeType: CargoShapeType, dimensions: CargoDimensions): CargoData {
+ * bypasses CARGO_LABEL_PRESETS entirely: this round's boxes/rollers/large
+ * items spawn with no domestic/overseas/fragile labels, no route/cargo-type
+ * distinction the player needs to read (spec "不需要...載具相容性").
+ * cargoType/routeType are still populated with harmless defaults so
+ * CargoData stays a single consistent shape, but nothing this round reads
+ * them for daily cargo — the real identity is `subtype`/`sizeClass`. */
+export function createDailyCargoData(id: string, preset: CargoSubtypePreset): CargoData {
   return {
     id,
     cargoType: 'normal',
     routeType: 'domestic',
     labels: [],
-    displayName: shapeType === 'roller' ? '滾筒貨品' : '方形貨品',
-    dimensions,
+    displayName: preset.label,
+    dimensions: preset.dimensions,
     shipped: false,
     shippedVehicleType: null,
-    shapeType,
+    shapeType: preset.shapeType,
     organized: false,
+    subtype: preset.subtype,
+    sizeClass: preset.sizeClass,
   };
 }
 

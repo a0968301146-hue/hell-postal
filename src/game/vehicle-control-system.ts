@@ -10,6 +10,7 @@ import { SCENE_CONFIG } from './scene-manager';
 import { createFloatingLabel, updateFloatingLabel } from './world-label-system';
 import { HUD } from './hud';
 import { DailyFlowSystem } from './daily-flow-system';
+import { PALLET_ID } from './pallet-system';
 
 /** Per-vehicle lifecycle. 'departed' is a terminal holding state — the
  * vehicle mesh/body is already gone, but the route stays 'departed' (not
@@ -269,6 +270,19 @@ export class VehicleControlSystem {
       (data.shippedVehicleType === 'sea' ? seaValid : landValid).push(obj);
     }
 
+    // The sorting pallet itself is never in dailyCargoIds (spec 十七: "托盤
+    // 本身不計入dailyCargoIds") so it needs its own bay-membership check —
+    // if it's still sitting inside a docked vehicle's cargo bay at
+    // departure time, it rides along the SAME way as any other pinned cargo
+    // (vehicle.moveToward() below just translates every entry in the list
+    // by the same per-frame delta, so the pallet and whatever cargo is
+    // still resting on it stay visually together with zero extra code).
+    const palletObj = this.interactables.get(PALLET_ID);
+    if (palletObj && palletObj.mesh.visible && !palletObj.isHeld) {
+      if (this.landVehicle.isInCargoBay(palletObj.mesh.position)) landValid.push(palletObj);
+      else if (this.seaVehicle.isInCargoBay(palletObj.mesh.position)) seaValid.push(palletObj);
+    }
+
     this.landPinnedCargo = landValid;
     this.seaPinnedCargo = seaValid;
     this.pinCargoPhysics(landValid);
@@ -414,6 +428,12 @@ export class VehicleControlSystem {
     if (!vehicle) return;
 
     for (const obj of pinned) {
+      // The pallet itself is never destroyed like shipped cargo is (spec
+      // 十七: "不要讓托盤被永久銷毀") — it just leaves the play space along
+      // with the vehicle for the rest of today; PalletSystem.resetToStart()
+      // (called from DailyFlowSystem's daily reset) makes it visible again
+      // at its home position next day.
+      if (obj.id === PALLET_ID) { obj.mesh.visible = false; continue; }
       this.cargoSystem.removeCargo(obj.id);
     }
     this.pickupSystem.removePlacementSurface(vehicle.cargoBedTopMesh);

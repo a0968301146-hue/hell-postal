@@ -534,6 +534,16 @@ export class PickupSystem {
   // --- THROW ---
   private startCharge(): void {
     if (this.playerData.state !== 'holding-item') return;
+    // Generic opt-out for held objects that must never be thrown (spec
+    // "貨品外型與比例有更多變化" round 十一: the sorting pallet — throwing a
+    // whole loaded pallet would fling every pinned cargo item with it).
+    // Checked via a plain mesh.userData flag rather than an id/type check so
+    // any future non-throwable held object can opt in the same way.
+    const heldObj = this.playerData.heldObjectId ? this.interactables.get(this.playerData.heldObjectId) : null;
+    if (heldObj?.mesh.userData.noThrow) {
+      this.hud.showToast('整理托盤無法投擲');
+      return;
+    }
     this.isCharging = true;
     this.chargeTime = 0;
   }
