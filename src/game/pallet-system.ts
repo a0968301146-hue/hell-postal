@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { PhysicsSystem } from './physics-system';
-import { InteractableObject, createInteractableObject } from './interactable-object';
+import { InteractableObject, createInteractableObject, PlayerInteractionData } from './interactable-object';
 import { CargoSystem } from './cargo-system';
 import { HUD } from './hud';
 import { PALLET_CONFIG } from './daily-flow-data';
@@ -10,11 +10,27 @@ import { createFloatingLabel } from './world-label-system';
 
 const STABLE_THRESHOLD = 0.5; // seconds, organize judgment
 const VELOCITY_THRESHOLD = 0.4;
-/** How far in front of the camera the pallet's carry position sits — actual
- * carry HEIGHT is resolved per-frame by a downward raycast onto whatever's
- * really below (floor or a docked vehicle's cargo bed), not a fixed offset
- * from eye level (see updateCarry's supportY probe). */
-const CARRY_FORWARD_DIST = 1.4;
+
+/** How far in front of the camera the pallet's carry position sits, PLUS the
+ * union bounds' own horizontal half-extent (so a bigger load sits further
+ * away — spec 四: "需要依托盤與托盤貨物的 union bounds 動態調整距離"). */
+const CARRY_BASE_FORWARD_DIST = 1.0;
+/** How far below eye level the union bounds' CENTER sits while walking. */
+const CARRY_DROP_BELOW_EYE = 0.45;
+/** Never let the union bounds' bottom get closer than this to the floor
+ * while WALKING (this is the actual root cause of the pickup bug this round
+ * fixes — see updateCarry's doc comment: the old code computed the SAME
+ * floor-touching height for both "walking" and "final placement", which
+ * made the swept-collision shape start every frame already embedded in the
+ * floor's static collider, permanently freezing the carry position). */
+const CARRY_MIN_FLOOR_CLEARANCE = 0.15;
+/** Never let the union bounds' top rise above camera eye level by more than
+ * this (spec四: "大型貨物不會穿過攝影機"). */
+const CARRY_MAX_ABOVE_EYE = 0.35;
+/** Minimum horizontal clearance between the carry center and the camera —
+ * defensive floor under "手持物不會位於玩家膠囊內" (spec四/七), on top of
+ * the natural clearance CARRY_BASE_FORWARD_DIST already provides. */
+const MIN_CAMERA_CLEARANCE = 0.6;
 
 /** Stable id for the one pallet this round — exported so other systems that
  * need to recognize "is this the pallet" (VehicleControlSystem's departure
@@ -30,27 +46,26 @@ interface PinnedCargoEntry {
 }
 
 /**
- * A single wooden pallet (spec "貨品外型與比例有更多變化" round section
- * 十一~十九) — now a genuine pickupable InteractableObject integrated into
- * the shared E-key flow (targeted/raycast like any cargo item, picked up
- * via PalletSystem.pickUp() from InteractionSystem's Priority-1 branch —
- * see interaction-system.ts), NOT a second independent input system.
+ * A single wooden pallet — a genuine pickupable InteractableObject
+ * integrated into the shared E-key flow (targeted/raycast like any cargo
+ * item, picked up via PalletSystem.pickUp() from InteractionSystem's
+ * Priority-1 branch — see interaction-system.ts), NOT a second independent
+ * input system.
  *
- * Rest-state physics is a KINEMATIC body (same reasoning as DollySystem's
- * platform): immune to being knocked around by cargo landing on it, while
- * still fully collidable — cargo resting on top behaves normally.
+ * SINGLE SOURCE OF TRUTH while held ("Fix pallet pickup and placement
+ * state" round): every frame, updateCarry() computes ONE authoritative
+ * target transform and writes it to BOTH the kinematic rigid body (via
+ * setNextKinematicTranslation/Rotation, so the collider tracks the mesh —
+ * spec 二) and the Three.js mesh, from the exact same numbers. Nothing else
+ * ever touches obj.mesh.position/quaternion for the pallet or its pinned
+ * cargo while isHeld is true — the generic per-frame physics-to-mesh sync
+ * loop in game.ts already skips any InteractableObject with isHeld=true.
  *
- * While held, the pallet does NOT go through PickupSystem's generic hide+
- * viewmodel-clone flow (that flow can't carry a whole GROUP of separate
- * cargo objects along with it) — instead it stays visible in world space,
- * following the camera at a fixed offset, with every cargo item currently
- * resting on it (spec 十二: real support test, not "only touching the
- * side") pinned to it by SAVED LOCAL TRANSFORM (spec 十三) and re-derived
- * from the pallet's current world matrix each frame — the exact same
- * pattern dolly-system.ts already uses for cargo riding a pushed dolly.
- * `playerData.state`/`heldObjectId` are still set normally so the rest of
- * the game's mutual-exclusion checks (dolly push, vehicle buttons, another
- * pickup) keep working automatically (spec 十六).
+ * This class also owns `playerData.state`/`heldObjectId` directly for its
+ * own pickup/place transitions (rather than InteractionSystem juggling
+ * them externally) so an emergency reset (NaN transform, daily reset) can
+ * never leave the shared player state pointing at a pallet hold that
+ * PalletSystem itself no longer considers active.
  */
 export class PalletSystem {
   readonly palletId = PALLET_ID;
@@ -60,6 +75,7 @@ export class PalletSystem {
   private physics: PhysicsSystem;
   private cargoSystem: CargoSystem;
   private interactables: Map<string, InteractableObject>;
+  private playerData: PlayerInteractionData;
   private hud: HUD;
   private onFirstUse?: () => void;
   private onFirstOrganized?: () => void;
@@ -75,30 +91,43 @@ export class PalletSystem {
   isHeld = false;
   private pinned: PinnedCargoEntry[] = [];
   /** Half-extents / local-space center offset of the pallet+all pinned
-   * cargo's combined bounding box, computed once at pickup (spec 十四: "不
-   * 要只檢查托盤底板...可以建立整組暫時Bounds") — reused every frame for
-   * both the swept-collision clamp and the placement-validity check. */
+   * cargo's combined bounding box, computed once at pickup — reused every
+   * frame for both the swept-collision clamp and the placement-validity
+   * check (spec 十四 from the previous round: "不要只檢查托盤底板"). */
   private unionHalfExtents = new THREE.Vector3();
   private unionLocalCenterOffset = new THREE.Vector3();
+  /** Validity of `placementPos`/`placementQuat` — the floor-level position
+   * the pallet would land at if placed RIGHT NOW, distinct from the
+   * walking carry transform (see updateCarry doc comment). */
   previewValid = false;
-  private carryPos = new THREE.Vector3();
-  private carryQuat = new THREE.Quaternion();
+  private placementPos = new THREE.Vector3();
+  private placementQuat = new THREE.Quaternion();
   private downRaycaster = new THREE.Raycaster();
+  private previewMesh: THREE.Mesh;
+  /** Pinned cargo whose collider must stay disabled for one more physics
+   * step after tryPlace() repositions it, so it doesn't "explode" from an
+   * instant same-frame overlap — flushed at the top of the NEXT update()
+   * call, by which point this frame's physics.update() has already stepped
+   * the world at least once with the body sitting at its resting transform
+   * but still non-colliding (spec 九-7). */
+  private pendingCargoRestore: InteractableObject[] = [];
 
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, cargoSystem: CargoSystem, interactables: Map<string, InteractableObject>,
-    hud: HUD, onFirstUse?: () => void, onFirstOrganized?: () => void
+    playerData: PlayerInteractionData, hud: HUD, onFirstUse?: () => void, onFirstOrganized?: () => void
   ) {
     this.scene = scene;
     this.physics = physics;
     this.cargoSystem = cargoSystem;
     this.interactables = interactables;
+    this.playerData = playerData;
     this.hud = hud;
     this.onFirstUse = onFirstUse;
     this.onFirstOrganized = onFirstOrganized;
     this.homePos = new THREE.Vector3(PALLET_CONFIG.posX, 0, PALLET_CONFIG.posZ);
 
     this.topMesh = this.build();
+    this.previewMesh = this.buildPreviewMesh();
   }
 
   private build(): THREE.Mesh {
@@ -127,7 +156,9 @@ export class PalletSystem {
 
     // Kinematic body — immune to being knocked/tipped by cargo landing on
     // it while parked, only moves when this system explicitly drives it
-    // (carry-follow while held, or the end-of-day reset).
+    // (carry-follow while held, or the end-of-day reset). Stays ENABLED at
+    // all times (including while held) so the collider always tracks the
+    // mesh 1:1 — see class doc comment on "single source of truth".
     const bodyDesc = this.physics.createKinematicBodyDesc(posX, centerY, posZ);
     const body = this.physics.createKinematicBody(bodyDesc);
     this.physics.addColliderToBody(body, 0, 0, 0, width / 2, height / 2, depth / 2);
@@ -143,7 +174,30 @@ export class PalletSystem {
     return mesh;
   }
 
+  /** Semi-transparent ghost representing the pallet+cargo union bounds at
+   * the current placement target (spec 八) — green when valid, red when
+   * not. Never raycast-hittable, never registered as an InteractableObject,
+   * no physics body, so it can never be picked up or block placement of
+   * itself. */
+  private buildPreviewMesh(): THREE.Mesh {
+    const geo = new THREE.BoxGeometry(1, 1, 1);
+    const mat = new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.28, depthWrite: false });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.visible = false;
+    mesh.renderOrder = 5;
+    mesh.raycast = () => {};
+    this.scene.add(mesh);
+    return mesh;
+  }
+
   update(deltaTime: number, cameraPosition?: THREE.Vector3, cameraForward?: THREE.Vector3): void {
+    if (this.pendingCargoRestore.length > 0) {
+      for (const obj of this.pendingCargoRestore) {
+        if (obj.rigidBody) this.physics.setBodyEnabled(obj.rigidBody, true);
+      }
+      this.pendingCargoRestore = [];
+    }
+
     if (this.isHeld) {
       if (cameraPosition && cameraForward) this.updateCarry(cameraPosition, cameraForward);
       return;
@@ -151,11 +205,11 @@ export class PalletSystem {
     this.updateOrganizeScan(deltaTime);
   }
 
-  /** Unchanged organize judgment from the previous round — a box/large item
-   * resting stably on the pallet's own footprint for >=0.5s gets marked
-   * organized (spec十九: persists after being carried away, and整托搬運
-   * doesn't re-trigger or lose it since this scan only runs while NOT held,
-   * and never touches `organized` false again once true). */
+  /** Unchanged organize judgment — a box/large item resting stably on the
+   * pallet's own footprint for >=0.5s gets marked organized (persists after
+   * being carried away, and group-carry doesn't re-trigger or lose it since
+   * this scan only runs while NOT held, and never touches `organized` false
+   * again once true). */
   private updateOrganizeScan(deltaTime: number): void {
     const { posX, posZ, width, depth, height, detectHeight } = PALLET_CONFIG;
     const floorY = BACK_AREA.floorY;
@@ -212,23 +266,20 @@ export class PalletSystem {
     }
   }
 
-  /** True once the player is close enough to target/pick up the pallet —
-   * not actually needed for raycasting (the pallet is a normal
-   * InteractableObject, InteractionSystem's generic crosshair targeting
-   * already finds it), kept only for symmetry/clarity in case something
-   * wants a plain proximity check later. */
   get palletObject(): InteractableObject {
     return this.palletObj;
   }
 
   /** Called by InteractionSystem when the player targets the (unheld)
    * pallet and presses E. Finds every box/large daily-cargo item currently
-   * SUPPORTED by the pallet (spec十二: center within the pallet's own
-   * footprint, resting at pallet-top height — not just "nearby" or "leaning
-   * on the side"), saves each one's transform relative to the pallet,
-   * pauses their physics, and switches to world-space camera-follow carry. */
-  pickUp(): void {
+   * SUPPORTED by the pallet (center within the pallet's own footprint,
+   * resting at pallet-top height — not just "nearby" or "leaning on the
+   * side"), saves each one's transform relative to the pallet, pauses their
+   * physics, and switches to world-space camera-follow carry — positioning
+   * it in front of the player on this very first held frame (spec 三-9). */
+  pickUp(cameraPosition: THREE.Vector3, cameraForward: THREE.Vector3): void {
     if (this.isHeld) return;
+    if (this.playerData.state !== 'empty-handed') return;
 
     this.palletObj.mesh.updateMatrixWorld(true);
     const matInv = new THREE.Matrix4().copy(this.palletObj.mesh.matrixWorld).invert();
@@ -267,15 +318,18 @@ export class PalletSystem {
     }
 
     this.computeUnionBounds();
-    this.physics.setBodyEnabled(this.body, false);
     this.isHeld = true;
     this.palletObj.isHeld = true;
+    this.playerData.state = 'holding-item';
+    this.playerData.heldObjectId = this.palletId;
+    this.hud.showInteractionPrompt('整理托盤', 'E：放置整理托盤');
+
+    // Position it in front of the player immediately, not one frame late.
+    this.updateCarry(cameraPosition, cameraForward);
   }
 
   /** Combined pallet+all-pinned-cargo bounding box, in the pallet's OWN
-   * local space (center-origin) — computed once at pickup, reused every
-   * frame for the carry's swept-collision clamp and placement validity
-   * (spec十四: "不要只檢查托盤底板")。 */
+   * local space (center-origin) — computed once at pickup. */
   private computeUnionBounds(): void {
     const { width, height, depth } = PALLET_CONFIG;
     let minX = -width / 2, maxX = width / 2;
@@ -293,77 +347,141 @@ export class PalletSystem {
     this.unionLocalCenterOffset.set((maxX + minX) / 2, (maxY + minY) / 2, (maxZ + minZ) / 2);
   }
 
-  /** Each frame while held: move the pallet (world-space, not a viewmodel
-   * clone — see class doc comment) to a fixed offset in front of the
-   * camera, clamped by a swept shape cast against fixed scene geometry
-   * (spec十四: "不可穿過北側牆壁/側牆/地板/大型固定設備") using the union
-   * bounds computed at pickup, then re-derive every pinned cargo's world
-   * transform from its saved LOCAL transform against the pallet's new
-   * world matrix (same pattern dolly-system.ts uses). Also probes a
-   * downward ray for a placement-height guess (floor or a docked vehicle's
-   * cargo bed — whichever the crosshair-independent carry point currently
-   * sits above) and box-overlap-checks it for live placement validity. */
-  private updateCarry(cameraPosition: THREE.Vector3, cameraForward: THREE.Vector3): void {
+  /** Computes the WALKING carry transform: a comfortable height below eye
+   * level, clamped so the union bounds never gets close to the floor and
+   * never rises above the camera. Returns null only when the camera is
+   * looking straight up/down (no horizontal forward component to carry
+   * toward). */
+  private computeCarryTransform(cameraPosition: THREE.Vector3, cameraForward: THREE.Vector3): { pos: THREE.Vector3; quat: THREE.Quaternion } | null {
     const flat = new THREE.Vector3(cameraForward.x, 0, cameraForward.z);
-    if (flat.lengthSq() < 1e-6) return;
+    if (flat.lengthSq() < 1e-6) return null;
     flat.normalize();
 
-    const oldPos = this.palletObj.mesh.position.clone();
-    const targetX = cameraPosition.x + flat.x * CARRY_FORWARD_DIST;
-    const targetZ = cameraPosition.z + flat.z * CARRY_FORWARD_DIST;
+    // Near-face clearance from the camera is forwardDist minus the union's
+    // own horizontal half-extent — floor it at MIN_CAMERA_CLEARANCE so
+    // "手持物不會位於玩家膠囊內" holds by construction regardless of load size.
+    const horizExtent = Math.max(this.unionHalfExtents.x, this.unionHalfExtents.z);
+    const forwardDist = Math.max(CARRY_BASE_FORWARD_DIST, MIN_CAMERA_CLEARANCE) + horizExtent;
+    const targetX = cameraPosition.x + flat.x * forwardDist;
+    const targetZ = cameraPosition.z + flat.z * forwardDist;
     const yaw = Math.atan2(flat.x, flat.z);
-    const targetQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0));
+    const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0));
 
-    // Support-height probe: straight down from the intended XZ, ignoring
-    // the pallet's own mesh and every pinned cargo mesh, landing on
-    // whatever's really there (main floor, or a docked vehicle's cargo bed
-    // mesh — both are real scene geometry, see vehicle-system.ts
-    // cargoBedTopMesh).
-    const excludeRoots: THREE.Object3D[] = [this.palletObj.mesh, ...this.pinned.map(p => p.obj.mesh)];
-    this.downRaycaster.set(new THREE.Vector3(targetX, oldPos.y + 3, targetZ), new THREE.Vector3(0, -1, 0));
-    const hits = this.downRaycaster.intersectObjects(this.scene.children, true)
-      .filter(h => !this.isExcluded(h.object, excludeRoots));
-    const supportY = hits.length > 0 ? hits[0].point.y : BACK_AREA.floorY;
-    const targetY = supportY + PALLET_CONFIG.height / 2 - this.unionLocalCenterOffset.y + this.unionHalfExtents.y
-      - (PALLET_CONFIG.height / 2); // net: pallet bottom rests at supportY when placed; while carried we just track this height directly.
+    // THIS is the height computation that was the actual bug this round
+    // fixes: the previous version put the carried pallet at essentially its
+    // normal RESTING (floor-touching) height every frame — even while just
+    // walking around holding it — which made the swept-collision shape
+    // below start every single frame already touching/embedded in the
+    // floor's own static collider. Rapier's castShape reports an immediate
+    // time-of-impact (~0) for a shape that begins in contact, so
+    // castShapeMove() returned an allowed-movement fraction of 0 on every
+    // frame, freezing X/Z movement completely regardless of camera
+    // position — the pallet LOOKED stuck on the ground even though
+    // updateCarry() was genuinely running every frame and computing a
+    // nonzero desired delta. The fix: keep the WALKING height clear of the
+    // floor at all times; the floor-touching height is only ever computed
+    // separately, for the placement PREVIEW (see updatePlacementPreview).
+    const desiredCenterY = cameraPosition.y - CARRY_DROP_BELOW_EYE;
+    const minCenterY = BACK_AREA.floorY + CARRY_MIN_FLOOR_CLEARANCE + this.unionHalfExtents.y;
+    const maxCenterY = cameraPosition.y + CARRY_MAX_ABOVE_EYE - this.unionHalfExtents.y;
+    const centerY = THREE.MathUtils.clamp(desiredCenterY, minCenterY, Math.max(minCenterY, maxCenterY));
+    const targetY = centerY - this.unionLocalCenterOffset.y;
 
-    // Swept collision clamp against fixed geometry (spec十四) — same helper
-    // DollySystem's push already uses, given the union bounds' own extent
-    // and local center offset (rotated into world space).
+    return { pos: new THREE.Vector3(targetX, targetY, targetZ), quat };
+  }
+
+  /** Swept-collision clamp against fixed scene geometry only (walls/
+   * furniture — GROUP_STATIC), using the union bounds' own extent and local
+   * center offset (rotated into world space) — same castShapeMove helper
+   * dolly-system.ts's push already uses. Now that the carry height is
+   * always clear of the floor (see computeCarryTransform), this correctly
+   * blocks movement into walls without ever self-blocking against the
+   * floor the pallet isn't touching anymore. */
+  private clampCarryMove(targetPos: THREE.Vector3, targetQuat: THREE.Quaternion): THREE.Vector3 {
+    const oldPos = this.palletObj.mesh.position;
     const rotatedOffset = this.unionLocalCenterOffset.clone().applyQuaternion(targetQuat);
-    const desiredDeltaX = targetX - oldPos.x;
-    const desiredDeltaZ = targetZ - oldPos.z;
-    const shapeCenter = new THREE.Vector3(oldPos.x, targetY, oldPos.z).add(rotatedOffset);
-    const movement = new THREE.Vector3(desiredDeltaX, 0, desiredDeltaZ);
-    const allowedFraction = this.physics.castShapeMove(shapeCenter, targetQuat, this.unionHalfExtents, movement);
+    const delta = new THREE.Vector3(targetPos.x - oldPos.x, targetPos.y - oldPos.y, targetPos.z - oldPos.z);
+    const shapeCenter = oldPos.clone().add(rotatedOffset);
+    const allowedFraction = this.physics.castShapeMove(shapeCenter, targetQuat, this.unionHalfExtents, delta);
+    return new THREE.Vector3(
+      oldPos.x + delta.x * allowedFraction,
+      oldPos.y + delta.y * allowedFraction,
+      oldPos.z + delta.z * allowedFraction
+    );
+  }
 
-    const newX = oldPos.x + desiredDeltaX * allowedFraction;
-    const newZ = oldPos.z + desiredDeltaZ * allowedFraction;
-
-    this.carryPos.set(newX, targetY, newZ);
-    this.carryQuat.copy(targetQuat);
-
-    this.palletObj.mesh.position.copy(this.carryPos);
-    this.palletObj.mesh.quaternion.copy(this.carryQuat);
+  /** Writes ONE authoritative transform to both the kinematic body (so the
+   * collider tracks the mesh 1:1 — spec 二) and the mesh itself, from the
+   * exact same pos/quat. This is the ONLY place the pallet's transform is
+   * ever written while held. */
+  private applyCarryTransform(pos: THREE.Vector3, quat: THREE.Quaternion): void {
+    this.body.setNextKinematicTranslation({ x: pos.x, y: pos.y, z: pos.z });
+    this.body.setNextKinematicRotation({ x: quat.x, y: quat.y, z: quat.z, w: quat.w });
+    this.palletObj.mesh.position.copy(pos);
+    this.palletObj.mesh.quaternion.copy(quat);
     this.palletObj.mesh.updateMatrixWorld(true);
+  }
+
+  private updateCarry(cameraPosition: THREE.Vector3, cameraForward: THREE.Vector3): void {
+    const transform = this.computeCarryTransform(cameraPosition, cameraForward);
+    if (!transform) return;
+
+    const clampedPos = this.clampCarryMove(transform.pos, transform.quat);
+
+    if (!Number.isFinite(clampedPos.x) || !Number.isFinite(clampedPos.y) || !Number.isFinite(clampedPos.z)) {
+      console.error('[PalletSystem] carry position became non-finite — force-releasing to a safe position.');
+      this.forceReleaseToSafePosition();
+      return;
+    }
+
+    this.applyCarryTransform(clampedPos, transform.quat);
 
     for (const p of this.pinned) {
       const worldPos = p.localPos.clone().applyMatrix4(this.palletObj.mesh.matrixWorld);
-      const worldQuat = this.carryQuat.clone().multiply(p.localQuat);
+      const worldQuat = transform.quat.clone().multiply(p.localQuat);
       p.obj.mesh.position.copy(worldPos);
       p.obj.mesh.quaternion.copy(worldQuat);
     }
 
-    this.previewValid = allowedFraction > 0.98 && this.checkPlacementOverlap();
+    this.updatePlacementPreview(clampedPos, transform.quat);
   }
 
-  /** Box3-overlap validity check for the CURRENT carry position (spec:
-   * "若位置無效: 不執行放置, 保持手持狀態, 顯示無效放置預覽") — world
-   * bounds + overlap against every other interactable (excluding the
-   * pallet itself and its own pinned cargo). */
-  private checkPlacementOverlap(): boolean {
+  /** Computes where the pallet would actually LAND if placed right now
+   * (floor/vehicle-bed height under the current carry XZ, via a downward
+   * raycast — distinct from the walking carry height above), checks its
+   * validity, and updates the ghost preview mesh (spec 八). */
+  private updatePlacementPreview(carryPos: THREE.Vector3, carryQuat: THREE.Quaternion): void {
+    const excludeRoots: THREE.Object3D[] = [this.palletObj.mesh, this.previewMesh, ...this.pinned.map(p => p.obj.mesh)];
+    this.downRaycaster.set(new THREE.Vector3(carryPos.x, carryPos.y + 3, carryPos.z), new THREE.Vector3(0, -1, 0));
+    const hits = this.downRaycaster.intersectObjects(this.scene.children, true)
+      .filter(h => !this.isExcluded(h.object, excludeRoots));
+    const supportY = hits.length > 0 ? hits[0].point.y : BACK_AREA.floorY;
+
+    const placeCenterY = supportY + this.unionHalfExtents.y;
+    this.placementPos.set(carryPos.x, placeCenterY - this.unionLocalCenterOffset.y, carryPos.z);
+    this.placementQuat.copy(carryQuat);
+
+    const valid = this.checkPlacementValidity();
+    this.previewValid = valid;
+
+    this.previewMesh.visible = true;
+    this.previewMesh.position.copy(this.placementPos).add(this.unionLocalCenterOffset.clone().applyQuaternion(this.placementQuat));
+    this.previewMesh.quaternion.copy(this.placementQuat);
+    this.previewMesh.scale.set(this.unionHalfExtents.x * 2, this.unionHalfExtents.y * 2, this.unionHalfExtents.z * 2);
+    const mat = this.previewMesh.material as THREE.MeshBasicMaterial;
+    mat.color.setHex(valid ? 0x00ff88 : 0xff3333);
+    mat.opacity = valid ? 0.28 : 0.35;
+  }
+
+  /** Placement validity at the current placement target — excludes the
+   * pallet's own collider/mesh, its currently-pinned cargo, the player
+   * (never in `interactables` to begin with), and anything already
+   * isHeld/invisible; still blocks against walls (via the carry clamp
+   * above already having limited how far the target can be), world bounds,
+   * and any other real, resting object (spec 六). */
+  private checkPlacementValidity(): boolean {
     const halfW = this.unionHalfExtents.x, halfH = this.unionHalfExtents.y, halfD = this.unionHalfExtents.z;
-    const center = this.carryPos.clone().add(this.unionLocalCenterOffset.clone().applyQuaternion(this.carryQuat));
+    const center = this.placementPos.clone().add(this.unionLocalCenterOffset.clone().applyQuaternion(this.placementQuat));
 
     if (center.x - halfW < WORLD_BOUNDS.minX || center.x + halfW > WORLD_BOUNDS.maxX ||
         center.z - halfD < WORLD_BOUNDS.minZ || center.z + halfD > WORLD_BOUNDS.maxZ) return false;
@@ -393,10 +511,12 @@ export class PalletSystem {
   }
 
   /** Called by InteractionSystem on a second E-press while holding the
-   * pallet (spec十一: "再按E放置" — a direct single-press place, not the
-   * generic preview-then-left-click flow other cargo uses, since a WHOLE
-   * GROUP's live validity is already visible via previewValid every frame).
-   * Returns false (stays held) if the current carry position isn't valid. */
+   * pallet — a direct single-press place (not the generic preview-then-
+   * left-click flow other cargo uses, since a WHOLE GROUP's live validity
+   * is already visible via the ghost preview every frame). Leaves
+   * everything held/unchanged if the current placement target isn't valid,
+   * so the player can walk somewhere else and press E again — it can never
+   * get permanently stuck (spec 十). */
   tryPlace(): boolean {
     if (!this.isHeld) return false;
     if (!this.previewValid) {
@@ -404,64 +524,90 @@ export class PalletSystem {
       return false;
     }
 
-    this.physics.setBodyEnabled(this.body, true);
-    this.body.setTranslation({ x: this.carryPos.x, y: this.carryPos.y, z: this.carryPos.z }, true);
-    this.body.setRotation({ x: this.carryQuat.x, y: this.carryQuat.y, z: this.carryQuat.z, w: this.carryQuat.w }, true);
+    const finalPos = this.placementPos.clone();
+    const finalQuat = this.placementQuat.clone();
+
+    this.body.setNextKinematicTranslation({ x: finalPos.x, y: finalPos.y, z: finalPos.z });
+    this.body.setNextKinematicRotation({ x: finalQuat.x, y: finalQuat.y, z: finalQuat.z, w: finalQuat.w });
+    this.palletObj.mesh.position.copy(finalPos);
+    this.palletObj.mesh.quaternion.copy(finalQuat);
+    this.palletObj.mesh.updateMatrixWorld(true);
 
     for (const p of this.pinned) {
       const obj = p.obj;
-      const worldPos = obj.mesh.position.clone();
-      const worldQuat = obj.mesh.quaternion.clone();
+      const worldPos = p.localPos.clone().applyMatrix4(this.palletObj.mesh.matrixWorld);
+      const worldQuat = finalQuat.clone().multiply(p.localQuat);
+      obj.mesh.position.copy(worldPos);
+      obj.mesh.quaternion.copy(worldQuat);
       obj.isHeld = false;
       if (obj.rigidBody) {
-        this.physics.setBodyEnabled(obj.rigidBody, true);
         obj.rigidBody.setTranslation({ x: worldPos.x, y: worldPos.y, z: worldPos.z }, true);
         obj.rigidBody.setRotation({ x: worldQuat.x, y: worldQuat.y, z: worldQuat.z, w: worldQuat.w }, true);
         obj.rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
         obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        // Collider re-enable is deferred one physics step — see
+        // pendingCargoRestore's doc comment (spec 九-7).
+        this.pendingCargoRestore.push(obj);
       }
     }
 
     this.pinned = [];
     this.isHeld = false;
     this.palletObj.isHeld = false;
+    this.previewMesh.visible = false;
+    this.playerData.state = 'empty-handed';
+    this.playerData.heldObjectId = null;
+    this.hud.hideInteractionPrompt();
     return true;
   }
 
-  /** End-of-day reset (spec十七/十八) — unconditionally restores the pallet
-   * to its home position/rotation, visible and with physics re-enabled,
-   * regardless of where it currently is: sitting somewhere in the room,
-   * mid-carry (defensively released first), or hidden after riding away
-   * with a departed vehicle (VehicleControlSystem sets mesh.visible=false
-   * for it instead of destroying it — see finishOneDeparture). Also
-   * defensively releases any still-pinned cargo back into the world rather
-   * than silently deleting it. */
-  resetToStart(): void {
-    // Defensive — DailyFlowSystem only calls this once canEndDay is true,
-    // which requires empty-handed, but release cleanly (regardless of
-    // previewValid — unlike a normal tryPlace() this is a forced reset, not
-    // a player-initiated placement) rather than leaving pinned cargo stuck.
+  /** Emergency safety net — NOT part of normal play, only invoked when
+   * updateCarry() detects a non-finite computed transform. Snaps the
+   * pallet (and releases any pinned cargo) back to a safe, known-good
+   * state instead of leaving a NaN mesh/collider or a permanently stuck
+   * hold. Also used by resetToStart() below. */
+  private forceReleaseToSafePosition(): void {
     for (const p of this.pinned) {
       const obj = p.obj;
       obj.isHeld = false;
       obj.canPickUp = true;
       if (obj.rigidBody) {
         this.physics.setBodyEnabled(obj.rigidBody, true);
+        obj.rigidBody.setTranslation({ x: this.homePos.x, y: this.homePos.y + 0.5, z: this.homePos.z }, true);
         obj.rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
         obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
       }
     }
     this.pinned = [];
+    this.pendingCargoRestore = [];
     this.isHeld = false;
-    this.stableTimers.clear();
-
     this.palletObj.isHeld = false;
-    this.palletObj.canPickUp = true;
-    this.palletObj.mesh.visible = true;
+    this.previewMesh.visible = false;
+
     this.palletObj.mesh.position.copy(this.homePos);
     this.palletObj.mesh.quaternion.identity();
-    this.physics.setBodyEnabled(this.body, true);
     this.body.setTranslation({ x: this.homePos.x, y: this.homePos.y, z: this.homePos.z }, true);
     this.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+
+    if (this.playerData.heldObjectId === this.palletId) {
+      this.playerData.state = 'empty-handed';
+      this.playerData.heldObjectId = null;
+      this.hud.hideInteractionPrompt();
+    }
+  }
+
+  /** End-of-day reset — unconditionally restores the pallet to its home
+   * position/rotation, visible and with physics re-enabled, regardless of
+   * where it currently is: sitting somewhere in the room, mid-carry
+   * (forced-released first, including clearing playerData if it still
+   * points at the pallet — spec 十一: "每日重置時必須強制清除托盤手持狀
+   * 態"), or hidden after riding away with a departed vehicle
+   * (VehicleControlSystem sets mesh.visible=false for it instead of
+   * destroying it — see finishOneDeparture). */
+  resetToStart(): void {
+    this.forceReleaseToSafePosition();
+    this.stableTimers.clear();
+    this.palletObj.canPickUp = true;
+    this.palletObj.mesh.visible = true;
   }
 }

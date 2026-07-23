@@ -125,12 +125,10 @@ export class InteractionSystem {
       // PickupSystem's generic viewmodel-clone flow like every other held
       // item below) — a second E press here commits the placement if the
       // live preview is valid, or stays held with a toast otherwise.
+      // tryPlace() owns playerData.state/heldObjectId itself on success, so
+      // there's nothing left to do here either way.
       if (this.playerData.heldObjectId === this.palletSystem.palletId) {
-        if (this.palletSystem.tryPlace()) {
-          this.playerData.state = 'empty-handed';
-          this.playerData.heldObjectId = null;
-          this.hud.hideInteractionPrompt();
-        }
+        this.palletSystem.tryPlace();
         return;
       }
       // Check if aiming at sorting box interior - direct placement
@@ -170,11 +168,13 @@ export class InteractionSystem {
     // Priority 1: pick up targeted object (envelope, package, crate, or the
     // sorting pallet). The pallet goes through its own pickUp() (world-space
     // group-carry, not PickupSystem's viewmodel clone) — see pallet-system.ts.
+    // pickUp() owns playerData.state/heldObjectId itself and positions the
+    // pallet in front of the camera on this very first held frame.
     if (this.currentTarget) {
       if (this.currentTarget.id === this.palletSystem.palletId) {
-        this.palletSystem.pickUp();
-        this.playerData.state = 'holding-item';
-        this.playerData.heldObjectId = this.palletSystem.palletId;
+        const fwd = new THREE.Vector3();
+        this.camera.getWorldDirection(fwd);
+        this.palletSystem.pickUp(this.camera.position, fwd);
         this.clearHighlight(this.currentTarget);
         this.currentTarget = null;
         return;

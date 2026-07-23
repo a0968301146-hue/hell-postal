@@ -253,9 +253,25 @@ export class PhysicsSystem {
     // filter=(PLAYER|BOX), so querying with membership=GROUP_BOX and
     // filter=GROUP_STATIC satisfies the symmetric test on both sides —
     // matches only fixed scene geometry, not the player or other loose cargo.
+    //
+    // stop_at_penetration=false (was true — "Fix pallet pickup and
+    // placement state" round): a caller's shape very often STARTS this
+    // query already touching/resting on the very floor it's standing on
+    // (e.g. a just-picked-up pallet lifting off its resting spot). With
+    // stop_at_penetration=true, Rapier reports an immediate time_of_impact
+    // of 0 for a shape that begins in contact/penetration, REGARDLESS of
+    // which direction it's actually sweeping — so a shape trying to lift
+    // straight up off the exact surface it was resting on got permanently
+    // reported as "already blocked", freezing all movement forever (every
+    // subsequent frame's start position was still the same embedded spot,
+    // since it could never successfully move away from it). With false,
+    // the cast instead searches for the first genuinely NEW impact along
+    // the swept path, correctly ignoring the pre-existing resting contact
+    // at t=0 while still catching a real wall/obstacle further along the
+    // sweep.
     const hit = this.world.castShape(
       shapePos, shapeRot, shapeVel, shape,
-      0.0, 1.0, true,
+      0.0, 1.0, false,
       undefined, (GROUP_BOX << 16) | GROUP_STATIC
     );
     if (!hit) return 1;

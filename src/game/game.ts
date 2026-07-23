@@ -199,7 +199,7 @@ export class Game {
       }
     );
     this.palletSystem = new PalletSystem(
-      this.worldScene, this.physics, this.cargoSystem, this.interactables, this.hud,
+      this.worldScene, this.physics, this.cargoSystem, this.interactables, this.playerData, this.hud,
       () => this.settingsManager.fireTutorialEvent('palletUsed'),
       () => this.settingsManager.fireTutorialEvent('boxOrganized')
     );
@@ -268,7 +268,20 @@ export class Game {
    * state isn't currently active), so it's safe to call unconditionally. */
   private interruptPlayerActions(): void {
     if (this.playerData.state === 'placement-preview') this.pickupSystem.cancelPlacement();
-    if (this.playerData.state === 'holding-item') this.pickupSystem.forceDropHeld();
+    // The sorting pallet was NEVER handed to PickupSystem (it uses its own
+    // world-space carry flow — see pallet-system.ts), so calling
+    // forceDropHeld() while holding it would silently clear the SHARED
+    // playerData.state/heldObjectId back to empty-handed while
+    // PalletSystem.isHeld stays internally true and its pinned cargo stays
+    // suspended — an orphaned hold the player could never recover from via
+    // the normal E-key flow. Opening the manual must leave a pallet hold
+    // completely untouched instead (spec: "Esc 只開關手冊時，不應破壞托盤
+    // 手持狀態") — PauseManager already freezes palletSystem.update() from
+    // running while paused, so it just stays frozen in place and resumes
+    // normally once the manual closes.
+    if (this.playerData.state === 'holding-item' && this.playerData.heldObjectId !== this.palletSystem.palletId) {
+      this.pickupSystem.forceDropHeld();
+    }
     if (this.playerData.state === 'pushing-dolly') {
       this.dollySystem.stopPush();
       this.playerData.state = 'empty-handed';
