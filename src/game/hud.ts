@@ -238,18 +238,21 @@ export class HUD {
     this.shipmentSummaryEl.classList.remove('visible');
   }
 
-  /** Simplified day-complete panel (spec "北側卸貨口/重新啟用呼叫載具"
-   * section 十六) — shown once BOTH routes have finished departing, reuses
-   * the same DOM element/pause-then-繼續 pattern as the old
-   * showVehicleSettlement (kept intact above, just no longer called from
-   * this round's flow) but drops every score/correctness field entirely. */
-  showDayCompleteSummary(params: { total: number; organized: number; loaded: number; onContinue: () => void }): void {
-    const { total, organized, loaded, onContinue } = params;
+  /** Day-complete panel ("Add six cargo vehicles and unrestricted departure
+   * scoring" round) — shown once BOTH routes have finished departing,
+   * reuses the same DOM element/pause-then-繼續 pattern as the old
+   * showVehicleSettlement (kept intact above, still unused). Fields come
+   * straight from VehicleControlSystem's departure-time settlement snapshot
+   * (spec二: 今日貨物總數/成功出貨數量/未出貨數量/未出貨扣分/當日最終分數). */
+  showDayCompleteSummary(params: { total: number; shipped: number; unshipped: number; penalty: number; finalScore: number; onContinue: () => void }): void {
+    const { total, shipped, unshipped, penalty, finalScore, onContinue } = params;
     this.shipmentSummaryEl.innerHTML = `
       <p class="summary-title">兩台載具已出發</p>
-      <p>今日總貨物：${total}</p>
-      <p>已整理：${organized}</p>
-      <p>已裝載：${loaded}</p>
+      <p>今日貨物總數：${total}</p>
+      <p>成功出貨：${shipped}</p>
+      <p>未出貨：${unshipped}</p>
+      <p>未出貨扣分：${penalty > 0 ? '-' : ''}${penalty}</p>
+      <p>當日最終分數：${finalScore}</p>
       <p class="summary-title">今日貨物已全部送出</p>
       <button id="settlement-continue-btn">繼續</button>
     `;

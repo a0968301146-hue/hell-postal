@@ -2,15 +2,56 @@ import * as THREE from 'three';
 import { PhysicsSystem } from './physics-system';
 import { InteractableObject } from './interactable-object';
 import { CargoSystem } from './cargo-system';
+import { CargoData, CargoType } from './cargo-data';
 import { PickupSystem } from './pickup-system';
 import { VehicleSystem } from './vehicle-system';
 import { LAND_VEHICLE_CONFIGS, SEA_VEHICLE_CONFIGS, VehicleConfig } from './vehicle-data';
 import { VEHICLE_CONTROL_POS, BACK_AREA } from './logistics-layout-data';
+import { UNSHIPPED_PENALTY_PER_ITEM } from './daily-flow-data';
 import { SCENE_CONFIG } from './scene-manager';
 import { createFloatingLabel, updateFloatingLabel } from './world-label-system';
 import { HUD } from './hud';
 import { DailyFlowSystem } from './daily-flow-system';
 import { PALLET_ID } from './pallet-system';
+import { SettingsManager } from './settings-manager';
+
+/** A daily cargo item's EFFECTIVE cargo kind for vehicle-compatibility
+ * purposes ("Add six cargo vehicles" round) — derived from the fields
+ * daily-flow cargo actually populates (shapeType/category), never from
+ * CargoData.cargoType/routeType (those stay hardcoded 'normal'/'domestic'
+ * placeholders for every daily item — see cargo-data.ts
+ * createDailyCargoData). 'frozen'/'live' are never produced by today's
+ * cargo-generation code (that's a future round's work — see
+ * vehicle-data.ts's 蝸牛/克拉肯 doc comments), so those two vehicles are
+ * fully configured and dockable but can't yet receive a "correct" item;
+ * that's an accepted, spec-acknowledged gap ("若目前尚無解鎖資料，先加入
+ * 六台設定，不重做完整天數系統"), not a bug. */
+function effectiveCargoKind(data: CargoData): CargoType {
+  if (data.shapeType === 'large') return 'large';
+  if (data.category === 'fragile') return 'fragile';
+  return 'normal';
+}
+
+/** Whether `vehicle` is one of the (exactly one, per this round's six
+ * creature haulers) configs allowed to accept this item — the ONLY
+ * "correctly loaded" test (spec 四: "貨物放入正確載具才算成功出貨");
+ * physically being inside ANY docked vehicle's cargoBounds is still what
+ * flips CargoData.shipped (see scanCargoForShipment) — this is the
+ * SEPARATE, stricter check applied only at departure settlement. */
+function vehicleAcceptsCargo(config: VehicleConfig, data: CargoData): boolean {
+  return config.acceptedCargoTypes.includes(effectiveCargoKind(data));
+}
+
+/** One departure's scored outcome, computed once at 載具出發 press time
+ * (spec二: "按下發車時，建立當日結算快照") and displayed once both routes
+ * finish their departure animation (see showDayCompleteSummary). */
+interface DepartureSettlement {
+  total: number;
+  shipped: number;
+  unshipped: number;
+  penalty: number;
+  finalScore: number;
+}
 
 /** Per-vehicle lifecycle. 'departed' is a terminal holding state — the
  * vehicle mesh/body is already gone, but the route stays 'departed' (not
@@ -54,6 +95,7 @@ export class VehicleControlSystem {
   private pickupSystem: PickupSystem;
   private hud: HUD;
   private dailyFlowSystem: DailyFlowSystem;
+  private settingsManager: SettingsManager;
   private onPauseChange: (paused: boolean) => void;
   private onVehicleDiscovered?: (config: VehicleConfig) => void;
   private onVehicleCalled?: () => void;
@@ -66,6 +108,9 @@ export class VehicleControlSystem {
   private landPinnedCargo: InteractableObject[] = [];
   private seaPinnedCargo: InteractableObject[] = [];
   private dayCompleteShown = false;
+  /** Computed once at pressDepartButton() time, consumed once by
+   * showDayCompleteSummary() once both routes finish departing. */
+  private pendingSettlement: DepartureSettlement | null = null;
 
   /** Per-item stability timers for the shipment scan ("至少 0.5 秒") —
    * separate from PalletSystem/RollerRackSystem's own timers (different
@@ -91,6 +136,7 @@ export class VehicleControlSystem {
     pickupSystem: PickupSystem,
     hud: HUD,
     dailyFlowSystem: DailyFlowSystem,
+    settingsManager: SettingsManager,
     onPauseChange: (paused: boolean) => void,
     onVehicleDiscovered?: (config: VehicleConfig) => void,
     onVehicleCalled?: () => void,
@@ -105,6 +151,7 @@ export class VehicleControlSystem {
     this.pickupSystem = pickupSystem;
     this.hud = hud;
     this.dailyFlowSystem = dailyFlowSystem;
+    this.settingsManager = settingsManager;
     this.onPauseChange = onPauseChange;
     this.onVehicleDiscovered = onVehicleDiscovered;
     this.onVehicleCalled = onVehicleCalled;
@@ -182,12 +229,15 @@ export class VehicleControlSystem {
     return flowAllows && this.landState === 'absent' && this.seaState === 'absent';
   }
 
-  /** Allowed only once BOTH routes are docked AND every daily cargo item
-   * has been shipped (spec section 十四) — dailyFlowSystem.state only
-   * reaches 'completed' once refreshCompletion() confirms 100% shipped, so
-   * checking it here covers conditions 2/3/5 from the spec in one read. */
+  /** Allowed as soon as BOTH routes are docked — "Add six cargo vehicles
+   * and unrestricted departure scoring" round explicitly removes every
+   * cargo-completion requirement (loaded count, organized, shipped ===
+   * total): the player can send both vehicles off at any time once they've
+   * arrived, with whatever is (or isn't) correctly loaded at that moment
+   * settled via pressDepartButton's score snapshot instead of gating the
+   * button itself. */
   get canDepart(): boolean {
-    return this.landState === 'docked' && this.seaState === 'docked' && this.dailyFlowSystem.state === 'completed';
+    return this.landState === 'docked' && this.seaState === 'docked';
   }
 
   callBlockedMessage(): string {
@@ -201,10 +251,9 @@ export class VehicleControlSystem {
     return ALREADY_HAVE_TEXT;
   }
 
+  /** Only reason left to block departure is "not both docked yet" — see
+   * canDepart's doc comment. */
   departBlockedMessage(): string {
-    if (this.landState !== 'docked' || this.seaState !== 'docked') return DEPART_BLOCKED_TEXT;
-    const remaining = this.dailyFlowSystem.remainingCargoCount;
-    if (remaining > 0) return `還有 ${remaining} 件今日貨物尚未裝載`;
     return DEPART_BLOCKED_TEXT;
   }
 
@@ -242,12 +291,22 @@ export class VehicleControlSystem {
     this.onVehicleDiscovered?.(config);
   }
 
-  /** 載具出發 — only proceeds once canDepart is true (both docked, every
-   * daily cargo item shipped — see canDepart's doc comment). Pinned lists
-   * come straight from each item's already-known shippedVehicleType (set by
-   * the per-frame shipment scan below) rather than re-scanning cargoBounds
-   * here, since by now every daily cargo item is guaranteed shipped=true
-   * under exactly one route. */
+  /** 載具出發 — proceeds as soon as both routes are docked, regardless of
+   * how much (or how little, or how incorrectly) is currently loaded (see
+   * canDepart's doc comment). Two independent things happen per today's
+   * cargo item here:
+   *   1. Physical pinning: anything CURRENTLY shipped=true (physically
+   *      resting in a docked bay, per scanCargoForShipment) rides along
+   *      with whichever route it's shipped under and is destroyed once
+   *      that vehicle leaves — unchanged from before, and deliberately
+   *      NOT conditioned on vehicle-type correctness (spec三: "已隨載具
+   *      離場的貨物照原流程清除").
+   *   2. Score settlement snapshot: SEPARATELY, an item only counts as a
+   *      genuine success if it's shipped AND in a vehicle whose
+   *      acceptedCargoTypes actually cover its effective kind (spec四:
+   *      "貨物放入正確載具才算成功出貨" / "放錯載具不算成功出貨，結算時
+   *      列入未出貨") — everything else (never shipped, or shipped under
+   *      the wrong vehicle) counts as unshipped and is penalized. */
   pressDepartButton(): void {
     if (!this.canDepart || !this.landVehicle || !this.seaVehicle) {
       this.flash(this.departLabel, this.departBlockedMessage(), DEPART_IDLE_TEXT);
@@ -256,20 +315,32 @@ export class VehicleControlSystem {
 
     const landValid: InteractableObject[] = [];
     const seaValid: InteractableObject[] = [];
+    let shippedCorrect = 0;
+    let unshipped = 0;
+
     for (const id of this.dailyFlowSystem.dailyCargoIds) {
       const data = this.cargoSystem.getCargoData(id);
       const obj = this.interactables.get(id);
-      if (!data || !obj || !data.shipped) continue; // defensive — canDepart already guarantees this
-      (data.shippedVehicleType === 'sea' ? seaValid : landValid).push(obj);
+      if (!data || !obj) { unshipped++; continue; }
+
+      if (data.shipped) {
+        (data.shippedVehicleType === 'sea' ? seaValid : landValid).push(obj);
+      }
+
+      const vehicle = data.shippedVehicleType === 'land' ? this.landVehicle
+        : data.shippedVehicleType === 'sea' ? this.seaVehicle : null;
+      const correct = !!data.shipped && !!vehicle && vehicleAcceptsCargo(vehicle.config, data);
+      if (correct) shippedCorrect++; else unshipped++;
     }
 
-    // The sorting pallet itself is never in dailyCargoIds (spec 十七: "托盤
-    // 本身不計入dailyCargoIds") so it needs its own bay-membership check —
-    // if it's still sitting inside a docked vehicle's cargo bay at
-    // departure time, it rides along the SAME way as any other pinned cargo
+    // The sorting pallet itself is never in dailyCargoIds (spec: "托盤本身
+    // 不計入dailyCargoIds") so it needs its own bay-membership check — if
+    // it's still sitting inside a docked vehicle's cargo bay at departure
+    // time, it rides along the SAME way as any other pinned cargo
     // (vehicle.moveToward() below just translates every entry in the list
     // by the same per-frame delta, so the pallet and whatever cargo is
     // still resting on it stay visually together with zero extra code).
+    // Never part of the score settlement either way (not daily cargo).
     const palletObj = this.interactables.get(PALLET_ID);
     if (palletObj && palletObj.mesh.visible && !palletObj.isHeld) {
       if (this.landVehicle.isInCargoBay(palletObj.mesh.position)) landValid.push(palletObj);
@@ -282,6 +353,17 @@ export class VehicleControlSystem {
     this.pinCargoPhysics(seaValid);
     this.landState = 'departing';
     this.seaState = 'departing';
+
+    const penalty = unshipped * UNSHIPPED_PENALTY_PER_ITEM;
+    if (penalty > 0) this.settingsManager.addScore(-penalty);
+    this.pendingSettlement = {
+      total: this.dailyFlowSystem.totalCargoCount,
+      shipped: shippedCorrect,
+      unshipped,
+      penalty,
+      finalScore: this.settingsManager.progress.score,
+    };
+
     this.dailyFlowSystem.notifyDeparting();
 
     this.onVehicleDeparted?.();
@@ -447,20 +529,25 @@ export class VehicleControlSystem {
     }
   }
 
-  /** Simplified completion screen (this round drops the old score/
-   * correct-vs-incompatible breakdown entirely — spec section 十六: no more
-   * 正確受理/不相容貨物/國內海外判定/加分扣分). By the time both vehicles
-   * have departed, every daily cargo item has already been destroyed
-   * (finishOneDeparture above), so the three counts are all just
-   * totalCargoCount — canDepart already guaranteed 100% organized+shipped
-   * before departure could begin. */
+  /** Completion screen — reads the settlement snapshot computed back at
+   * pressDepartButton() press time (spec二: total/success/unshipped/
+   * penalty/finalScore), rather than re-deriving anything from CargoData
+   * (which is no longer meaningful here — every daily cargo item, shipped
+   * or not, has been destroyed by now: shipped ones via finishOneDeparture
+   * above, never-shipped ones will be swept up by DailyFlowSystem's
+   * next-day cleanup once the player presses 結束今天). Falls back to an
+   * all-zero snapshot only defensively (pendingSettlement is always set by
+   * pressDepartButton before departure can even begin). */
   private showDayCompleteSummary(): void {
-    const total = this.dailyFlowSystem.totalCargoCount;
+    const settlement = this.pendingSettlement ?? {
+      total: this.dailyFlowSystem.totalCargoCount, shipped: 0, unshipped: 0, penalty: 0, finalScore: this.settingsManager.progress.score,
+    };
+    this.pendingSettlement = null;
 
     this.dailyFlowSystem.notifyDayComplete();
     this.onPauseChange(true);
     this.hud.showDayCompleteSummary({
-      total, organized: total, loaded: total,
+      ...settlement,
       onContinue: () => {
         this.landState = 'absent';
         this.seaState = 'absent';

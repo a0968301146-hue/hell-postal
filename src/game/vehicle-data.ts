@@ -56,16 +56,19 @@ const LAND_DOCK_POS = { x: -6, z: 29.5 };
 const LAND_SPAWN_POS = { x: -6, z: 49 }; // south, beyond the back-area wall + view
 const LAND_EXIT_POS = { x: -6, z: 49 };
 
-/** Three differently-sized land-route prototypes — cycled round-robin by
- * VehicleControlSystem each time the spawn button is pressed, proving the
- * architecture (mesh/collider/cargo-bay) genuinely varies per vehicle, not
- * just per vehicleType. All comfortably within VEHICLE_SIZE_LIMITS and the
- * land dock's physical footprint (LAND_DOCKS[0]: width 4, depth 5). */
+/** Three land-route creatures — cycled round-robin by VehicleControlSystem
+ * each time the spawn button is pressed ("Add six cargo vehicles" round:
+ * replaces the old generic van/truck/truck lineup with themed creature
+ * haulers, each with its own EXCLUSIVE cargo specialty so "貨物放入正確
+ * 載具才算成功出貨" has something real to check — see
+ * vehicle-control-system.ts's effectiveCargoKind()/vehicleAcceptsCargo()).
+ * All comfortably within VEHICLE_SIZE_LIMITS and the land dock's physical
+ * footprint (LAND_DOCKS[0]: width 4, depth 5). */
 export const LAND_VEHICLE_CONFIGS: VehicleConfig[] = [
   {
-    id: 'land-van-01',
+    id: 'land-frog-01',
     vehicleType: 'land',
-    displayName: '陸運小貨車',
+    displayName: '青蛙',
     width: 1.5,
     length: 2.6,
     height: 1.3,
@@ -75,31 +78,17 @@ export const LAND_VEHICLE_CONFIGS: VehicleConfig[] = [
     dockPosition: LAND_DOCK_POS,
     spawnPosition: LAND_SPAWN_POS,
     exitPosition: LAND_EXIT_POS,
-    movementSpeed: 3.6,
+    movementSpeed: 4.2,
     acceptedRouteTypes: ['domestic'],
-    acceptedCargoTypes: ['normal', 'fragile'],
+    // 國內一般貨物、國內信件 — CargoType has no separate "信件" variant, so
+    // both map onto 'normal' (the same bucket ordinary daily-flow cargo's
+    // effective kind resolves to — see effectiveCargoKind()).
+    acceptedCargoTypes: ['normal'],
   },
   {
-    id: 'land-truck-01',
+    id: 'land-rockgiant-01',
     vehicleType: 'land',
-    displayName: '陸運貨車',
-    width: 2.2,
-    length: 4.0,
-    height: 1.7,
-    cargoAreaWidth: 1.84,
-    cargoAreaLength: 3.44,
-    cargoAreaHeight: 1.6,
-    dockPosition: LAND_DOCK_POS,
-    spawnPosition: LAND_SPAWN_POS,
-    exitPosition: LAND_EXIT_POS,
-    movementSpeed: 3,
-    acceptedRouteTypes: ['domestic'],
-    acceptedCargoTypes: ['normal', 'fragile', 'large'],
-  },
-  {
-    id: 'land-truck-02',
-    vehicleType: 'land',
-    displayName: '陸運大貨車',
+    displayName: '石頭巨人',
     width: 2.6,
     length: 4.6,
     height: 1.9,
@@ -109,62 +98,102 @@ export const LAND_VEHICLE_CONFIGS: VehicleConfig[] = [
     dockPosition: LAND_DOCK_POS,
     spawnPosition: LAND_SPAWN_POS,
     exitPosition: LAND_EXIT_POS,
-    movementSpeed: 2.4,
+    movementSpeed: 2.0,
     acceptedRouteTypes: ['domestic'],
-    acceptedCargoTypes: ['normal', 'fragile', 'large'],
+    acceptedCargoTypes: ['large'],
+  },
+  {
+    id: 'land-snail-01',
+    vehicleType: 'land',
+    displayName: '蝸牛',
+    width: 2.0,
+    length: 3.4,
+    height: 1.5,
+    cargoAreaWidth: 1.7,
+    cargoAreaLength: 2.9,
+    cargoAreaHeight: 1.3,
+    dockPosition: LAND_DOCK_POS,
+    spawnPosition: LAND_SPAWN_POS,
+    exitPosition: LAND_EXIT_POS,
+    movementSpeed: 1.4,
+    acceptedRouteTypes: ['domestic'],
+    acceptedCargoTypes: ['live'],
   },
 ];
 
-// Sea vehicles travel east-west (axis: 'x'), docking at the two existing
-// SEA_DOCKS marker positions (logistics-layout-data.ts) — one boat per dock
-// slot, cycled round-robin like land vehicles. Spawn/exit sit east of the
-// pier (PIER.maxX = 18) and well beyond player view, mirroring how land's
+// Sea vehicles travel east-west (axis: 'x'), docking at the existing
+// SEA_DOCKS marker positions (logistics-layout-data.ts) — only ONE sea
+// vehicle ever exists at a time (round-robin, like land), so all three
+// configs safely share the same dock slot, exactly like every land config
+// already shares ONE LAND_DOCK_POS above. Spawn/exit sit east of the pier
+// (PIER.maxX = 18) and well beyond player view, mirroring how land's
 // spawn/exit sit south of the back-area wall.
-const SEA_DOCK_1_POS = { x: 14, z: 16 }; // matches SEA_DOCKS[0]
-const SEA_DOCK_2_POS = { x: 14, z: 20 }; // matches SEA_DOCKS[1]
+const SEA_DOCK_POS = { x: 14, z: 16 }; // matches SEA_DOCKS[0]
+const SEA_SPAWN_POS = { x: 40, z: SEA_DOCK_POS.z }; // east, beyond the pier + view
+const SEA_EXIT_POS = { x: 40, z: SEA_DOCK_POS.z };
 
-/** Two differently-sized sea-route prototypes — same round-robin pattern as
- * LAND_VEHICLE_CONFIGS, but with their own index (see VehicleControlSystem).
- * Both comfortably within VEHICLE_SIZE_LIMITS and the pier's physical
- * footprint (PIER: x 10–18, z 14–22) — half-length along X stays well under
- * the pier's 8m depth, half-width along Z stays under ~1.5 so either dock
- * slot (z=16 or z=20) keeps the hull within the z 14–22 sea-gate opening. */
+/** Three sea-route creatures — same round-robin pattern and EXCLUSIVE-
+ * specialty design as LAND_VEHICLE_CONFIGS above, with their own index (see
+ * VehicleControlSystem). All comfortably within VEHICLE_SIZE_LIMITS and the
+ * pier's physical footprint (PIER: x 10–18, z 14–22) — length along X stays
+ * well under the pier's 8m depth, half-width along Z stays under ~1.5 so
+ * the hull stays within the z 14–22 sea-gate opening. */
 export const SEA_VEHICLE_CONFIGS: VehicleConfig[] = [
   {
-    id: 'sea-barge-01',
+    id: 'sea-ray-01',
     vehicleType: 'sea',
-    displayName: '小型平底運輸船',
-    width: 2.0,
-    length: 3.5,
-    height: 1.4,
-    cargoAreaWidth: 1.7,
-    cargoAreaLength: 2.9,
-    cargoAreaHeight: 1.2,
-    dockPosition: SEA_DOCK_1_POS,
-    spawnPosition: { x: 40, z: SEA_DOCK_1_POS.z }, // east, beyond the pier + view
-    exitPosition: { x: 40, z: SEA_DOCK_1_POS.z },
-    movementSpeed: 3.0,
+    displayName: '魟魚',
+    width: 1.8,
+    length: 3.2,
+    height: 1.2,
+    cargoAreaWidth: 1.5,
+    cargoAreaLength: 2.6,
+    cargoAreaHeight: 1.05,
+    dockPosition: SEA_DOCK_POS,
+    spawnPosition: SEA_SPAWN_POS,
+    exitPosition: SEA_EXIT_POS,
+    movementSpeed: 3.6,
     axis: 'x',
     acceptedRouteTypes: ['overseas'],
-    acceptedCargoTypes: ['normal', 'fragile'],
+    acceptedCargoTypes: ['fragile'],
   },
   {
-    id: 'sea-boxship-01',
+    id: 'sea-turtle-01',
     vehicleType: 'sea',
-    displayName: '中型箱型運輸船',
+    displayName: '海龜',
+    width: 2.2,
+    length: 3.8,
+    height: 1.5,
+    cargoAreaWidth: 1.85,
+    cargoAreaLength: 3.2,
+    cargoAreaHeight: 1.35,
+    dockPosition: SEA_DOCK_POS,
+    spawnPosition: SEA_SPAWN_POS,
+    exitPosition: SEA_EXIT_POS,
+    movementSpeed: 2.6,
+    axis: 'x',
+    acceptedRouteTypes: ['overseas'],
+    // 國外一般貨物、國外信件 — see land-frog-01's comment on why both map
+    // onto 'normal'.
+    acceptedCargoTypes: ['normal'],
+  },
+  {
+    id: 'sea-kraken-01',
+    vehicleType: 'sea',
+    displayName: '克拉肯',
     width: 2.6,
     length: 4.6,
     height: 1.9,
     cargoAreaWidth: 2.2,
     cargoAreaLength: 3.9,
     cargoAreaHeight: 1.7,
-    dockPosition: SEA_DOCK_2_POS,
-    spawnPosition: { x: 40, z: SEA_DOCK_2_POS.z },
-    exitPosition: { x: 40, z: SEA_DOCK_2_POS.z },
-    movementSpeed: 2.3,
+    dockPosition: SEA_DOCK_POS,
+    spawnPosition: SEA_SPAWN_POS,
+    exitPosition: SEA_EXIT_POS,
+    movementSpeed: 2.8,
     axis: 'x',
     acceptedRouteTypes: ['overseas'],
-    acceptedCargoTypes: ['normal', 'fragile', 'large'],
+    acceptedCargoTypes: ['frozen'],
   },
 ];
 

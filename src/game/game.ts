@@ -184,6 +184,7 @@ export class Game {
     this.vehicleControlSystem = new VehicleControlSystem(
       this.worldScene, this.physics, this.interactables, this.cargoSystem, this.pickupSystem, this.hud,
       this.dailyFlowSystem,
+      this.settingsManager,
       (paused) => this.setPaused(paused),
       (config) => this.settingsManager.markVehicleDiscovered(config.id),
       () => this.settingsManager.fireTutorialEvent('vehicleCalled'),

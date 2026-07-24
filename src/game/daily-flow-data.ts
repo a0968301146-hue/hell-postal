@@ -173,3 +173,9 @@ export const OUTBOUND_ZONE = {
 // spec "貨品外型與比例有更多變化" round section六/七/八) — cargo identity is
 // now bound together in ONE place alongside its subtype/label, rather than
 // living here as a bare size list.
+
+/** Score deducted PER unshipped (or wrong-vehicle) today's-cargo item at
+ * departure settlement ("Add six cargo vehicles and unrestricted departure
+ * scoring" round section二) — the ONE place this number is defined;
+ * vehicle-control-system.ts reads it rather than hardcoding a value inline. */
+export const UNSHIPPED_PENALTY_PER_ITEM = 1;

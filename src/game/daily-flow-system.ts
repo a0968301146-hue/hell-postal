@@ -199,6 +199,18 @@ export class DailyFlowSystem {
     const finishedDay = this.currentDay;
     this.hud.showDayTransition(`第 ${finishedDay} 天完成`);
 
+    // Any daily cargo id still present in CargoSystem at this point was
+    // NEVER shipped — shipped items are already destroyed at departure
+    // time by VehicleControlSystem.finishOneDeparture, so whatever's left
+    // here is exactly "今日未出貨貨物" (spec三: "刪除所有未出貨的今日貨物
+    // ...不得把未出貨貨物留到隔天"). removeCargo() tears down its mesh,
+    // rigidBody/collider, and both the cargoDataMap and interactables
+    // registrations in one call (cargo-system.ts) — nothing to leave
+    // dangling for tomorrow's fresh batch to collide with.
+    for (const id of this.dailyCargoIds) {
+      if (this.cargoSystem.getCargoData(id)) this.cargoSystem.removeCargo(id);
+    }
+
     this.currentDay++;
     this.dailyCargoIds = new Set();
     this.totalCargoCount = 0;
