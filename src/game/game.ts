@@ -446,8 +446,9 @@ export class Game {
     // while paused, rather than leaving a stale target from the frame
     // before pause.
     this.cargoInspectionSystem.update();
-    if (this.cargoInspectionSystem.currentCargo?.category) {
-      this.cargoInspectionUI.show(this.cargoInspectionSystem.currentCargo.category);
+    const inspectedCargo = this.cargoInspectionSystem.currentCargo;
+    if (inspectedCargo?.category && inspectedCargo.region) {
+      this.cargoInspectionUI.show(inspectedCargo.category, inspectedCargo.region);
     } else {
       this.cargoInspectionUI.hide();
     }

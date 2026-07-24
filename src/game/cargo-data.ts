@@ -3,6 +3,7 @@
 // stamp, weight or destination concept yet.
 
 import { CargoCategory, pickCargoCategory } from './cargo-category-data';
+import { CargoRegion, pickCargoRegion } from './cargo-region-data';
 
 export type CargoType = 'normal' | 'large' | 'fragile' | 'frozen' | 'live';
 export type RouteType = 'domestic' | 'overseas';
@@ -102,6 +103,15 @@ export interface CargoData {
    * unrelated to `cargoType`/`labels` above (the older domestic/overseas/
    * fragile label system), which daily cargo never populates. */
   category: CargoCategory | null;
+  /** "Fix land vehicle routes and add cargo region UI" round only: fixed at
+   * spawn (see cargo-region-data.ts pickCargoRegion()), read by the same
+   * crosshair inspection UI to show a floating "地區：國內/海外" line
+   * alongside `category`'s own line. Null for pre-existing non-daily cargo
+   * — unrelated to `routeType` above (the older domestic/overseas label
+   * system, still hardcoded 'domestic' for every daily item) and unrelated
+   * to VehicleConfig.acceptedRouteTypes (vehicle-data.ts) — this round does
+   * not touch vehicle-loading compatibility at all. */
+  region: CargoRegion | null;
 }
 
 const CARGO_TYPE_DISPLAY_NAME: Record<CargoType, string> = {
@@ -155,6 +165,7 @@ export function createCargoData(id: string, preset: CargoLabelPreset, dimensions
     subtype: null,
     sizeClass: null,
     category: null,
+    region: null,
   };
 }
 
@@ -249,6 +260,9 @@ export function createDailyCargoData(id: string, preset: CargoSubtypePreset): Ca
     // re-derived from the mesh/subtype/size/color afterward — see
     // cargo-category-data.ts pickCargoCategory().
     category: pickCargoCategory(),
+    // Same "decided once, at spawn" rule as `category` above — see
+    // cargo-region-data.ts pickCargoRegion().
+    region: pickCargoRegion(),
   };
 }
 

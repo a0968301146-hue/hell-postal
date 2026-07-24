@@ -1,16 +1,22 @@
 import { CargoCategory, CARGO_CATEGORY_DISPLAY } from './cargo-category-data';
+import { CargoRegion, CARGO_REGION_DISPLAY } from './cargo-region-data';
 
 /**
- * Owns ONLY the DOM element for the floating "種類：一般/易碎品" label shown
- * above the crosshair (spec: build once, never rebuild per frame — the
- * element is created in the constructor, `show()`/`hide()` after that just
- * toggle a CSS display value and update text). Entirely independent of
- * hud.ts's own DOM tree — appended straight to document.body with its own
- * inline styles, so this feature has zero footprint inside hud.ts.
+ * Owns ONLY the DOM element for the floating "種類：一般/易碎品\n地區：國內/
+ * 海外" label shown above the crosshair (spec: build once, never rebuild
+ * per frame — the element is created in the constructor, `show()`/`hide()`
+ * after that just toggle a CSS display value and update text). Entirely
+ * independent of hud.ts's own DOM tree — appended straight to
+ * document.body with its own inline styles, so this feature has zero
+ * footprint inside hud.ts. The region line ("Fix land vehicle routes and
+ * add cargo region UI" round) reuses this SAME element/show()/hide() call
+ * site rather than a second UI (spec: "沿用現有準心貨物檢視系統，不建立第二
+ * 套...UI").
  */
 export class CargoInspectionUI {
   private el: HTMLDivElement;
   private lastCategory: CargoCategory | null = null;
+  private lastRegion: CargoRegion | null = null;
 
   constructor() {
     const el = document.createElement('div');
@@ -28,7 +34,7 @@ export class CargoInspectionUI {
       fontFamily: 'sans-serif',
       fontSize: '13px',
       textAlign: 'center',
-      whiteSpace: 'nowrap',
+      whiteSpace: 'pre-line',
       pointerEvents: 'none',
       userSelect: 'none',
       textShadow: '0 0 4px rgba(0, 0, 0, 0.9)',
@@ -39,10 +45,11 @@ export class CargoInspectionUI {
     this.el = el;
   }
 
-  show(category: CargoCategory): void {
-    if (this.lastCategory !== category) {
-      this.el.textContent = `種類：${CARGO_CATEGORY_DISPLAY[category]}`;
+  show(category: CargoCategory, region: CargoRegion): void {
+    if (this.lastCategory !== category || this.lastRegion !== region) {
+      this.el.textContent = `種類：${CARGO_CATEGORY_DISPLAY[category]}\n地區：${CARGO_REGION_DISPLAY[region]}`;
       this.lastCategory = category;
+      this.lastRegion = region;
     }
     this.el.style.display = 'block';
   }
@@ -50,5 +57,6 @@ export class CargoInspectionUI {
   hide(): void {
     this.el.style.display = 'none';
     this.lastCategory = null;
+    this.lastRegion = null;
   }
 }

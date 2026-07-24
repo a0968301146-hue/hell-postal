@@ -22,6 +22,8 @@
 // BACK_AREA bounds in vehicle-data.ts's own assertWithinSizeLimits() call
 // plus the worked-out clearance numbers in the comments at each slot.
 
+import { LAND_GATE } from './logistics-layout-data';
+
 export interface VehicleDockSlot {
   vehicleConfigId: string;
   dockPosition: { x: number; z: number };
@@ -33,17 +35,26 @@ const LAND_DOCK_Z = 29.5; // unchanged from the single-slot layout this replaces
 const LAND_SPAWN_Z = 49; // south, beyond the back-area wall + view
 
 /** Land docking slots — one per land creature, id-keyed so vehicle-data.ts
- * can look each one up by the VehicleConfig it belongs to. Spawn X matches
- * each slot's own dock X (not a single shared lane) so the arrival drive-in
- * is a straight shot up that vehicle's own lane, never crossing another
- * slot's footprint. */
+ * can look each one up by the VehicleConfig it belongs to.
+ *
+ * "Fix land vehicle routes" round: spawnPosition/exitPosition.x now share
+ * LAND_GATE.centerX (the real wall opening, see scene-manager.ts
+ * buildBackArea) instead of each vehicle's own dock X — a straight spawn-
+ * to-dock interpolation at each vehicle's own X (the old behavior) drove
+ * two of the three land creatures straight through solid wall segments,
+ * since the wall only actually has a gap at LAND_GATE.centerX. Every land
+ * vehicle now starts (and ends) its journey already aligned with that one
+ * real opening; vehicle-route-data.ts's arrivalWaypoints/departureWaypoints
+ * are what actually bends the path from there over to each vehicle's own
+ * dockPosition once it's already inside the back area. dockPosition itself
+ * is unchanged (still each vehicle's own parking X). */
 export const LAND_DOCK_SLOTS: Record<string, VehicleDockSlot> = {
   // 青蛙 — width 1.5 (half 0.75) at x=-7: spans -7.75..-6.25.
   'land-frog-01': {
     vehicleConfigId: 'land-frog-01',
     dockPosition: { x: -7, z: LAND_DOCK_Z },
-    spawnPosition: { x: -7, z: LAND_SPAWN_Z },
-    exitPosition: { x: -7, z: LAND_SPAWN_Z },
+    spawnPosition: { x: LAND_GATE.centerX, z: LAND_SPAWN_Z },
+    exitPosition: { x: LAND_GATE.centerX, z: LAND_SPAWN_Z },
   },
   // 石頭巨人 — width 2.6 (half 1.3) at x=0: spans -1.3..1.3. Gap to frog's
   // right edge (-6.25): 4.95m. Also clear of VEHICLE_CONTROL_POS (x=0,
@@ -51,8 +62,8 @@ export const LAND_DOCK_SLOTS: Record<string, VehicleDockSlot> = {
   'land-rockgiant-01': {
     vehicleConfigId: 'land-rockgiant-01',
     dockPosition: { x: 0, z: LAND_DOCK_Z },
-    spawnPosition: { x: 0, z: LAND_SPAWN_Z },
-    exitPosition: { x: 0, z: LAND_SPAWN_Z },
+    spawnPosition: { x: LAND_GATE.centerX, z: LAND_SPAWN_Z },
+    exitPosition: { x: LAND_GATE.centerX, z: LAND_SPAWN_Z },
   },
   // 蝸牛 — width 2.0 (half 1.0) at x=7: spans 6.0..8.0. Gap to rockgiant's
   // right edge (1.3): 4.7m. Right edge (8.0) stays inside BACK_AREA (maxX
@@ -60,8 +71,8 @@ export const LAND_DOCK_SLOTS: Record<string, VehicleDockSlot> = {
   'land-snail-01': {
     vehicleConfigId: 'land-snail-01',
     dockPosition: { x: 7, z: LAND_DOCK_Z },
-    spawnPosition: { x: 7, z: LAND_SPAWN_Z },
-    exitPosition: { x: 7, z: LAND_SPAWN_Z },
+    spawnPosition: { x: LAND_GATE.centerX, z: LAND_SPAWN_Z },
+    exitPosition: { x: LAND_GATE.centerX, z: LAND_SPAWN_Z },
   },
 };
 

@@ -6,6 +6,7 @@ import { CargoData, CargoType } from './cargo-data';
 import { PickupSystem } from './pickup-system';
 import { VehicleSystem } from './vehicle-system';
 import { LAND_VEHICLE_CONFIGS, SEA_VEHICLE_CONFIGS, VehicleConfig } from './vehicle-data';
+import { VEHICLE_ROUTES } from './vehicle-route-data';
 import { VEHICLE_CONTROL_POS, BACK_AREA } from './logistics-layout-data';
 import { UNSHIPPED_PENALTY_PER_ITEM } from './daily-flow-data';
 import { SCENE_CONFIG } from './scene-manager';
@@ -75,13 +76,17 @@ type ButtonId = 'call' | 'depart';
 /** One of the six FIXED docking slots ("Add six fixed vehicle docking
  * slots" round) — every slot always uses the exact same VehicleConfig (no
  * more round-robin cycling through a shared list), so `config` never
- * changes after construction; only `vehicle`/`state`/`pinnedCargo` are
- * mutated as the day progresses. */
+ * changes after construction; only `vehicle`/`state`/`pinnedCargo`/
+ * `waypointIndex` are mutated as the day progresses. `waypointIndex` marks
+ * which stop (within VEHICLE_ROUTES[config.id].arrivalWaypoints while
+ * 'arriving', or .departureWaypoints while 'departing') the vehicle is
+ * currently traveling toward — see updateSlot(). */
 interface VehicleSlot {
   config: VehicleConfig;
   vehicle: VehicleSystem | null;
   state: SingleVehicleState;
   pinnedCargo: InteractableObject[];
+  waypointIndex: number;
 }
 
 /**
@@ -164,7 +169,7 @@ export class VehicleControlSystem {
     this.enabled = enabled;
 
     this.slots = [...LAND_VEHICLE_CONFIGS, ...SEA_VEHICLE_CONFIGS].map((config) => ({
-      config, vehicle: null, state: 'absent' as SingleVehicleState, pinnedCargo: [],
+      config, vehicle: null, state: 'absent' as SingleVehicleState, pinnedCargo: [], waypointIndex: 0,
     }));
 
     const { centerX, centerZ, spacing } = VEHICLE_CONTROL_POS;
@@ -288,6 +293,7 @@ export class VehicleControlSystem {
     this.pickupSystem.addPlacementSurface(vehicle.cargoBedTopMesh);
     slot.vehicle = vehicle;
     slot.state = 'arriving';
+    slot.waypointIndex = 0;
     this.onVehicleDiscovered?.(slot.config);
   }
 
@@ -354,6 +360,7 @@ export class VehicleControlSystem {
     for (const slot of this.slots) {
       this.pinCargoPhysics(slot.pinnedCargo);
       slot.state = 'departing';
+      slot.waypointIndex = 0;
     }
 
     const penalty = unshipped * UNSHIPPED_PENALTY_PER_ITEM;
@@ -387,24 +394,45 @@ export class VehicleControlSystem {
     this.scanCargoForShipment(deltaTime);
   }
 
+  /** Drives one slot's vehicle along its VEHICLE_ROUTES waypoint list one
+   * leg at a time — never a single spawn→dock (or dock→exit) straight-line
+   * interpolation, so land vehicles can no longer cut through a wall that
+   * only has a real opening at one shared X (see vehicle-route-data.ts).
+   * moveToward() itself is unchanged (still a single-target straight-line
+   * mover); this just calls it repeatedly against successive waypoints,
+   * advancing `slot.waypointIndex` each time the current leg completes. */
   private updateSlot(slot: VehicleSlot, deltaTime: number): void {
     if (!slot.vehicle) return;
+    const route = VEHICLE_ROUTES[slot.config.id];
 
     if (slot.state === 'arriving') {
-      const arrived = slot.vehicle.moveToward(slot.config.dockPosition, deltaTime, []);
-      if (arrived) {
-        slot.state = 'docked';
-        // Player can start loading into whichever vehicle just arrived,
-        // without waiting for the other five (idempotent past the first
-        // call — see DailyFlowSystem.notifyVehicleDocked's own guard).
-        this.dailyFlowSystem.notifyVehicleDocked();
+      const waypoints = route.arrivalWaypoints;
+      const target = waypoints[slot.waypointIndex];
+      const arrived = slot.vehicle.moveToward(target, deltaTime, []);
+      if (!arrived) return;
+      if (slot.waypointIndex < waypoints.length - 1) {
+        slot.waypointIndex++;
+        return;
       }
+      slot.state = 'docked';
+      slot.waypointIndex = 0;
+      // Player can start loading into whichever vehicle just arrived,
+      // without waiting for the other five (idempotent past the first
+      // call — see DailyFlowSystem.notifyVehicleDocked's own guard).
+      this.dailyFlowSystem.notifyVehicleDocked();
       return;
     }
 
     if (slot.state === 'departing') {
-      const arrived = slot.vehicle.moveToward(slot.config.exitPosition, deltaTime, slot.pinnedCargo);
-      if (arrived) this.finishSlotDeparture(slot);
+      const waypoints = route.departureWaypoints;
+      const target = waypoints[slot.waypointIndex];
+      const arrived = slot.vehicle.moveToward(target, deltaTime, slot.pinnedCargo);
+      if (!arrived) return;
+      if (slot.waypointIndex < waypoints.length - 1) {
+        slot.waypointIndex++;
+        return;
+      }
+      this.finishSlotDeparture(slot);
     }
   }
 
