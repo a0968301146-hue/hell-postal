@@ -66,11 +66,16 @@ export interface CargoData {
    * false if the player pulls it back out of the vehicle (spec "北側卸貨口/
    * 重新啟用呼叫載具" section 十三). Pre-existing cargo never sets this. */
   shipped: boolean;
-  /** Which route's vehicle this item is currently shipped under — null
-   * whenever `shipped` is false. Set alongside `shipped` so a later re-scan
-   * always knows which pinned-cargo list (land/sea) to destroy the item
-   * from once that route actually departs (spec 十三: "只能歸屬一台載具"). */
-  shippedVehicleType: 'land' | 'sea' | null;
+  /** Which SPECIFIC vehicle (its VehicleConfig.id, e.g. 'land-frog-01') this
+   * item is currently shipped under — null whenever `shipped` is false.
+   * ("Add six fixed vehicle docking slots" round: widened from a bare
+   * 'land'|'sea' route tag now that up to 3 vehicles per route can be
+   * docked at once — see vehicle-control-system.ts, the only reader/writer
+   * of this field.) Set alongside `shipped` so a later re-scan always knows
+   * which specific slot's pinned-cargo list to destroy the item from once
+   * that vehicle actually departs, and so departure-time scoring can check
+   * the exact vehicle's acceptedCargoTypes rather than just its route. */
+  shippedVehicleType: string | null;
   /** Defaults to 'box' for every pre-existing cargo item (createCargoData
    * below never sets it) — only daily cargo (createDailyCargoData) sets
    * 'roller'/'large'. */

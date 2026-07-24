@@ -247,7 +247,7 @@ export class HUD {
   showDayCompleteSummary(params: { total: number; shipped: number; unshipped: number; penalty: number; finalScore: number; onContinue: () => void }): void {
     const { total, shipped, unshipped, penalty, finalScore, onContinue } = params;
     this.shipmentSummaryEl.innerHTML = `
-      <p class="summary-title">兩台載具已出發</p>
+      <p class="summary-title">六台載具已出發</p>
       <p>今日貨物總數：${total}</p>
       <p>成功出貨：${shipped}</p>
       <p>未出貨：${unshipped}</p>

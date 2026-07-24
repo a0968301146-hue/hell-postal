@@ -3,6 +3,7 @@
 // no vehicle's size is ever hardcoded in VehicleSystem/VehicleControlSystem/
 // PickupSystem/Game.
 import { CargoType, RouteType } from './cargo-data';
+import { LAND_DOCK_SLOTS, SEA_DOCK_SLOTS } from './vehicle-dock-data';
 
 export interface VehicleConfig {
   id: string;
@@ -48,22 +49,15 @@ export const VEHICLE_SIZE_LIMITS = {
   maxHeight: 2.2,
 };
 
-// All land vehicles share one physical dock/gate (the south-wall gap built
-// in scene-manager.ts) — that's a route, not a per-vehicle identity — so
-// every entry below reuses the same dock/spawn/exit coordinates. What
-// genuinely varies per vehicle is its own footprint, cargo bay and speed.
-const LAND_DOCK_POS = { x: -6, z: 29.5 };
-const LAND_SPAWN_POS = { x: -6, z: 49 }; // south, beyond the back-area wall + view
-const LAND_EXIT_POS = { x: -6, z: 49 };
-
-/** Three land-route creatures — cycled round-robin by VehicleControlSystem
- * each time the spawn button is pressed ("Add six cargo vehicles" round:
- * replaces the old generic van/truck/truck lineup with themed creature
- * haulers, each with its own EXCLUSIVE cargo specialty so "貨物放入正確
- * 載具才算成功出貨" has something real to check — see
- * vehicle-control-system.ts's effectiveCargoKind()/vehicleAcceptsCargo()).
- * All comfortably within VEHICLE_SIZE_LIMITS and the land dock's physical
- * footprint (LAND_DOCKS[0]: width 4, depth 5). */
+/** Three land-route creatures — ALL SIX land+sea vehicles now dock
+ * simultaneously every day ("Add six fixed vehicle docking slots" round —
+ * no more round-robin cycling through this list one at a time), each at
+ * its OWN fixed, non-overlapping dock/spawn/exit position from
+ * vehicle-dock-data.ts (see that file for the exact clearance numbers).
+ * Each keeps its own EXCLUSIVE cargo specialty so "貨物放入正確載具才算成功
+ * 出貨" has something real to check — see vehicle-control-system.ts's
+ * effectiveCargoKind()/vehicleAcceptsCargo(). All comfortably within
+ * VEHICLE_SIZE_LIMITS. */
 export const LAND_VEHICLE_CONFIGS: VehicleConfig[] = [
   {
     id: 'land-frog-01',
@@ -75,9 +69,9 @@ export const LAND_VEHICLE_CONFIGS: VehicleConfig[] = [
     cargoAreaWidth: 1.2,
     cargoAreaLength: 2.1,
     cargoAreaHeight: 1.15,
-    dockPosition: LAND_DOCK_POS,
-    spawnPosition: LAND_SPAWN_POS,
-    exitPosition: LAND_EXIT_POS,
+    dockPosition: LAND_DOCK_SLOTS['land-frog-01'].dockPosition,
+    spawnPosition: LAND_DOCK_SLOTS['land-frog-01'].spawnPosition,
+    exitPosition: LAND_DOCK_SLOTS['land-frog-01'].exitPosition,
     movementSpeed: 4.2,
     acceptedRouteTypes: ['domestic'],
     // 國內一般貨物、國內信件 — CargoType has no separate "信件" variant, so
@@ -95,9 +89,9 @@ export const LAND_VEHICLE_CONFIGS: VehicleConfig[] = [
     cargoAreaWidth: 2.2,
     cargoAreaLength: 4.0,
     cargoAreaHeight: 1.7,
-    dockPosition: LAND_DOCK_POS,
-    spawnPosition: LAND_SPAWN_POS,
-    exitPosition: LAND_EXIT_POS,
+    dockPosition: LAND_DOCK_SLOTS['land-rockgiant-01'].dockPosition,
+    spawnPosition: LAND_DOCK_SLOTS['land-rockgiant-01'].spawnPosition,
+    exitPosition: LAND_DOCK_SLOTS['land-rockgiant-01'].exitPosition,
     movementSpeed: 2.0,
     acceptedRouteTypes: ['domestic'],
     acceptedCargoTypes: ['large'],
@@ -112,32 +106,20 @@ export const LAND_VEHICLE_CONFIGS: VehicleConfig[] = [
     cargoAreaWidth: 1.7,
     cargoAreaLength: 2.9,
     cargoAreaHeight: 1.3,
-    dockPosition: LAND_DOCK_POS,
-    spawnPosition: LAND_SPAWN_POS,
-    exitPosition: LAND_EXIT_POS,
+    dockPosition: LAND_DOCK_SLOTS['land-snail-01'].dockPosition,
+    spawnPosition: LAND_DOCK_SLOTS['land-snail-01'].spawnPosition,
+    exitPosition: LAND_DOCK_SLOTS['land-snail-01'].exitPosition,
     movementSpeed: 1.4,
     acceptedRouteTypes: ['domestic'],
     acceptedCargoTypes: ['live'],
   },
 ];
 
-// Sea vehicles travel east-west (axis: 'x'), docking at the existing
-// SEA_DOCKS marker positions (logistics-layout-data.ts) — only ONE sea
-// vehicle ever exists at a time (round-robin, like land), so all three
-// configs safely share the same dock slot, exactly like every land config
-// already shares ONE LAND_DOCK_POS above. Spawn/exit sit east of the pier
-// (PIER.maxX = 18) and well beyond player view, mirroring how land's
-// spawn/exit sit south of the back-area wall.
-const SEA_DOCK_POS = { x: 14, z: 16 }; // matches SEA_DOCKS[0]
-const SEA_SPAWN_POS = { x: 40, z: SEA_DOCK_POS.z }; // east, beyond the pier + view
-const SEA_EXIT_POS = { x: 40, z: SEA_DOCK_POS.z };
-
-/** Three sea-route creatures — same round-robin pattern and EXCLUSIVE-
- * specialty design as LAND_VEHICLE_CONFIGS above, with their own index (see
- * VehicleControlSystem). All comfortably within VEHICLE_SIZE_LIMITS and the
- * pier's physical footprint (PIER: x 10–18, z 14–22) — length along X stays
- * well under the pier's 8m depth, half-width along Z stays under ~1.5 so
- * the hull stays within the z 14–22 sea-gate opening. */
+/** Three sea-route creatures — same "all six dock simultaneously, every
+ * one at its own fixed slot" design as LAND_VEHICLE_CONFIGS above (see
+ * vehicle-dock-data.ts's SEA_DOCK_SLOTS for exact positions/clearances).
+ * Sea vehicles travel east-west (axis: 'x'). All comfortably within
+ * VEHICLE_SIZE_LIMITS. */
 export const SEA_VEHICLE_CONFIGS: VehicleConfig[] = [
   {
     id: 'sea-ray-01',
@@ -149,9 +131,9 @@ export const SEA_VEHICLE_CONFIGS: VehicleConfig[] = [
     cargoAreaWidth: 1.5,
     cargoAreaLength: 2.6,
     cargoAreaHeight: 1.05,
-    dockPosition: SEA_DOCK_POS,
-    spawnPosition: SEA_SPAWN_POS,
-    exitPosition: SEA_EXIT_POS,
+    dockPosition: SEA_DOCK_SLOTS['sea-ray-01'].dockPosition,
+    spawnPosition: SEA_DOCK_SLOTS['sea-ray-01'].spawnPosition,
+    exitPosition: SEA_DOCK_SLOTS['sea-ray-01'].exitPosition,
     movementSpeed: 3.6,
     axis: 'x',
     acceptedRouteTypes: ['overseas'],
@@ -167,9 +149,9 @@ export const SEA_VEHICLE_CONFIGS: VehicleConfig[] = [
     cargoAreaWidth: 1.85,
     cargoAreaLength: 3.2,
     cargoAreaHeight: 1.35,
-    dockPosition: SEA_DOCK_POS,
-    spawnPosition: SEA_SPAWN_POS,
-    exitPosition: SEA_EXIT_POS,
+    dockPosition: SEA_DOCK_SLOTS['sea-turtle-01'].dockPosition,
+    spawnPosition: SEA_DOCK_SLOTS['sea-turtle-01'].spawnPosition,
+    exitPosition: SEA_DOCK_SLOTS['sea-turtle-01'].exitPosition,
     movementSpeed: 2.6,
     axis: 'x',
     acceptedRouteTypes: ['overseas'],
@@ -187,9 +169,9 @@ export const SEA_VEHICLE_CONFIGS: VehicleConfig[] = [
     cargoAreaWidth: 2.2,
     cargoAreaLength: 3.9,
     cargoAreaHeight: 1.7,
-    dockPosition: SEA_DOCK_POS,
-    spawnPosition: SEA_SPAWN_POS,
-    exitPosition: SEA_EXIT_POS,
+    dockPosition: SEA_DOCK_SLOTS['sea-kraken-01'].dockPosition,
+    spawnPosition: SEA_DOCK_SLOTS['sea-kraken-01'].spawnPosition,
+    exitPosition: SEA_DOCK_SLOTS['sea-kraken-01'].exitPosition,
     movementSpeed: 2.8,
     axis: 'x',
     acceptedRouteTypes: ['overseas'],
