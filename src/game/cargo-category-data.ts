@@ -5,26 +5,42 @@
 // daily cargo, which always spawns with cargoType:'normal'/labels:[] as
 // harmless defaults) — this module owns CargoCategory end to end so the two
 // concepts never get coupled or confused with each other.
+//
+// "Add dual elevated unloading ports and day-one special cargo" round:
+// extended from normal/fragile to also cover frozen/live (spec 四), reading
+// DAILY_CARGO_CATEGORY_POOL (daily-flow-data.ts) for which values are
+// actually available rather than hardcoding the pool here.
+import { DAILY_CARGO_CATEGORY_POOL } from './daily-flow-data';
 
-export type CargoCategory = 'normal' | 'fragile';
+export type CargoCategory = 'normal' | 'fragile' | 'frozen' | 'live';
 
 /** Display text for the inspection UI. */
 export const CARGO_CATEGORY_DISPLAY: Record<CargoCategory, string> = {
   normal: '一般',
   fragile: '易碎品',
+  frozen: '冷凍',
+  live: '活體',
 };
 
-/** Deterministic cyclic assignment (every 3rd call is fragile) rather than
- * independent per-item randomness — guarantees BOTH categories appear
- * within any batch of 3+ daily cargo items (spec: "當日貨物中同時生成一般與
- * 易碎品") without needing to track day-boundary state or batch size here.
+/** Deterministic cyclic assignment rather than independent per-item
+ * randomness — guarantees every category in DAILY_CARGO_CATEGORY_POOL
+ * appears within a single day's ~180-item batch (spec: "每種類型第一天至少
+ * 生成1件") without needing to track day-boundary state or batch size here.
  * A purely random per-item pick could (rarely but non-zero probability)
- * produce an all-normal day; this can't. Call once per spawned daily cargo
- * item, in the order items are created — see cargo-data.ts
+ * produce a batch missing a category; this can't. Preserves the original
+ * every-3rd-is-fragile cadence exactly, and sprinkles frozen/live in at
+ * their own periods (~1 in 20 each) rather than crowding out normal/fragile
+ * — each check is gated on the category still being in the pool, so
+ * removing a category from DAILY_CARGO_CATEGORY_POOL silently stops it from
+ * being picked without touching this function. Call once per spawned daily
+ * cargo item, in the order items are created — see cargo-data.ts
  * createDailyCargoData(). */
 let cycleIndex = 0;
 export function pickCargoCategory(): CargoCategory {
-  const category: CargoCategory = cycleIndex % 3 === 0 ? 'fragile' : 'normal';
-  cycleIndex++;
-  return category;
+  const i = cycleIndex++;
+  const pool = DAILY_CARGO_CATEGORY_POOL;
+  if (pool.includes('frozen') && i % 20 === 5) return 'frozen';
+  if (pool.includes('live') && i % 20 === 11) return 'live';
+  if (pool.includes('fragile') && i % 3 === 0) return 'fragile';
+  return 'normal';
 }

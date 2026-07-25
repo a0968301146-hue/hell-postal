@@ -32,16 +32,21 @@ export const BACK_AREA = {
   ceilingHeight: 6,
 };
 
-/** Gap in the back area's own NORTH wall (minZ) for the daily unloading
- * dock (spec "刪除北邊房間" round: the front-office room this used to sit
+/** Gaps in the back area's own NORTH wall (minZ) for the daily unloading
+ * docks (spec "刪除北邊房間" round: the front-office room this used to sit
  * in was removed entirely — the back area is now the whole building, and
- * its own north wall carries the unload dock directly). See
- * daily-flow-data.ts for the gate/chute/unload-zone geometry built around
- * this opening. */
-export const NORTH_GATE = {
-  centerX: 0,
-  halfWidth: 2.0,
-};
+ * its own north wall carries the unload docks directly). Two independent
+ * ports side by side ("Add dual elevated unloading ports and day-one
+ * special cargo" round 二: 東方新增第二個到貨口) — scene-manager.ts's
+ * buildBackArea() iterates this array to punch one gap per entry, with
+ * solid wall segments before/between/after them. See daily-flow-data.ts
+ * (UNLOAD_PORTS) for the gate/chute/spawn geometry built around each
+ * opening. Port B (east, centerX 5, span [3,7]) sits 1m clear of Port A's
+ * own span ([-2,2]) and 3m clear of BACK_AREA's east wall (maxX 10). */
+export const NORTH_GATES = [
+  { id: 'north-a', centerX: 0, halfWidth: 2.0 },
+  { id: 'north-b', centerX: 5, halfWidth: 2.0 },
+];
 
 /** Player spawn point — inside the back area, a short distance south of
  * the north unload dock's drop zone (spec "刪除北邊房間" round: previously

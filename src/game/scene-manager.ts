@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { InteractableObject } from './interactable-object';
 import { PhysicsSystem } from './physics-system';
 import {
-  WALL_THICKNESS, BACK_AREA, CARGO_ZONES, LAND_DOCKS, LAND_GATE, PIER, SEA_GATE, SEA_DOCKS, NORTH_GATE,
+  WALL_THICKNESS, BACK_AREA, CARGO_ZONES, LAND_DOCKS, LAND_GATE, PIER, SEA_GATE, SEA_DOCKS, NORTH_GATES,
 } from './logistics-layout-data';
 import { createFloatingLabel } from './world-label-system';
 
@@ -79,16 +79,30 @@ function buildBackArea(scene: THREE.Scene, physics: PhysicsSystem): THREE.Mesh {
   const wallMat = stdMat(0x707070, { side: THREE.DoubleSide });
   const midY = floorY + ceilingHeight / 2;
 
-  // North wall — gap for the daily-unload dock (spec "刪除北邊房間" round:
+  // North wall — gaps for the daily-unload docks (spec "刪除北邊房間" round:
   // the separate front-office room this used to sit in has been removed
   // entirely; this back area is now the whole building, and its own north
-  // wall carries the unload dock directly — see NORTH_GATE/UnloadingSystem).
-  // Physical opening only — UnloadingSystem's own gate panel + chute fill
-  // it visually, same pattern as every other gate opening in this file.
-  const northGapL = NORTH_GATE.centerX - NORTH_GATE.halfWidth;
-  const northGapR = NORTH_GATE.centerX + NORTH_GATE.halfWidth;
-  addWall(scene, physics, wallMat, (minX + northGapL) / 2, midY, minZ, northGapL - minX, ceilingHeight, WALL_THICKNESS);
-  addWall(scene, physics, wallMat, (northGapR + maxX) / 2, midY, minZ, maxX - northGapR, ceilingHeight, WALL_THICKNESS);
+  // wall carries the unload docks directly — see NORTH_GATES/UnloadingSystem).
+  // Physical openings only — UnloadingSystem's own gate panels + chutes fill
+  // them visually, same pattern as every other gate opening in this file.
+  // Generalized to N gates ("Add dual elevated unloading ports and day-one
+  // special cargo" round 二): walk the gates left-to-right, building one
+  // solid wall segment before each gap and a final segment after the last
+  // one, so this collapses to the original single-gate behavior when
+  // NORTH_GATES has exactly one entry.
+  const sortedNorthGates = [...NORTH_GATES].sort((a, b) => a.centerX - b.centerX);
+  let northCursor = minX;
+  for (const gate of sortedNorthGates) {
+    const gapL = gate.centerX - gate.halfWidth;
+    const gapR = gate.centerX + gate.halfWidth;
+    if (gapL > northCursor) {
+      addWall(scene, physics, wallMat, (northCursor + gapL) / 2, midY, minZ, gapL - northCursor, ceilingHeight, WALL_THICKNESS);
+    }
+    northCursor = gapR;
+  }
+  if (maxX > northCursor) {
+    addWall(scene, physics, wallMat, (northCursor + maxX) / 2, midY, minZ, maxX - northCursor, ceilingHeight, WALL_THICKNESS);
+  }
 
   // West wall — fully solid
   addWall(scene, physics, wallMat, minX, midY, cz, WALL_THICKNESS, ceilingHeight, depth);

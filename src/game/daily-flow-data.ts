@@ -2,7 +2,7 @@
 // (unload -> sort -> ship -> end day). Kept separate from
 // logistics-layout-data.ts (which owns the older counter/vehicle-era zones)
 // so this round's new geometry isn't scattered across scene/system files.
-// NORTH_GATE is the one exception — it lives in logistics-layout-data.ts
+// NORTH_GATES is the one exception — it lives in logistics-layout-data.ts
 // because scene-manager.ts's buildBackArea() needs it alongside the
 // existing LAND_GATE/SEA_GATE constants it already imports from there.
 //
@@ -12,9 +12,7 @@
 // (all positions below are now BACK_AREA-relative). PALLET_CONFIG/
 // ROLLER_RACK_CONFIG stay unchanged (still back-area furniture, untouched
 // by this round).
-import { BACK_AREA, NORTH_GATE } from './logistics-layout-data';
-
-const FLOOR_Y = BACK_AREA.floorY;
+import { BACK_AREA, NORTH_GATES } from './logistics-layout-data';
 
 /** How many cargo items spawn each day, fixed (spec "貨品外型與比例有更多
  * 變化" round section二: no infinite spawn, no per-day variation of the
@@ -33,51 +31,97 @@ export const DAILY_CARGO_CONFIG = {
   largeCount: 20,
 };
 
-/** Wall opening + short slide the gate sits in front of. Chute runs along Z
- * (north->south, into the back area) — gentle slope (rise 0.35 over run
- * 1.8, ~11°) — steep enough to visibly "slide" cargo into the room,
- * shallow enough that CCD-enabled dynamic boxes/rollers don't build up
- * enough speed to tunnel or fly on landing. */
-export const UNLOAD_CHUTE = {
-  topX: NORTH_GATE.centerX,
-  topY: FLOOR_Y + 0.35,
-  topZ: BACK_AREA.minZ + 0.15,
-  bottomX: NORTH_GATE.centerX,
-  bottomZ: BACK_AREA.minZ + 1.95,
-  width: NORTH_GATE.halfWidth * 2 - 0.6,
-  thickness: 0.12,
-};
+/** Which cargo-category-data.ts CargoCategory values the daily spawn pool
+ * may include, starting day 1 with no later unlock day for any of them
+ * (spec "Add dual elevated unloading ports and day-one special cargo" round
+ * 四: "從第1天開始...移除...天數解鎖限制"). 'large' isn't listed here — it's
+ * its own CargoShapeType, already unconditionally generated via
+ * DAILY_CARGO_CONFIG.largeCount above; this list only governs
+ * cargo-category-data.ts's pickCargoCategory() pool (normal/fragile/frozen/
+ * live), the one part of the daily mix that previously had no way to
+ * produce frozen/live at all. cargo-category-data.ts reads this rather than
+ * hardcoding which categories exist inline. */
+export const DAILY_CARGO_CATEGORY_POOL: readonly ('normal' | 'fragile' | 'frozen' | 'live')[] =
+  ['normal', 'fragile', 'frozen', 'live'];
 
-/** Gate door — a single flat panel filling the wall opening floor-to-
- * ceiling (matching the flanking wall segments' full height, so "closed"
- * genuinely seals the gap, not just its lower portion), translated straight
- * up to "open" (spec: simple translation, no real mechanism). The panel
- * itself is purely visual — see UnloadingSystem.buildGate()'s permanent
- * invisible collider (spec "防止貨品飛出場景的隱藏安全碰撞") which stays
- * solid across the WHOLE opening regardless of the panel's animation state,
- * so nothing can ever physically cross this wall plane either way. */
-export const UNLOAD_GATE = {
-  centerX: NORTH_GATE.centerX,
-  centerZ: BACK_AREA.minZ,
-  width: NORTH_GATE.halfWidth * 2 - 0.1,
-  height: BACK_AREA.ceilingHeight,
-  thickness: 0.15,
-  openOffsetY: BACK_AREA.ceilingHeight, // raises it fully clear of the opening
-  openDuration: 0.8, // seconds, within spec's 0.6-1s window
-};
+/** How far below the ceiling an elevated port's cargo spawn point sits —
+ * "天花板高度－安全間距" (spec "Add dual elevated unloading ports and
+ * day-one special cargo" round 一). Covers the tallest daily-cargo preset's
+ * own half-height (large-tall-crate, cargo-data.ts CARGO_LARGE_PRESETS,
+ * 1.55m tall / 0.775 half) plus a clearance buffer, so a spawned item's own
+ * top surface never pokes into the ceiling (BACK_AREA.ceilingHeight above
+ * the floor). */
+export const UNLOAD_PORT_CEILING_SAFETY_MARGIN = 1.1;
+const PORT_SPAWN_Y = BACK_AREA.floorY + BACK_AREA.ceilingHeight - UNLOAD_PORT_CEILING_SAFETY_MARGIN;
 
-/** Several distinct spawn points spread across the gate's own width (spec
- * "貨品外型與比例有更多變化" round section四: "必要時使用數個不同噴射生成
- * 點，而不是所有貨物共用完全相同座標") — each still comfortably inside the
- * physical chute (chute half-width ~1.7, these stay within ±0.8). */
-export const UNLOAD_SPAWN_POINTS = [
-  { x: UNLOAD_CHUTE.topX - 0.8, z: UNLOAD_CHUTE.topZ + 0.2 },
-  { x: UNLOAD_CHUTE.topX, z: UNLOAD_CHUTE.topZ + 0.3 },
-  { x: UNLOAD_CHUTE.topX + 0.8, z: UNLOAD_CHUTE.topZ + 0.2 },
-];
-/** Small per-item spawn-point jitter on top of whichever UNLOAD_SPAWN_POINTS
- * entry is used, so consecutive items from the same point still don't spawn
- * exactly stacked. */
+export interface UnloadPortConfig {
+  id: string;
+  /** Gate door — a single flat panel filling the wall opening floor-to-
+   * ceiling (matching the flanking wall segments' full height, so "closed"
+   * genuinely seals the gap, not just its lower portion), translated
+   * straight up to "open". Purely visual — UnloadingSystem's own permanent
+   * invisible collider (spec "防止貨品飛出場景的隱藏安全碰撞") stays solid
+   * across the WHOLE opening regardless of the panel's animation state, so
+   * nothing can ever physically cross this wall plane either way. */
+  gate: { centerX: number; centerZ: number; width: number; height: number; thickness: number; openOffsetY: number; openDuration: number };
+  /** Launch-tube housing (spec 一: cargo now emerges near the ceiling and
+   * pours down). Cargo no longer physically slides down this (it launches
+   * on its own trajectory instead, see UnloadingSystem.spawnOne) — the ramp
+   * housing stays as the physical "launch tube" the burst mechanism
+   * protrudes from, now spanning from near the ceiling down toward the
+   * floor (steeper than the old floor-level chute, which is fine since it's
+   * decorative only). */
+  chute: { topX: number; topY: number; topZ: number; bottomX: number; bottomZ: number; width: number; thickness: number };
+  /** Several distinct spawn points spread across this port's own gate width
+   * (spec "貨品外型與比例有更多變化" round section四: "必要時使用數個不同噴
+   * 射生成點") — each comfortably inside the physical chute. */
+  spawnPoints: { x: number; z: number }[];
+  /** Cargo spawn height for this port — near the ceiling (PORT_SPAWN_Y),
+   * same for every port since they share one north wall. */
+  spawnY: number;
+}
+
+function buildUnloadPort(gate: { id: string; centerX: number; halfWidth: number }): UnloadPortConfig {
+  const chuteTopZ = BACK_AREA.minZ + 0.15;
+  const chuteTopY = PORT_SPAWN_Y - 0.35;
+  return {
+    id: gate.id,
+    gate: {
+      centerX: gate.centerX,
+      centerZ: BACK_AREA.minZ,
+      width: gate.halfWidth * 2 - 0.1,
+      height: BACK_AREA.ceilingHeight,
+      thickness: 0.15,
+      openOffsetY: BACK_AREA.ceilingHeight, // raises it fully clear of the opening
+      openDuration: 0.8, // seconds, within spec's 0.6-1s window
+    },
+    chute: {
+      topX: gate.centerX,
+      topY: chuteTopY,
+      topZ: chuteTopZ,
+      bottomX: gate.centerX,
+      bottomZ: BACK_AREA.minZ + 1.95,
+      width: gate.halfWidth * 2 - 0.6,
+      thickness: 0.12,
+    },
+    spawnPoints: [
+      { x: gate.centerX - 0.8, z: chuteTopZ + 0.2 },
+      { x: gate.centerX, z: chuteTopZ + 0.3 },
+      { x: gate.centerX + 0.8, z: chuteTopZ + 0.2 },
+    ],
+    spawnY: PORT_SPAWN_Y,
+  };
+}
+
+/** One entry per north-wall unload port (logistics-layout-data.ts
+ * NORTH_GATES) — the ONE place port position/height/spawn-point data lives;
+ * UnloadingSystem builds its per-port gate/chute meshes and spawn logic from
+ * this array, never hardcoding a port's geometry inline. */
+export const UNLOAD_PORTS: UnloadPortConfig[] = NORTH_GATES.map(buildUnloadPort);
+
+/** Small per-item spawn-point jitter on top of whichever port spawn point is
+ * used, so consecutive items from the same point still don't spawn exactly
+ * stacked. Shared across ports. */
 export const UNLOAD_SPAWN_JITTER_X = 0.3;
 export const UNLOAD_SPAWN_JITTER_Z = 0.25;
 
@@ -116,19 +160,25 @@ export const UNLOAD_BURST_CONFIG = {
 
 /** Open floor where the pile lands and gets broken apart — the back area's
  * own north end, well clear of the player spawn (z=14.8, see
- * logistics-layout-data.ts PLAYER_SPAWN) and the pallet (z=15.5). */
+ * logistics-layout-data.ts PLAYER_SPAWN) and the pallet (z=15.5). Spans
+ * every port's own gate width (spec "Add dual elevated unloading ports and
+ * day-one special cargo" round 二: two ports on the same north wall). */
+const northGateEdges = NORTH_GATES.flatMap(g => [g.centerX - g.halfWidth, g.centerX + g.halfWidth]);
 export const UNLOAD_ZONE = {
-  minX: NORTH_GATE.centerX - NORTH_GATE.halfWidth + 0.3, maxX: NORTH_GATE.centerX + NORTH_GATE.halfWidth - 0.3,
+  minX: Math.min(...northGateEdges) + 0.3, maxX: Math.max(...northGateEdges) - 0.3,
   minZ: BACK_AREA.minZ + 0.3, maxZ: BACK_AREA.minZ + 4.3,
 };
 
 /** Wall-side pos for the two unloading-control buttons — off to the west
- * side of the gate opening (clear of NORTH_GATE's own X range and the
- * chute/drop path), spaced apart from each other in Z. Both sit just inside
- * the back area's own north wall (spec section 十九: grouped under "北側卸
- * 貨區"). */
-export const UNLOAD_BUTTON_POS = { x: NORTH_GATE.centerX - NORTH_GATE.halfWidth - 2.0, z: BACK_AREA.minZ + 1.2 };
-export const END_DAY_BUTTON_POS = { x: NORTH_GATE.centerX - NORTH_GATE.halfWidth - 2.0, z: BACK_AREA.minZ + 2.8 };
+ * side of the west-most gate opening (clear of every port's own X range and
+ * chute/drop paths), spaced apart from each other in Z. Both sit just
+ * inside the back area's own north wall (spec section 十九: grouped under
+ * "北側卸貨區"). A single shared button pair still controls both ports
+ * together (spec doesn't ask for a second button — only the ports/gates/
+ * chutes/spawn points are duplicated). */
+const westMostNorthGate = [...NORTH_GATES].sort((a, b) => a.centerX - b.centerX)[0];
+export const UNLOAD_BUTTON_POS = { x: westMostNorthGate.centerX - westMostNorthGate.halfWidth - 2.0, z: BACK_AREA.minZ + 1.2 };
+export const END_DAY_BUTTON_POS = { x: westMostNorthGate.centerX - westMostNorthGate.halfWidth - 2.0, z: BACK_AREA.minZ + 2.8 };
 
 /** Central sorting platform — a wooden pallet, sized within spec's 1.0-1.2m
  * range. Unchanged from the previous round (spec section 二十: "保持不變") —

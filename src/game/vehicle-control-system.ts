@@ -21,14 +21,19 @@ import { SettingsManager } from './settings-manager';
  * daily-flow cargo actually populates (shapeType/category), never from
  * CargoData.cargoType/routeType (those stay hardcoded 'normal'/'domestic'
  * placeholders for every daily item — see cargo-data.ts
- * createDailyCargoData). 'frozen'/'live' are never produced by today's
- * cargo-generation code (that's a future round's work — see
- * vehicle-data.ts's 蝸牛/克拉肯 doc comments), so those two vehicles are
- * fully configured and dockable but can't yet receive a "correct" item;
- * that's an accepted, spec-acknowledged gap, not a bug. */
+ * createDailyCargoData). "Add dual elevated unloading ports and day-one
+ * special cargo" round: cargo-category-data.ts's CargoCategory now also
+ * produces 'frozen'/'live' (previously only normal/fragile were possible),
+ * so this derivation recognizes them too — otherwise 蝸牛/克拉肯
+ * (vehicle-data.ts's frozen/live-only haulers) would stay permanently
+ * unroutable even after such cargo starts spawning. VehicleConfig.
+ * acceptedCargoTypes itself is untouched — this is only the read-side
+ * mapping from a spawned item's own data to a CargoType. */
 function effectiveCargoKind(data: CargoData): CargoType {
   if (data.shapeType === 'large') return 'large';
   if (data.category === 'fragile') return 'fragile';
+  if (data.category === 'frozen') return 'frozen';
+  if (data.category === 'live') return 'live';
   return 'normal';
 }
 
