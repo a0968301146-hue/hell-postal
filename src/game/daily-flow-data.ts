@@ -18,17 +18,19 @@ import { BACK_AREA, NORTH_GATES } from './logistics-layout-data';
  * 變化" round section二: no infinite spawn, no per-day variation of the
  * total or the box/roller/large ratio). This is the ONE place the daily
  * total is defined — UnloadingSystem builds its spawn plan from these
- * counts, and DailyFlowSystem/HUD/vehicle-shipment counting/departure-time
- * scoring/next-day cleanup all read the ACTUAL number of ids
- * UnloadingSystem registers (registerDailyCargo), never this constant
- * directly, so nothing else needed to change when this round scaled the
- * total ×10 (spec "北側到貨量 ×10": 18→180, exact same 12:4:2 box:roller:
- * large ratio, now 120:40:20 — 不要在多個系統中分別寫死180). */
+ * counts (split evenly across UNLOAD_PORTS, see buildSpawnPlan), and
+ * DailyFlowSystem/HUD/vehicle-shipment counting/departure-time scoring/
+ * next-day cleanup all read the ACTUAL number of ids UnloadingSystem
+ * registers (registerDailyCargo), never this constant directly, so nothing
+ * else needed to change when this round halved the total (spec "Reduce
+ * daily cargo and add lost found desk" round 一: "每日總貨量減少一半" —
+ * 180→90, same 6:2:1 box:roller:large ratio, now 60:20:10 — 不要在多個系統
+ * 中分別寫死90). */
 export const DAILY_CARGO_CONFIG = {
-  total: 180,
-  boxCount: 120,
-  rollerCount: 40,
-  largeCount: 20,
+  total: 90,
+  boxCount: 60,
+  rollerCount: 20,
+  largeCount: 10,
 };
 
 /** Which cargo-category-data.ts CargoCategory values the daily spawn pool

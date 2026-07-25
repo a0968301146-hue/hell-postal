@@ -4,6 +4,7 @@ import { PhysicsSystem } from './physics-system';
 import {
   WALL_THICKNESS, BACK_AREA, CARGO_ZONES, LAND_DOCKS, LAND_GATE, PIER, SEA_GATE, SEA_DOCKS, NORTH_GATES,
 } from './logistics-layout-data';
+import { LOST_FOUND_ROOM, LOST_FOUND_DOOR } from './lost-found-layout-data';
 import { createFloatingLabel } from './world-label-system';
 
 export const SCENE_CONFIG = {
@@ -28,6 +29,11 @@ export interface SceneData {
   floor: THREE.Mesh;
   /** Pier deck — register as an additional PickupSystem placement surface. */
   pierFloor: THREE.Mesh;
+  /** West-side lost & found room's own floor — a separate mesh from `floor`
+   * above, so it must also be registered as an additional PickupSystem
+   * placement surface ("Reduce daily cargo and add lost found desk" round
+   * 二), same pattern as pierFloor. */
+  lostFoundFloor: THREE.Mesh;
 }
 
 function stdMat(color: number, opts: Partial<THREE.MeshStandardMaterialParameters> = {}): THREE.MeshStandardMaterial {
@@ -57,9 +63,10 @@ export function createLogisticsScene(scene: THREE.Scene, physics: PhysicsSystem)
   buildLandDocks(scene);
   const pierFloor = buildPierAndWater(scene, physics);
   buildSeaDocks(scene);
+  const lostFoundFloor = buildLostFoundRoom(scene, physics);
 
   const interactables = new Map<string, InteractableObject>();
-  return { interactables, floor, pierFloor };
+  return { interactables, floor, pierFloor, lostFoundFloor };
 }
 
 function buildBackArea(scene: THREE.Scene, physics: PhysicsSystem): THREE.Mesh {
@@ -104,8 +111,14 @@ function buildBackArea(scene: THREE.Scene, physics: PhysicsSystem): THREE.Mesh {
     addWall(scene, physics, wallMat, (northCursor + maxX) / 2, midY, minZ, maxX - northCursor, ceilingHeight, WALL_THICKNESS);
   }
 
-  // West wall — fully solid
-  addWall(scene, physics, wallMat, minX, midY, cz, WALL_THICKNESS, ceilingHeight, depth);
+  // West wall — gap for the lost-found room's door ("Reduce daily cargo and
+  // add lost found desk" round 二: 西側新增小型前台房間). The new room's own
+  // walls (buildLostFoundRoom below) sit directly against this same wall
+  // line, so this gap is the ONLY opening connecting the two spaces.
+  const westGapL = LOST_FOUND_DOOR.centerZ - LOST_FOUND_DOOR.halfWidth;
+  const westGapR = LOST_FOUND_DOOR.centerZ + LOST_FOUND_DOOR.halfWidth;
+  addWall(scene, physics, wallMat, minX, midY, (minZ + westGapL) / 2, WALL_THICKNESS, ceilingHeight, westGapL - minZ);
+  addWall(scene, physics, wallMat, minX, midY, (westGapR + maxZ) / 2, WALL_THICKNESS, ceilingHeight, maxZ - westGapR);
 
   // East wall — gap where the pier opens onto the water (sea route)
   const seaGapL = SEA_GATE.centerZ - SEA_GATE.halfWidth;
@@ -118,6 +131,43 @@ function buildBackArea(scene: THREE.Scene, physics: PhysicsSystem): THREE.Mesh {
   const landGapR = LAND_GATE.centerX + LAND_GATE.halfWidth;
   addWall(scene, physics, wallMat, (minX + landGapL) / 2, midY, maxZ, landGapL - minX, ceilingHeight, WALL_THICKNESS);
   addWall(scene, physics, wallMat, (landGapR + maxX) / 2, midY, maxZ, maxX - landGapR, ceilingHeight, WALL_THICKNESS);
+
+  return floor;
+}
+
+/** West-side lost & found room ("Reduce daily cargo and add lost found
+ * desk" round 二) — its own small enclosed shell (floor + north/south/west
+ * walls), sitting directly against BACK_AREA's own west wall, which is
+ * already gapped (see buildBackArea above) at the matching LOST_FOUND_DOOR
+ * position. No separate east wall is built here — BACK_AREA's own west wall
+ * already covers that boundary. Furniture (counter/shelf/items/customer)
+ * is NOT built here — see lost-found-system.ts, same split as every other
+ * system building its own furniture while structural walls stay in this
+ * file. */
+function buildLostFoundRoom(scene: THREE.Scene, physics: PhysicsSystem): THREE.Mesh {
+  const { minX, maxX, minZ, maxZ, floorY, ceilingHeight } = LOST_FOUND_ROOM;
+  const width = maxX - minX;
+  const depth = maxZ - minZ;
+  const cx = (minX + maxX) / 2;
+  const cz = (minZ + maxZ) / 2;
+
+  const floorGeo = new THREE.PlaneGeometry(width, depth);
+  const floor = new THREE.Mesh(floorGeo, stdMat(0x4a4a42));
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(cx, floorY, cz);
+  scene.add(floor);
+  physics.createStaticCuboid(cx, floorY - WALL_THICKNESS / 2, cz, width / 2, WALL_THICKNESS / 2, depth / 2);
+
+  const wallMat = stdMat(0x5a5a52, { side: THREE.DoubleSide });
+  const midY = floorY + ceilingHeight / 2;
+
+  addWall(scene, physics, wallMat, cx, midY, minZ, width, ceilingHeight, WALL_THICKNESS); // north
+  addWall(scene, physics, wallMat, cx, midY, maxZ, width, ceilingHeight, WALL_THICKNESS); // south
+  addWall(scene, physics, wallMat, minX, midY, cz, WALL_THICKNESS, ceilingHeight, depth); // west
+
+  const roomLabel = createFloatingLabel('失物招領處', { width: 0.9, bg: 'rgba(30,25,20,0.75)' });
+  roomLabel.position.set(cx, floorY + ceilingHeight - 0.5, cz);
+  scene.add(roomLabel);
 
   return floor;
 }

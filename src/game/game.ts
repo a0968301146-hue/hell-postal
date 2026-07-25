@@ -27,6 +27,8 @@ import { PalletSystem } from './pallet-system';
 import { RollerRackSystem } from './roller-rack-system';
 import { CargoInspectionSystem } from './cargo-inspection-system';
 import { CargoInspectionUI } from './cargo-inspection-ui';
+import { LostFoundSystem } from './lost-found-system';
+import { LostFoundUI } from './lost-found-ui';
 
 export class Game {
   private worldScene: THREE.Scene;
@@ -59,6 +61,8 @@ export class Game {
   private rollerRackSystem!: RollerRackSystem;
   private cargoInspectionSystem!: CargoInspectionSystem;
   private cargoInspectionUI!: CargoInspectionUI;
+  private lostFoundSystem!: LostFoundSystem;
+  private lostFoundUI!: LostFoundUI;
 
   constructor() {
     this.worldScene = new THREE.Scene();
@@ -162,6 +166,20 @@ export class Game {
     // players precisely place cargo onto it without pushing it around
     this.pickupSystem.addPlacementSurface(this.dollySystem.platformTopMesh);
 
+    // Register the lost-found room's own floor (a separate mesh from the
+    // main back-area floor) as a placement surface, so items can be
+    // dropped/placed while standing in it ("Reduce daily cargo and add
+    // lost found desk" round 二).
+    this.pickupSystem.addPlacementSurface(sceneData.lostFoundFloor);
+
+    // West-side lost & found desk — minimal one-case flow (spec三). Built
+    // after pickupSystem exists (tryConfirmAtCounter consumes the held item
+    // via pickupSystem.forceDropHeld() on success).
+    this.lostFoundUI = new LostFoundUI();
+    this.lostFoundSystem = new LostFoundSystem(
+      this.worldScene, this.physics, this.interactables, this.pickupSystem, this.lostFoundUI
+    );
+
     // Daily unload -> sort -> ship-via-vehicle loop (this round's core).
     // DailyFlowSystem owns the day/state/count bookkeeping and the 結束今天
     // button; UnloadingSystem owns the north gate/chute/spawn sequence and
@@ -245,6 +263,7 @@ export class Game {
       this.unloadingSystem,
       this.dailyFlowSystem,
       this.palletSystem,
+      this.lostFoundSystem,
       () => this.settingsManager.fireTutorialEvent('dollyUsed')
     );
 
@@ -422,6 +441,7 @@ export class Game {
       // cargo-into-cargoBounds shipment scan every frame it's enabled.
       this.unloadingSystem.update(deltaTime);
       this.rollerRackSystem.update(deltaTime);
+      this.lostFoundSystem.update(deltaTime);
       const flowState = this.dailyFlowSystem.state;
       const bannerText = flowState === 'completed' ? '今日貨物已全部裝載'
         : flowState === 'dayComplete' ? '今日貨物已全部送出'

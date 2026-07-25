@@ -14,6 +14,7 @@ import { SettingsManager } from './settings-manager';
 import { UnloadingSystem } from './unloading-system';
 import { DailyFlowSystem } from './daily-flow-system';
 import { PalletSystem } from './pallet-system';
+import { LostFoundSystem } from './lost-found-system';
 
 export class InteractionSystem {
   private raycaster: THREE.Raycaster;
@@ -36,6 +37,7 @@ export class InteractionSystem {
   private unloadingSystem: UnloadingSystem;
   private dailyFlowSystem: DailyFlowSystem;
   private palletSystem: PalletSystem;
+  private lostFoundSystem: LostFoundSystem;
   private onDollyUsed?: () => void;
 
   constructor(
@@ -57,6 +59,7 @@ export class InteractionSystem {
     unloadingSystem: UnloadingSystem,
     dailyFlowSystem: DailyFlowSystem,
     palletSystem: PalletSystem,
+    lostFoundSystem: LostFoundSystem,
     onDollyUsed?: () => void
   ) {
     this.raycaster = new THREE.Raycaster();
@@ -78,6 +81,7 @@ export class InteractionSystem {
     this.unloadingSystem = unloadingSystem;
     this.dailyFlowSystem = dailyFlowSystem;
     this.palletSystem = palletSystem;
+    this.lostFoundSystem = lostFoundSystem;
     this.onDollyUsed = onDollyUsed;
 
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
@@ -158,6 +162,18 @@ export class InteractionSystem {
           }
         }
       }
+      // Lost & found: confirm at the counter if carrying one of the shelf
+      // items while near it (spec三: 玩家從失物架拿取物品，帶到櫃檯按 E
+      // 確認) — intercepts before the generic placement fallback below,
+      // same pattern as the pallet/envelope-interior special cases above.
+      if (
+        this.playerData.heldObjectId &&
+        this.lostFoundSystem.isLostFoundItem(this.playerData.heldObjectId) &&
+        this.lostFoundSystem.isPlayerNearCounter(this.camera.position)
+      ) {
+        this.lostFoundSystem.tryConfirmAtCounter(this.playerData.heldObjectId);
+        return;
+      }
       // Normal: enter placement mode
       this.pickupSystem.enterPlacementMode();
       return;
@@ -228,6 +244,13 @@ export class InteractionSystem {
       return;
     }
 
+    // Priority 7: lost & found customer — talk to get the case description
+    // (spec三: 顧客在前台出現，玩家按 E 互動後取得失物描述).
+    if (this.lostFoundSystem.isPlayerNearCustomer(this.camera.position)) {
+      this.lostFoundSystem.pressTalkToCustomer();
+      return;
+    }
+
     if (this.checkFarTarget()) {
       this.hud.showTooFar();
     }
@@ -279,6 +302,13 @@ export class InteractionSystem {
           this.hud.showInteractionPrompt('整理托盤', '此處無法放置');
           this.hud.setCrosshairActive(false);
         }
+      } else if (
+        this.playerData.heldObjectId &&
+        this.lostFoundSystem.isLostFoundItem(this.playerData.heldObjectId) &&
+        this.lostFoundSystem.isPlayerNearCounter(this.camera.position)
+      ) {
+        this.hud.showInteractionPrompt('失物招領櫃檯', '按 E 交給委託人確認');
+        this.hud.setCrosshairActive(true);
       }
       return;
     }
@@ -419,6 +449,15 @@ export class InteractionSystem {
     // Flatbed dolly — parked, not currently being pushed
     if (this.dollySystem.isPlayerNear(this.camera.position)) {
       this.hud.showInteractionPrompt('拖板車', '按 E 推行');
+      this.hud.setCrosshairActive(true);
+      return;
+    }
+
+    // Lost & found customer — only relevant empty-handed here; the
+    // counter's own "按 E 確認" prompt is shown from the holding-item
+    // branch of update() above instead.
+    if (this.lostFoundSystem.isPlayerNearCustomer(this.camera.position)) {
+      this.hud.showInteractionPrompt('委託人', '按 E 詢問委託內容');
       this.hud.setCrosshairActive(true);
       return;
     }

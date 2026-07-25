@@ -5,6 +5,7 @@
 //
 // Coordinate convention: X = left/right, Z = depth (increasing Z = further
 // from the north unload dock, toward the docks and pier), Y = height.
+import { LOST_FOUND_ROOM } from './lost-found-layout-data';
 
 export const WALL_THICKNESS = 0.2;
 
@@ -129,8 +130,12 @@ export const SEA_DOCKS = [
 // FRONT_OFFICE — that room's floor no longer exists, so including its old
 // footprint here would let cargo/placement validation succeed in what is
 // now empty void space north of BACK_AREA's own wall.
+// "Reduce daily cargo and add lost found desk" round: folds in
+// LOST_FOUND_ROOM's own footprint (lost-found-layout-data.ts) so item
+// placement (PickupSystem.validatePlacement) isn't rejected just for being
+// west of BACK_AREA's own wall, inside the new room.
 export const WORLD_BOUNDS = {
-  minX: BACK_AREA.minX - 1,
+  minX: Math.min(BACK_AREA.minX, LOST_FOUND_ROOM.minX) - 1,
   maxX: Math.max(BACK_AREA.maxX, PIER.maxX) + 40, // generous — land/sea vehicles travel well beyond the walls
   minZ: BACK_AREA.minZ - 1,
   maxZ: BACK_AREA.maxZ + 40,
