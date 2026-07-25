@@ -1,12 +1,12 @@
 /**
- * Owns ONLY the DOM element for the lost & found dialogue/result box
- * ("Reduce daily cargo and add lost found desk" round 三/模組化: 描述與結果
- * 提示). Same "build once in the constructor, show()/hide() just toggle
- * display + text" pattern as cargo-inspection-ui.ts — entirely independent
- * of hud.ts's own DOM tree. Positioned lower on screen (rather than at the
- * crosshair like cargo-inspection-ui.ts) so it reads as dialogue rather
- * than a targeting readout.
- */
+ * Owns ONLY the DOM element for the lost & found wrong-item hint ("Reduce
+ * daily cargo and add lost found desk" round 三, still used by "Expand
+ * modular lost found NPC flow" round 七: ID錯誤時顯示提示). Same "build once
+ * in the constructor, show()/hide() just toggle display + text" pattern as
+ * cargo-inspection-ui.ts — entirely independent of hud.ts's own DOM tree.
+ * Success feedback moved to the NPC's own head bubble (lost-found-bubble-
+ * ui.ts) as of the NPC-flow round — this module now only ever shows the
+ * wrong-item message. */
 export class LostFoundUI {
   private el: HTMLDivElement;
   private hideTimer: number | null = null;
@@ -39,18 +39,8 @@ export class LostFoundUI {
     this.el = el;
   }
 
-  /** Customer's case description (spec三: 玩家按 E 互動後取得失物描述). */
-  showDescription(customerName: string, text: string): void {
-    this.setText(`${customerName}：\n${text}`, '#ffffff');
-  }
-
-  /** Case-complete confirmation. */
-  showSuccess(text: string): void {
-    this.setText(text, '#8fd88f');
-  }
-
-  /** Wrong-item hint — no score/fail implied by styling (spec三: "不扣分、不
-   * 失敗"), just a neutral warm color distinct from the success green. */
+  /** Wrong-item hint — no score/fail implied by styling (spec: "不扣分、不失
+   * 敗"), just a neutral warm color. */
   showWrong(text: string): void {
     this.setText(text, '#e0a05a');
   }

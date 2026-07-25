@@ -162,13 +162,17 @@ export class InteractionSystem {
           }
         }
       }
-      // Lost & found: confirm at the counter if carrying one of the shelf
-      // items while near it (spec三: 玩家從失物架拿取物品，帶到櫃檯按 E
-      // 確認) — intercepts before the generic placement fallback below,
-      // same pattern as the pallet/envelope-interior special cases above.
+      // Lost & found: hand over whatever's currently held at the counter
+      // once the day's NPC is waiting there (spec七: 按 E 將目前拿著的失物
+      // 交給NPC) — correctness (matching id vs anything else) is judged
+      // entirely inside tryConfirmAtCounter, so this gate only needs
+      // "is there actually someone to hand it to, and is the player on the
+      // correct side of the counter" — intercepts before the generic
+      // placement fallback below, same pattern as the pallet/envelope-
+      // interior special cases above.
       if (
         this.playerData.heldObjectId &&
-        this.lostFoundSystem.isLostFoundItem(this.playerData.heldObjectId) &&
+        this.lostFoundSystem.isNpcWaiting &&
         this.lostFoundSystem.isPlayerNearCounter(this.camera.position)
       ) {
         this.lostFoundSystem.tryConfirmAtCounter(this.playerData.heldObjectId);
@@ -244,13 +248,6 @@ export class InteractionSystem {
       return;
     }
 
-    // Priority 7: lost & found customer — talk to get the case description
-    // (spec三: 顧客在前台出現，玩家按 E 互動後取得失物描述).
-    if (this.lostFoundSystem.isPlayerNearCustomer(this.camera.position)) {
-      this.lostFoundSystem.pressTalkToCustomer();
-      return;
-    }
-
     if (this.checkFarTarget()) {
       this.hud.showTooFar();
     }
@@ -304,7 +301,7 @@ export class InteractionSystem {
         }
       } else if (
         this.playerData.heldObjectId &&
-        this.lostFoundSystem.isLostFoundItem(this.playerData.heldObjectId) &&
+        this.lostFoundSystem.isNpcWaiting &&
         this.lostFoundSystem.isPlayerNearCounter(this.camera.position)
       ) {
         this.hud.showInteractionPrompt('失物招領櫃檯', '按 E 交給委託人確認');
@@ -449,15 +446,6 @@ export class InteractionSystem {
     // Flatbed dolly — parked, not currently being pushed
     if (this.dollySystem.isPlayerNear(this.camera.position)) {
       this.hud.showInteractionPrompt('拖板車', '按 E 推行');
-      this.hud.setCrosshairActive(true);
-      return;
-    }
-
-    // Lost & found customer — only relevant empty-handed here; the
-    // counter's own "按 E 確認" prompt is shown from the holding-item
-    // branch of update() above instead.
-    if (this.lostFoundSystem.isPlayerNearCustomer(this.camera.position)) {
-      this.hud.showInteractionPrompt('委託人', '按 E 詢問委託內容');
       this.hud.setCrosshairActive(true);
       return;
     }

@@ -4,7 +4,7 @@ import { PhysicsSystem } from './physics-system';
 import {
   WALL_THICKNESS, BACK_AREA, CARGO_ZONES, LAND_DOCKS, LAND_GATE, PIER, SEA_GATE, SEA_DOCKS, NORTH_GATES,
 } from './logistics-layout-data';
-import { LOST_FOUND_ROOM, LOST_FOUND_DOOR } from './lost-found-layout-data';
+import { LOST_FOUND_ROOM, LOST_FOUND_DOOR, LOST_FOUND_NPC_GATE } from './lost-found-layout-data';
 import { createFloatingLabel } from './world-label-system';
 
 export const SCENE_CONFIG = {
@@ -139,11 +139,14 @@ function buildBackArea(scene: THREE.Scene, physics: PhysicsSystem): THREE.Mesh {
  * desk" round 二) — its own small enclosed shell (floor + north/south/west
  * walls), sitting directly against BACK_AREA's own west wall, which is
  * already gapped (see buildBackArea above) at the matching LOST_FOUND_DOOR
- * position. No separate east wall is built here — BACK_AREA's own west wall
- * already covers that boundary. Furniture (counter/shelf/items/customer)
- * is NOT built here — see lost-found-system.ts, same split as every other
- * system building its own furniture while structural walls stay in this
- * file. */
+ * position (the PLAYER's own route in/out). No separate east wall is built
+ * here — BACK_AREA's own west wall already covers that boundary. This
+ * room's own WEST wall ("Expand modular lost found NPC flow" round 二: 西側
+ * NPC大門) is now itself gapped at LOST_FOUND_NPC_GATE — the daily NPC's own
+ * route in/out, entirely separate from the player's door. Furniture
+ * (counter/shelf/NPC) is NOT built here — see lost-found-system.ts/
+ * lost-found-npc-system.ts, same split as every other system building its
+ * own furniture while structural walls stay in this file. */
 function buildLostFoundRoom(scene: THREE.Scene, physics: PhysicsSystem): THREE.Mesh {
   const { minX, maxX, minZ, maxZ, floorY, ceilingHeight } = LOST_FOUND_ROOM;
   const width = maxX - minX;
@@ -163,7 +166,15 @@ function buildLostFoundRoom(scene: THREE.Scene, physics: PhysicsSystem): THREE.M
 
   addWall(scene, physics, wallMat, cx, midY, minZ, width, ceilingHeight, WALL_THICKNESS); // north
   addWall(scene, physics, wallMat, cx, midY, maxZ, width, ceilingHeight, WALL_THICKNESS); // south
-  addWall(scene, physics, wallMat, minX, midY, cz, WALL_THICKNESS, ceilingHeight, depth); // west
+
+  // West wall — gap for the NPC's own outward-facing gate, same
+  // solid-before/solid-after pattern as every other gate opening in this
+  // file (mirrors the room's own east opening cut into BACK_AREA's wall in
+  // buildBackArea above).
+  const npcGapL = LOST_FOUND_NPC_GATE.centerZ - LOST_FOUND_NPC_GATE.halfWidth;
+  const npcGapR = LOST_FOUND_NPC_GATE.centerZ + LOST_FOUND_NPC_GATE.halfWidth;
+  addWall(scene, physics, wallMat, minX, midY, (minZ + npcGapL) / 2, WALL_THICKNESS, ceilingHeight, npcGapL - minZ);
+  addWall(scene, physics, wallMat, minX, midY, (npcGapR + maxZ) / 2, WALL_THICKNESS, ceilingHeight, maxZ - npcGapR);
 
   const roomLabel = createFloatingLabel('失物招領處', { width: 0.9, bg: 'rgba(30,25,20,0.75)' });
   roomLabel.position.set(cx, floorY + ceilingHeight - 0.5, cz);

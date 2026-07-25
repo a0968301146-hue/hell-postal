@@ -50,16 +50,18 @@ export class DailyFlowSystem {
   private hud: HUD;
   private resetTools: () => void;
   private onDayCompleted?: () => void;
+  private onAllVehiclesDeparted?: () => void;
   private buttonLabel!: THREE.Sprite;
 
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, cargoSystem: CargoSystem, hud: HUD,
-    resetTools: () => void, onDayCompleted?: () => void
+    resetTools: () => void, onDayCompleted?: () => void, onAllVehiclesDeparted?: () => void
   ) {
     this.cargoSystem = cargoSystem;
     this.hud = hud;
     this.resetTools = resetTools;
     this.onDayCompleted = onDayCompleted;
+    this.onAllVehiclesDeparted = onAllVehiclesDeparted;
     this.buildButton(scene, physics);
   }
 
@@ -180,9 +182,15 @@ export class DailyFlowSystem {
   }
 
   /** Called by VehicleControlSystem once BOTH routes have finished
-   * departing and their shipped cargo has been destroyed. */
+   * departing and their shipped cargo has been destroyed. Fires
+   * onAllVehiclesDeparted — the ONE "vehicle departure complete" event
+   * ("Expand modular lost found NPC flow" round 四: "使用載具離場完成事件啟
+   * 動NPC，不要在多處輪詢每日流程") external systems (LostFoundSystem) hook
+   * to know it's safe to bring in their own end-of-day content, rather than
+   * polling `state` every frame themselves. */
   notifyDayComplete(): void {
     this.state = 'dayComplete';
+    this.onAllVehiclesDeparted?.();
   }
 
   pressEndDayButton(): void {

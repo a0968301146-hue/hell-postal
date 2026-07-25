@@ -190,8 +190,12 @@ export class Game {
     // BEFORE VehicleControlSystem/UnloadingSystem since both need it.
     this.dailyFlowSystem = new DailyFlowSystem(
       this.worldScene, this.physics, this.cargoSystem, this.hud,
-      () => { this.dollySystem.resetToStart(); this.unloadingSystem.resetGate(); this.palletSystem.resetToStart(); },
-      () => this.settingsManager.fireTutorialEvent('dayCompleted')
+      () => {
+        this.dollySystem.resetToStart(); this.unloadingSystem.resetGate(); this.palletSystem.resetToStart();
+        this.lostFoundSystem.resetDaily();
+      },
+      () => this.settingsManager.fireTutorialEvent('dayCompleted'),
+      () => this.lostFoundSystem.onAllVehiclesDeparted()
     );
 
     // Vehicle spawn/depart control (hall center) — re-enabled this round
@@ -219,6 +223,11 @@ export class Game {
         // room, so "辨識貨品種類" unlocks alongside "啟動北側卸貨口" rather
         // than needing a separate dedicated trigger.
         this.settingsManager.fireTutorialEvent('cargoLabelSeen');
+        // "Expand modular lost found NPC flow" round 六: today's lost item
+        // bursts in alongside the regular cargo — picks today's case and
+        // arms its own short spawn delay. UnloadingSystem itself is never
+        // touched for this (spec: 不要修改北側雙到貨口).
+        this.lostFoundSystem.onDailyUnloadStarted();
       }
     );
     this.palletSystem = new PalletSystem(
