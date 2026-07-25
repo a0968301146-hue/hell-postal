@@ -20,15 +20,17 @@ const FLOOR_Y = BACK_AREA.floorY;
  * 變化" round section二: no infinite spawn, no per-day variation of the
  * total or the box/roller/large ratio). This is the ONE place the daily
  * total is defined — UnloadingSystem builds its spawn plan from these
- * counts, and DailyFlowSystem/HUD/vehicle-shipment counting all read the
- * ACTUAL number of ids UnloadingSystem registers (registerDailyCargo),
- * never this constant directly, so nothing needs to change if it's edited
- * again later (spec: "不要在多個系統中分別寫死18"). */
+ * counts, and DailyFlowSystem/HUD/vehicle-shipment counting/departure-time
+ * scoring/next-day cleanup all read the ACTUAL number of ids
+ * UnloadingSystem registers (registerDailyCargo), never this constant
+ * directly, so nothing else needed to change when this round scaled the
+ * total ×10 (spec "北側到貨量 ×10": 18→180, exact same 12:4:2 box:roller:
+ * large ratio, now 120:40:20 — 不要在多個系統中分別寫死180). */
 export const DAILY_CARGO_CONFIG = {
-  total: 18,
-  boxCount: 12,
-  rollerCount: 4,
-  largeCount: 2,
+  total: 180,
+  boxCount: 120,
+  rollerCount: 40,
+  largeCount: 20,
 };
 
 /** Wall opening + short slide the gate sits in front of. Chute runs along Z
@@ -84,8 +86,13 @@ export const UNLOAD_SPAWN_JITTER_Z = 0.25;
  * lives here, not scattered across UnloadingSystem's methods. */
 export const UNLOAD_BURST_CONFIG = {
   /** How many waves the day's cargo splits into, and a brief charge-up
-   * before the first wave fires (spec 三: "裝置短暫蓄力"). */
-  waveCount: 3,
+   * before the first wave fires (spec 三: "裝置短暫蓄力"). Scaled ×10
+   * alongside DAILY_CARGO_CONFIG.total (spec "北側到貨量 ×10" section:
+   * "仍分批噴出，不要一次生成180件，避免物理卡頓") so each wave still only
+   * drops 6 items at a time (180/30 — same per-wave batch size the
+   * original 18/3 config used), rather than 60 items landing in the same
+   * small drop zone within one wave. */
+  waveCount: 30,
   chargeUpDuration: 0.4,
   /** Pause between waves (spec四: "每波之間短暫停頓"). */
   waveGapMin: 0.5,

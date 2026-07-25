@@ -73,17 +73,31 @@ export const CARGO_ZONES = [
 
 // Compass convention (see compass-ui.ts): North = -Z, East = +X, South = +Z, West = -X.
 
-/** Land dock — hugs the back area's SOUTH wall (only dock-1 is active/wired
- * to a real vehicle this round; dock-2 is a white-box placeholder). */
+/** Land docks — hugs the back area's SOUTH wall, one active slot per land
+ * creature ("Expand land entrance and cargo capacity" round — see
+ * vehicle-dock-data.ts for the exact per-vehicle world positions these
+ * decorative floor markers echo). */
 export const LAND_DOCKS = [
-  { id: 'land-dock-1', centerX: -6, centerZ: 29.5, width: 4, depth: 5, active: true },
-  { id: 'land-dock-2', centerX: 6, centerZ: 29.5, width: 4, depth: 5, active: false },
+  { id: 'land-dock-frog', centerX: -7, centerZ: 29.5, width: 2.4, depth: 3.6, active: true },
+  { id: 'land-dock-rockgiant', centerX: 0, centerZ: 29.5, width: 3.4, depth: 5.6, active: true },
+  { id: 'land-dock-snail', centerX: 7, centerZ: 29.5, width: 3.0, depth: 4.6, active: true },
 ];
 
-/** Gap in the back area's south wall the land vehicle drives through. */
+/** Gap in the back area's south wall the land vehicles drive through —
+ * widened ("Expand land entrance and cargo capacity" round) so 青蛙／石頭
+ * 巨人／蝸牛 can all pass through side by side, each in its own straight
+ * lane (see vehicle-dock-data.ts/vehicle-route-data.ts) rather than
+ * funneling through one narrow shared point. Span [-8.4, 8.4] comfortably
+ * covers all three vehicles' own dock-lane footprints — frog (dock x=-7,
+ * half-width 0.75, left edge -7.75, 0.65m clear of this gate's left edge)
+ * out to snail (dock x=7, half-width 1.0, right edge 8.0, 0.4m clear of
+ * this gate's right edge) — with real (non-zero) solid wall segments still
+ * remaining at both back-area corners (1.6m each side, BACK_AREA spans
+ * x -10..10). No longer derived from LAND_DOCKS[0] — a single dock's own X
+ * isn't representative of a gate wide enough for all three lanes. */
 export const LAND_GATE = {
-  centerX: LAND_DOCKS[0].centerX,
-  halfWidth: 1.6,
+  centerX: 0,
+  halfWidth: 8.4,
 };
 
 /** Pier — now extends off the back area's EAST wall, over open water. */

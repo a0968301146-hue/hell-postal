@@ -3,6 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { PhysicsSystem } from './physics-system';
 import { InteractableObject } from './interactable-object';
 import { VehicleConfig, assertWithinSizeLimits } from './vehicle-data';
+import { CARGO_BOUNDS_HEIGHT_MULTIPLIER } from './vehicle-cargo-bounds-data';
 import { BACK_AREA } from './logistics-layout-data';
 import { createFloatingLabel } from './world-label-system';
 
@@ -109,11 +110,17 @@ export class VehicleSystem {
     const [halfX, halfZ] = isXAxis
       ? [config.cargoAreaLength / 2, config.cargoAreaWidth / 2]
       : [config.cargoAreaWidth / 2, config.cargoAreaLength / 2];
+    // Detection-zone bottom stays flush with the cargo bed floor (unchanged
+    // from before); only the vertical SPAN above it is scaled by
+    // CARGO_BOUNDS_HEIGHT_MULTIPLIER — width/length (halfX/halfZ above)
+    // are untouched (spec: "只增加高度，長度與寬度不變").
+    const detectBottomY = bedFloorY + FLOOR_THICKNESS;
+    const detectHeight = (bedWallHeight + 0.5) * CARGO_BOUNDS_HEIGHT_MULTIPLIER;
     this.cargoBayBounds = {
       centerX: 0, // relative — resolved against current position each check
       centerZ: 0,
-      bedFloorY: bedFloorY + FLOOR_THICKNESS,
-      bedTopY: bedFloorY + FLOOR_THICKNESS + bedWallHeight + 0.5,
+      bedFloorY: detectBottomY,
+      bedTopY: detectBottomY + detectHeight,
       halfX,
       halfZ,
     };

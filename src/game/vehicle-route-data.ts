@@ -1,15 +1,22 @@
-// Centralized per-vehicle movement ROUTES ("Fix land vehicle routes and add
-// cargo region UI" round) — the ONE place waypoint sequences are defined;
-// vehicle-control-system.ts's update loop only ever reads
-// VEHICLE_ROUTES[slot.config.id], never hardcodes a coordinate.
+// Centralized per-vehicle movement ROUTES — the ONE place waypoint
+// sequences are defined; vehicle-control-system.ts's update loop only ever
+// reads VEHICLE_ROUTES[slot.config.id], never hardcodes a coordinate.
 //
 // Distinct from vehicle-dock-data.ts (which owns each vehicle's own fixed
 // dockPosition/spawnPosition/exitPosition) — this module describes the PATH
-// between those points. Land routes bend through one shared waypoint (the
-// real wall opening); sea routes stay a direct two-point line, unchanged
-// from before this round (spec: "海運路線不要修改").
+// between those points.
+//
+// "Expand land entrance and cargo capacity" round: land routes are back to
+// a direct single-leg spawn->dock / dock->exit line, same shape as sea
+// routes — the shared "funnel through one waypoint" bend a previous round
+// added is no longer needed now that LAND_GATE (logistics-layout-data.ts)
+// has been widened to cover all three land vehicles' own lanes at once
+// (see vehicle-dock-data.ts's doc comment for the full reasoning). The
+// Waypoint/VehicleRoute types and this per-vehicle lookup table stay in
+// place either way, so a future round that needs a bent path again (or a
+// vehicle whose lane genuinely isn't covered by the gate) can reintroduce
+// one without restructuring VehicleControlSystem's update loop.
 import { LAND_DOCK_SLOTS, SEA_DOCK_SLOTS } from './vehicle-dock-data';
-import { LAND_GATE, BACK_AREA } from './logistics-layout-data';
 
 export interface Waypoint {
   x: number;
@@ -28,36 +35,14 @@ export interface VehicleRoute {
   departureWaypoints: Waypoint[];
 }
 
-/** The real physical gap in the back area's south wall (scene-manager.ts
- * buildBackArea, built from LAND_GATE) — every land vehicle's arrival and
- * departure now funnels through here, so none of them ever cross a solid
- * wall segment (spec: "陸運載具不得從生成點直線插值到停靠點" /
- * "spawnPoint → entranceWaypoint → dockPoint"). Z sits 1m south of the
- * wall itself (BACK_AREA.maxZ) — since vehicle-dock-data.ts's land
- * spawnPosition/exitPosition.x now ALSO sit at LAND_GATE.centerX, a land
- * vehicle travels the ENTIRE spawn→entrance leg at a constant X, passing
- * straight through the middle of the real opening, before ever starting to
- * diverge toward its own dock slot on the second leg (which happens
- * entirely south of/inside the wall, no further wall to cross). */
-const LAND_ENTRANCE: Waypoint = { x: LAND_GATE.centerX, z: BACK_AREA.maxZ - 1 };
-
-function buildLandRoute(vehicleConfigId: string): VehicleRoute {
-  const slot = LAND_DOCK_SLOTS[vehicleConfigId];
-  return {
-    vehicleConfigId,
-    arrivalWaypoints: [LAND_ENTRANCE, slot.dockPosition],
-    // Reverse of the arrival path (spec: "離場時反向行駛：dockPoint →
-    // entranceWaypoint → exitPoint").
-    departureWaypoints: [LAND_ENTRANCE, slot.exitPosition],
-  };
-}
-
-/** Sea route unchanged — direct spawn→dock / dock→exit, no waypoint (spec:
- * "海運路線不要修改"). Kept as an explicit single-element route (rather than
- * a special-cased "no route" path) so VehicleControlSystem's update loop
- * can treat every slot identically regardless of vehicleType. */
-function buildSeaRoute(vehicleConfigId: string): VehicleRoute {
-  const slot = SEA_DOCK_SLOTS[vehicleConfigId];
+/** Direct spawn->dock / dock->exit line — used by every vehicle (land and
+ * sea alike) now that each land vehicle's spawn/exit already sits at its
+ * own dock X, safely inside the widened LAND_GATE for the vehicle's entire
+ * journey (see vehicle-dock-data.ts). Kept as an explicit single-element
+ * route (rather than a special-cased "no route" path) so
+ * VehicleControlSystem's update loop can treat every slot identically. */
+function buildDirectRoute(vehicleConfigId: string, slots: Record<string, { dockPosition: Waypoint; exitPosition: Waypoint }>): VehicleRoute {
+  const slot = slots[vehicleConfigId];
   return {
     vehicleConfigId,
     arrivalWaypoints: [slot.dockPosition],
@@ -66,10 +51,10 @@ function buildSeaRoute(vehicleConfigId: string): VehicleRoute {
 }
 
 export const VEHICLE_ROUTES: Record<string, VehicleRoute> = {
-  'land-frog-01': buildLandRoute('land-frog-01'),
-  'land-rockgiant-01': buildLandRoute('land-rockgiant-01'),
-  'land-snail-01': buildLandRoute('land-snail-01'),
-  'sea-ray-01': buildSeaRoute('sea-ray-01'),
-  'sea-turtle-01': buildSeaRoute('sea-turtle-01'),
-  'sea-kraken-01': buildSeaRoute('sea-kraken-01'),
+  'land-frog-01': buildDirectRoute('land-frog-01', LAND_DOCK_SLOTS),
+  'land-rockgiant-01': buildDirectRoute('land-rockgiant-01', LAND_DOCK_SLOTS),
+  'land-snail-01': buildDirectRoute('land-snail-01', LAND_DOCK_SLOTS),
+  'sea-ray-01': buildDirectRoute('sea-ray-01', SEA_DOCK_SLOTS),
+  'sea-turtle-01': buildDirectRoute('sea-turtle-01', SEA_DOCK_SLOTS),
+  'sea-kraken-01': buildDirectRoute('sea-kraken-01', SEA_DOCK_SLOTS),
 };
