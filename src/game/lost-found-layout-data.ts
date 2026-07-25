@@ -48,24 +48,43 @@ export const LOST_FOUND_NPC_GATE = {
  * own gates. */
 export const LOST_FOUND_NPC_SPAWN = { x: -17.5, z: 15.5 };
 
-/** Where the NPC stops and waits once arrived — north of the counter (spec
- * 三: NPC站在櫃檯北側). Same Z as LOST_FOUND_NPC_GATE/SPAWN by design (see
- * above). */
-export const LOST_FOUND_NPC_WAIT_SPOT = { x: -12.5, z: 15.5 };
+/** Where the NPC stops and waits once arrived — east of the counter ("Adjust
+ * lost found counter orientation" round 一: NPC站在櫃檯東側). Sits near the
+ * counter's own NORTH end (see LOST_FOUND_COUNTER's own doc comment for why
+ * the counter is now a long north-south bar) — reachable from
+ * LOST_FOUND_NPC_ROUTE_WAYPOINTS below without crossing the counter's own
+ * footprint. */
+export const LOST_FOUND_NPC_WAIT_SPOT = { x: -11.5, z: 15.2 };
 
-/** Counter — recentered to the room's middle so there's real space on BOTH
- * its north (NPC) and south (player) sides ("Expand modular lost found NPC
- * flow" round 三: 櫃檯水平旋轉90度並朝北，NPC站北側/玩家南側). A plain
+/** Intermediate waypoints the NPC walks through between LOST_FOUND_NPC_SPAWN
+ * and LOST_FOUND_NPC_WAIT_SPOT (in that order for arrival; reversed, then
+ * ending at LOST_FOUND_NPC_SPAWN, for departure — spec二: "離開時沿相同路線
+ * 走出" — see lost-found-npc-system.ts). Both waypoints sit at z=14.5,
+ * north of the counter's own north edge (LOST_FOUND_COUNTER.z -
+ * LOST_FOUND_COUNTER_HALF_EXTENTS.z = 15.1), so the whole route ducks around
+ * the counter's north end instead of cutting straight through its now much
+ * longer footprint ("Adjust lost found counter orientation" round 驗證: 互動
+ * 不穿模). */
+export const LOST_FOUND_NPC_ROUTE_WAYPOINTS = [
+  { x: -13.3, z: 14.5 },
+  { x: -11.5, z: 14.5 },
+];
+
+/** Counter — a long north-south bar ("Adjust lost found counter orientation"
+ * round 二: 左右拉長，做成像之前前櫃那種長條型櫃檯), rotated so its face
+ * opens EAST/WEST instead of north/south (round一: 正面朝向東方). A plain
  * symmetric box has no visually distinct "facing" on its own — see
- * lost-found-system.ts buildCounter()'s raised north-edge back panel for the
- * actual visual "facing north" cue; the FUNCTIONAL orientation (who stands
- * where) is enforced purely positionally: LOST_FOUND_NPC_WAIT_SPOT.z <
- * LOST_FOUND_COUNTER.z < wherever the player is standing when
+ * lost-found-system.ts buildCounter()'s raised east-edge back panel for the
+ * actual visual "facing east" cue; the FUNCTIONAL orientation (who stands
+ * where) is enforced purely positionally: LOST_FOUND_NPC_WAIT_SPOT.x >
+ * LOST_FOUND_COUNTER.x > wherever the player is standing when
  * LostFoundSystem.isPlayerNearCounter() returns true. */
 export const LOST_FOUND_COUNTER = { x: -12.5, z: 16.5 };
-/** Counter footprint half-extents (X width, Y height, Z depth) — shared by
- * both the physics collider and the visual mesh (lost-found-system.ts). */
-export const LOST_FOUND_COUNTER_HALF_EXTENTS = { x: 0.5, y: 0.45, z: 0.25 };
+/** Counter footprint half-extents (X depth, Y height, Z length) — shared by
+ * both the physics collider and the visual mesh (lost-found-system.ts). Long
+ * along Z (length 2.8m, "明顯比目前窄短版本更長" — was 0.5m), thin along X
+ * (the east/west-facing depth). */
+export const LOST_FOUND_COUNTER_HALF_EXTENTS = { x: 0.35, y: 0.45, z: 1.4 };
 
 /** Relocated lost-item shelf — OUT of the small front room and into
  * BACK_AREA's own package-sorting area, against its west wall, north of the

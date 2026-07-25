@@ -1,5 +1,7 @@
 import * as THREE from 'three';
-import { LOST_FOUND_NPC_SPAWN, LOST_FOUND_NPC_WAIT_SPOT, LOST_FOUND_ROOM } from './lost-found-layout-data';
+import {
+  LOST_FOUND_NPC_SPAWN, LOST_FOUND_NPC_WAIT_SPOT, LOST_FOUND_NPC_ROUTE_WAYPOINTS, LOST_FOUND_ROOM,
+} from './lost-found-layout-data';
 import {
   createLostFoundBubble, showLostFoundBubble, updateLostFoundBubbleText, disposeLostFoundBubble, LostFoundBubble,
 } from './lost-found-bubble-ui';
@@ -28,6 +30,12 @@ export class LostFoundNpcSystem {
   private bubble: LostFoundBubble | null = null;
   private target = new THREE.Vector3();
   private itemDisplayName = '';
+  /** Remaining points to visit in order, current target first — set by
+   * spawn()/startLeaving() from LOST_FOUND_NPC_ROUTE_WAYPOINTS so the NPC
+   * ducks around the counter's own footprint instead of cutting straight
+   * through it ("Adjust lost found counter orientation" round 驗證: 互動不穿
+   * 模). Popped one at a time in update() as each point is reached. */
+  private route: { x: number; z: number }[] = [];
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -38,8 +46,9 @@ export class LostFoundNpcSystem {
   }
 
   /** Spawns just outside the west gate and starts walking in toward the
-   * counter's north-side waiting spot (spec二: NPC從西側門外生成，經大門走
-   * 到櫃檯等待位置). No-op if an NPC is already present. */
+   * counter's east-side waiting spot, via LOST_FOUND_NPC_ROUTE_WAYPOINTS
+   * (spec二: NPC從西側門外生成，經大門走到櫃檯等待位置). No-op if an NPC is
+   * already present. */
   spawn(itemDisplayName: string): void {
     if (this.group) return;
 
@@ -62,18 +71,23 @@ export class LostFoundNpcSystem {
     group.add(bubble.sprite);
     this.bubble = bubble;
 
-    this.target.set(LOST_FOUND_NPC_WAIT_SPOT.x, 0, LOST_FOUND_NPC_WAIT_SPOT.z);
+    this.setRoute([...LOST_FOUND_NPC_ROUTE_WAYPOINTS, LOST_FOUND_NPC_WAIT_SPOT]);
     this.state = 'walkingIn';
   }
 
-  /** Starts the walk back out through the same west gate (spec二: 離開時沿
-   * 相同路線走出). Bubble stays visible (spec七: "對話框更新") — caller
-   * updates its text to a thank-you line via updateBubbleText() before or
-   * after calling this. */
+  /** Starts the walk back out through the same west gate, retracing the same
+   * waypoints in reverse (spec二: 離開時沿相同路線走出). Bubble stays visible
+   * (spec七: "對話框更新") — caller updates its text to a thank-you line via
+   * updateBubbleText() before or after calling this. */
   startLeaving(): void {
     if (!this.group || this.state !== 'waiting') return;
-    this.target.set(LOST_FOUND_NPC_SPAWN.x, 0, LOST_FOUND_NPC_SPAWN.z);
+    this.setRoute([...[...LOST_FOUND_NPC_ROUTE_WAYPOINTS].reverse(), LOST_FOUND_NPC_SPAWN]);
     this.state = 'walkingOut';
+  }
+
+  private setRoute(points: { x: number; z: number }[]): void {
+    this.route = points.slice(1);
+    this.target.set(points[0].x, 0, points[0].z);
   }
 
   updateBubbleText(text: string): void {
@@ -96,6 +110,11 @@ export class LostFoundNpcSystem {
     const dist = Math.sqrt(dx * dx + dz * dz);
 
     if (dist < ARRIVE_EPS) {
+      if (this.route.length > 0) {
+        const next = this.route.shift()!;
+        this.target.set(next.x, 0, next.z);
+        return;
+      }
       if (this.state === 'walkingIn') {
         this.state = 'waiting';
         if (this.bubble) showLostFoundBubble(this.bubble, this.itemDisplayName);

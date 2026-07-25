@@ -97,15 +97,16 @@ export class LostFoundSystem {
     this.scene.add(mesh);
     this.physics.createStaticCuboid(LOST_FOUND_COUNTER.x, y, LOST_FOUND_COUNTER.z, hx, hy, hz);
 
-    // Small raised back panel on the counter's NORTH edge — a plain
-    // symmetric box has no visual "facing" of its own, so this accent is
-    // what actually reads as "朝北" (spec三: 櫃檯水平旋轉90度並朝北): the
-    // panel backs the NPC's own north side, leaving the south (player) side
-    // an open desktop. Purely decorative — the main counter collider above
-    // already covers this footprint.
-    const panelGeo = new THREE.BoxGeometry(hx * 2, 0.3, 0.05);
+    // Raised back panel running the counter's full length, on its EAST edge
+    // — a plain symmetric box has no visual "facing" of its own, so this
+    // accent is what actually reads as "正面朝向東方" ("Adjust lost found
+    // counter orientation" round一): the panel backs the NPC's own east
+    // side, leaving the west (player) side an open desktop. Purely
+    // decorative — the main counter collider above already covers this
+    // footprint.
+    const panelGeo = new THREE.BoxGeometry(0.05, 0.3, hz * 2);
     const panel = new THREE.Mesh(panelGeo, new THREE.MeshStandardMaterial({ color: 0x5a4028 }));
-    panel.position.set(LOST_FOUND_COUNTER.x, y + hy + 0.15, LOST_FOUND_COUNTER.z - hz + 0.03);
+    panel.position.set(LOST_FOUND_COUNTER.x + hx - 0.03, y + hy + 0.15, LOST_FOUND_COUNTER.z);
     this.scene.add(panel);
 
     const label = createFloatingLabel('失物招領櫃檯', { width: 0.9, bg: 'rgba(30,25,20,0.75)' });
@@ -203,15 +204,16 @@ export class LostFoundSystem {
     return this.npcSystem.state === 'waiting';
   }
 
-  /** Player must be within range AND on the counter's south side — the NPC
-   * always waits on the north side, so this is what actually enforces
-   * "玩家與NPC必須隔著櫃檯，不能站到同一側" (spec三). */
+  /** Player must be within range AND on the counter's west side — the NPC
+   * always waits on the east side, so this is what actually enforces "玩家與
+   * NPC互動時仍隔著櫃檯" ("Adjust lost found counter orientation" round
+   * 一). */
   isPlayerNearCounter(pos: THREE.Vector3): boolean {
     const dx = pos.x - LOST_FOUND_COUNTER.x;
     const dz = pos.z - LOST_FOUND_COUNTER.z;
     const dist = Math.sqrt(dx * dx + dz * dz);
-    const onSouthSide = pos.z > LOST_FOUND_COUNTER.z;
-    return onSouthSide && dist < SCENE_CONFIG.interactionDistance + 1;
+    const onWestSide = pos.x < LOST_FOUND_COUNTER.x;
+    return onWestSide && dist < SCENE_CONFIG.interactionDistance + 1;
   }
 
   /** Press E at the counter while holding ANYTHING, NPC waiting (spec七: 按
