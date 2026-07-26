@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-import { SCENE_CONFIG } from './scene-manager';
-import { PhysicsSystem } from '../adapters/rapier/physics-system';
-import { PLAYER_SPAWN } from './logistics-layout-data';
-import { DOLLY_PUSH_SPEED_MULTIPLIER } from './dolly-data';
-import { PlayerInteractionData } from '../core/game-state';
-import { HUD } from './hud';
-import { SettingsManager } from './settings-manager';
+import { SCENE_CONFIG } from '../../game/scene-manager';
+import { PhysicsSystem } from '../../adapters/rapier/physics-system';
+import { PLAYER_SPAWN } from '../../game/logistics-layout-data';
+import { DOLLY_PUSH_SPEED_MULTIPLIER } from '../../game/dolly-data';
+import { PlayerInteractionData } from '../../core/game-state';
+import { HUD } from '../../game/hud';
+import { SettingsManager } from '../settings';
 
 const HALF_PI = Math.PI / 2;
 

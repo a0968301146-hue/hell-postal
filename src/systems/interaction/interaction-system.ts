@@ -1,21 +1,21 @@
 import * as THREE from 'three';
-import { InteractableObject } from '../shared/types/interactable';
-import { PlayerInteractionData } from '../core/game-state';
-import { SCENE_CONFIG } from './scene-manager';
+import { InteractableObject } from '../../shared/types/interactable';
+import { PlayerInteractionData } from '../../core/game-state';
+import { SCENE_CONFIG } from '../../game/scene-manager';
 import { PickupSystem } from './pickup-system';
-import { EnvelopeSystem } from './envelope-system';
-import { EnvelopeStampStation } from './envelope-stamp-station';
-import { SortingBoxSystem } from './sorting-box-system';
-import { VehicleControlSystem } from './vehicle-control-system';
-import { CounterServiceSystem } from './counter-service-system';
-import { DollySystem } from './dolly-system';
-import { HUD } from './hud';
-import { PauseManager } from '../core/pause-manager';
-import { SettingsManager } from './settings-manager';
-import { UnloadingSystem } from './unloading-system';
-import { DailyFlowSystem } from './daily-flow-system';
-import { PalletSystem } from './pallet-system';
-import { LostFoundSystem } from './lost-found-system';
+import { EnvelopeSystem } from '../../game/envelope-system';
+import { EnvelopeStampStation } from '../../game/envelope-stamp-station';
+import { SortingBoxSystem } from '../../game/sorting-box-system';
+import { VehicleControlSystem } from '../../game/vehicle-control-system';
+import { CounterServiceSystem } from '../../game/counter-service-system';
+import { DollySystem } from '../../game/dolly-system';
+import { HUD } from '../../game/hud';
+import { PauseManager } from '../../core/pause-manager';
+import { SettingsManager } from '../settings';
+import { UnloadingSystem } from '../../game/unloading-system';
+import { DailyFlowSystem } from '../../game/daily-flow-system';
+import { PalletSystem } from '../../game/pallet-system';
+import { LostFoundSystem } from '../../game/lost-found-system';
 
 export class InteractionSystem {
   private raycaster: THREE.Raycaster;

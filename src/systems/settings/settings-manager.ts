@@ -3,8 +3,11 @@ import {
   STORAGE_KEYS, SettingsState, ProgressState, DisplayMode, ResolutionPreset, QualityPreset,
   createDefaultSettings, createDefaultProgress,
 } from './settings-data';
-import { InputBindingManager } from '../adapters/browser-input/input-binding-manager';
-import { TutorialEventKey, TUTORIAL_ENTRIES } from './tutorial-data';
+import { InputBindingManager } from '../../adapters/browser-input/input-binding-manager';
+import { LocalStorageAdapter } from '../../adapters/local-storage/local-storage-adapter';
+import { TutorialEventKey, TUTORIAL_ENTRIES } from '../../game/tutorial-data';
+
+const storage = new LocalStorageAdapter();
 
 function mergeSettings(saved: Partial<SettingsState> | null): SettingsState {
   const base = createDefaultSettings();
@@ -30,15 +33,6 @@ function mergeProgress(saved: Partial<ProgressState> | null): ProgressState {
   };
 }
 
-function readJson<T>(key: string): T | null {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Owns the ONE copy of settings + progress data (spec: "不要複製兩套互不相容
  * 的設定資料"), loads it from localStorage on construction, and applies the
@@ -61,8 +55,8 @@ export class SettingsManager {
     this.camera = camera;
     this.renderer = renderer;
 
-    this.settings = mergeSettings(readJson<SettingsState>(STORAGE_KEYS.settings));
-    this.progress = mergeProgress(readJson<ProgressState>(STORAGE_KEYS.progress));
+    this.settings = mergeSettings(storage.getJSON<SettingsState>(STORAGE_KEYS.settings));
+    this.progress = mergeProgress(storage.getJSON<ProgressState>(STORAGE_KEYS.progress));
     this.inputBindings = new InputBindingManager(this.settings.keyBindings);
 
     // Renderer needs a tone-mapping mode other than the three.js default
@@ -87,8 +81,8 @@ export class SettingsManager {
    * positions, NPC queue state, vehicle animation progress or rigid-body
    * velocities — none of that is tracked here (see completion report). */
   save(): void {
-    localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(this.settings));
-    localStorage.setItem(STORAGE_KEYS.progress, JSON.stringify(this.progress));
+    storage.setJSON(STORAGE_KEYS.settings, this.settings);
+    storage.setJSON(STORAGE_KEYS.progress, this.progress);
   }
 
   // ---- mouse ----

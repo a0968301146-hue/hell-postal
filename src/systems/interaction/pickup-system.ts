@@ -1,12 +1,12 @@
 import * as THREE from 'three';
-import { InteractableObject } from '../shared/types/interactable';
-import { PlayerInteractionData } from '../core/game-state';
-import { SCENE_CONFIG } from './scene-manager';
-import { WORLD_BOUNDS } from './logistics-layout-data';
-import { PhysicsSystem } from '../adapters/rapier/physics-system';
-import { HUD } from './hud';
-import { PauseManager } from '../core/pause-manager';
-import { SettingsManager } from './settings-manager';
+import { InteractableObject } from '../../shared/types/interactable';
+import { PlayerInteractionData } from '../../core/game-state';
+import { SCENE_CONFIG } from '../../game/scene-manager';
+import { WORLD_BOUNDS } from '../../game/logistics-layout-data';
+import { PhysicsSystem } from '../../adapters/rapier/physics-system';
+import { HUD } from '../../game/hud';
+import { PauseManager } from '../../core/pause-manager';
+import { SettingsManager } from '../settings';
 
 export class PickupSystem {
   private camera: THREE.PerspectiveCamera;
@@ -406,7 +406,7 @@ export class PickupSystem {
   }
 
   /** Place held envelope directly into a sorting container at the given point */
-  placeIntoContainer(obj: InteractableObject, containerId: string, hitPoint: THREE.Vector3, sortingBoxSystem: import('./sorting-box-system').SortingBoxSystem): void {
+  placeIntoContainer(obj: InteractableObject, containerId: string, hitPoint: THREE.Vector3, sortingBoxSystem: import('../../game/sorting-box-system').SortingBoxSystem): void {
     if (!obj || !this.playerData.heldObjectId) return;
 
     // Get interior bottom Y from sorting box system or calculate from hit

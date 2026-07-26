@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { PhysicsSystem } from '../adapters/rapier/physics-system';
 import { InteractableObject, createInteractableObject } from '../shared/types/interactable';
-import { PickupSystem } from './pickup-system';
+import { PickupSystem } from '../systems/interaction';
 import { SCENE_CONFIG } from './scene-manager';
 import {
   LOST_FOUND_ROOM, LOST_FOUND_COUNTER, LOST_FOUND_COUNTER_HALF_EXTENTS, LOST_FOUND_SHELF, LOST_FOUND_SHELF_HALF_EXTENTS,

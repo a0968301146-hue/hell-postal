@@ -3,7 +3,7 @@ import { PhysicsSystem } from '../adapters/rapier/physics-system';
 import { createThreeRenderer } from '../adapters/three/three-renderer';
 import { HUD } from '../game/hud';
 import { PauseManager } from '../core/pause-manager';
-import { SettingsManager } from '../game/settings-manager';
+import { SettingsManager } from '../systems/settings';
 import { InteractableObject } from '../shared/types/interactable';
 import { PlayerInteractionData, createPlayerInteractionData } from '../core/game-state';
 import { GameEventBus } from '../core/game-events';

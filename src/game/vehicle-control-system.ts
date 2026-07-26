@@ -3,7 +3,7 @@ import { PhysicsSystem } from '../adapters/rapier/physics-system';
 import { InteractableObject } from '../shared/types/interactable';
 import { CargoSystem } from './cargo-system';
 import { CargoData, CargoType } from './cargo-data';
-import { PickupSystem } from './pickup-system';
+import { PickupSystem } from '../systems/interaction';
 import { VehicleSystem } from './vehicle-system';
 import { LAND_VEHICLE_CONFIGS, SEA_VEHICLE_CONFIGS, VehicleConfig } from './vehicle-data';
 import { VEHICLE_ROUTES } from './vehicle-route-data';
@@ -14,7 +14,7 @@ import { createFloatingLabel, updateFloatingLabel } from '../adapters/three/worl
 import { HUD } from './hud';
 import { DailyFlowSystem } from './daily-flow-system';
 import { PALLET_ID } from './pallet-system';
-import { SettingsManager } from './settings-manager';
+import { SettingsManager } from '../systems/settings';
 
 /** A daily cargo item's EFFECTIVE cargo kind for vehicle-compatibility
  * purposes ("Add six cargo vehicles" round) — derived from the fields
