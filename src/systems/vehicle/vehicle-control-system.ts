@@ -2,14 +2,14 @@ import * as THREE from 'three';
 import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { InteractableObject } from '../../shared/types/interactable';
 import { CargoSystem, CargoData, CargoType } from '../cargo';
-// Deliberately imports pickup-system.ts directly rather than through
-// systems/interaction's own index.ts barrel: that barrel also re-exports
-// InteractionSystem, which itself imports VehicleControlSystem (to dispatch
-// call/depart button presses) — going through the barrel here would create
-// a file-level circular import (VehicleControlSystem -> interaction index ->
-// InteractionSystem -> VehicleControlSystem). pickup-system.ts itself has no
-// dependency back on this file, so importing it directly is cycle-free.
-import { PickupSystem } from '../interaction/pickup-system';
+// Depends on the neutral PickupPort contract (Phase 6: 模組邊界修正)
+// instead of importing PickupSystem (systems/interaction) — that system's
+// own index.ts also re-exports InteractionSystem, which depends on
+// VehicleControlSystem to dispatch call/depart button presses, so importing
+// the concrete class (even via the barrel) would create a file-level
+// circular import. GameApp injects the one real PickupSystem instance,
+// which structurally satisfies PickupPort.
+import { PickupPort } from '../../shared/types/pickup-port';
 import { VehicleSystem } from './vehicle-system';
 import { LAND_VEHICLE_CONFIGS, SEA_VEHICLE_CONFIGS, VehicleConfig } from './vehicle-data';
 import { VEHICLE_ROUTES } from './vehicle-route-data';
@@ -104,7 +104,7 @@ export class VehicleControlSystem {
   private physics: PhysicsSystem;
   private interactables: Map<string, InteractableObject>;
   private cargoSystem: CargoSystem;
-  private pickupSystem: PickupSystem;
+  private pickupSystem: PickupPort;
   private hud: HUD;
   private dailyFlowSystem: DailyFlowSystem;
   private settingsManager: SettingsManager;
@@ -143,7 +143,7 @@ export class VehicleControlSystem {
     physics: PhysicsSystem,
     interactables: Map<string, InteractableObject>,
     cargoSystem: CargoSystem,
-    pickupSystem: PickupSystem,
+    pickupSystem: PickupPort,
     hud: HUD,
     dailyFlowSystem: DailyFlowSystem,
     settingsManager: SettingsManager,

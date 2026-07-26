@@ -186,7 +186,7 @@ export class HUD {
    * only once BOTH routes have finished departing, stays open (game paused
    * behind it) until the player clicks 繼續. Each route's breakdown always
    * satisfies correctCount+incompatibleCount === loadedCount
-   * (see cargo-compliance.ts / vehicle-control-system.ts). */
+   * (see vehicle-control-system.ts's vehicleAcceptsCargo). */
   showVehicleSettlement(params: {
     land: { vehicleName: string; loadedCount: number; correctCount: number; incompatibleCount: number; scoreChange: number };
     sea: { vehicleName: string; loadedCount: number; correctCount: number; incompatibleCount: number; scoreChange: number };

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
   LOST_FOUND_NPC_SPAWN, LOST_FOUND_NPC_WAIT_SPOT, LOST_FOUND_NPC_ROUTE_WAYPOINTS, LOST_FOUND_ROOM,
-} from './lost-found-layout-data';
+} from '../../data/world/lost-found-layout-data';
 import {
   createLostFoundBubble, showLostFoundBubble, updateLostFoundBubbleText, disposeLostFoundBubble, LostFoundBubble,
 } from './lost-found-bubble-ui';

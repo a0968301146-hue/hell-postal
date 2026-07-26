@@ -13,6 +13,7 @@
 // ROLLER_RACK_CONFIG stay unchanged (still back-area furniture, untouched
 // by this round).
 import { BACK_AREA, NORTH_GATES } from '../world-layout';
+export { DAILY_CARGO_CATEGORY_POOL } from '../../data/world/daily-cargo-category-pool';
 
 /** How many cargo items spawn each day, fixed (spec "貨品外型與比例有更多
  * 變化" round section二: no infinite spawn, no per-day variation of the
@@ -32,19 +33,6 @@ export const DAILY_CARGO_CONFIG = {
   rollerCount: 20,
   largeCount: 10,
 };
-
-/** Which cargo-category-data.ts CargoCategory values the daily spawn pool
- * may include, starting day 1 with no later unlock day for any of them
- * (spec "Add dual elevated unloading ports and day-one special cargo" round
- * 四: "從第1天開始...移除...天數解鎖限制"). 'large' isn't listed here — it's
- * its own CargoShapeType, already unconditionally generated via
- * DAILY_CARGO_CONFIG.largeCount above; this list only governs
- * cargo-category-data.ts's pickCargoCategory() pool (normal/fragile/frozen/
- * live), the one part of the daily mix that previously had no way to
- * produce frozen/live at all. cargo-category-data.ts reads this rather than
- * hardcoding which categories exist inline. */
-export const DAILY_CARGO_CATEGORY_POOL: readonly ('normal' | 'fragile' | 'frozen' | 'live')[] =
-  ['normal', 'fragile', 'frozen', 'live'];
 
 /** How far below the ceiling an elevated port's cargo spawn point sits —
  * "天花板高度－安全間距" (spec "Add dual elevated unloading ports and

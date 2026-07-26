@@ -52,8 +52,8 @@ export interface CargoData {
   /** Fixed at spawn (see CARGO_LABEL_PRESETS) — the player never edits this
    * this round (no labeling desk/UI exists anymore). Single source of
    * truth for both the on-mesh visual badges (cargo-label-visuals.ts) and
-   * the departure judgment (cargo-compliance.ts only reads
-   * routeType/cargoType directly, never this array — labels are for the
+   * the departure judgment (vehicle-control-system.ts's vehicleAcceptsCargo
+   * only reads cargoType directly, never this array — labels are for the
    * PLAYER to read, not for the system to re-derive rules from). Unrelated
    * to the daily-flow subtype label below — this array stays empty for all
    * daily cargo (spec "貨品外型與比例有更多變化" round 九: 不要加入國內/海外/

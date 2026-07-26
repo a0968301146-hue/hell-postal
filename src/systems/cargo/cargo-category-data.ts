@@ -8,9 +8,13 @@
 //
 // "Add dual elevated unloading ports and day-one special cargo" round:
 // extended from normal/fragile to also cover frozen/live (spec 四), reading
-// DAILY_CARGO_CATEGORY_POOL (daily-flow-data.ts) for which values are
-// actually available rather than hardcoding the pool here.
-import { DAILY_CARGO_CATEGORY_POOL } from '../daily-flow';
+// DAILY_CARGO_CATEGORY_POOL for which values are actually available rather
+// than hardcoding the pool here. Imported from the neutral data layer
+// (Phase 6: 模組邊界修正) rather than systems/daily-flow's own barrel —
+// that barrel also re-exports daily-flow-system.ts, which imports
+// CargoSystem from systems/cargo's own barrel, so importing through it here
+// would create a file-level circular import.
+import { DAILY_CARGO_CATEGORY_POOL } from '../../data/world/daily-cargo-category-pool';
 
 export type CargoCategory = 'normal' | 'fragile' | 'frozen' | 'live';
 

@@ -36,7 +36,8 @@ export interface VehicleConfig {
   /** Rule-level compatibility (spec section 十) — separate from cargo-bay
    * DIMENSIONS (which govern whether cargo physically fits): a cargo item
    * must satisfy BOTH the size check (isInCargoBay) AND this list to count
-   * as a correctly-shipped item at departure (see cargo-compliance.ts). */
+   * as a correctly-shipped item at departure (see
+   * vehicle-control-system.ts's vehicleAcceptsCargo). */
   acceptedRouteTypes: RouteType[];
   acceptedCargoTypes: CargoType[];
 }

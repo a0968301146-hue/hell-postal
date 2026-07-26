@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { InteractableObject } from '../../shared/types/interactable';
+import { PickupPort } from '../../shared/types/pickup-port';
 import { PlayerInteractionData } from '../../core/game-state';
 import { SCENE_CONFIG } from '../world-layout';
 import { WORLD_BOUNDS } from '../world-layout';
@@ -8,7 +9,7 @@ import { HUD } from '../hud';
 import { PauseManager } from '../../core/pause-manager';
 import { SettingsManager } from '../settings';
 
-export class PickupSystem {
+export class PickupSystem implements PickupPort {
   private camera: THREE.PerspectiveCamera;
   private worldScene: THREE.Scene;
   private playerData: PlayerInteractionData;

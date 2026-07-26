@@ -1,14 +1,15 @@
 import * as THREE from 'three';
 import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { InteractableObject, createInteractableObject } from '../../shared/types/interactable';
-// See vehicle-control-system.ts's identical import for why this bypasses
-// systems/interaction's own barrel (avoids a file-level circular import
-// through InteractionSystem, which depends on LostFoundSystem).
-import { PickupSystem } from '../interaction/pickup-system';
+// See vehicle-control-system.ts's identical import for why this depends on
+// the neutral PickupPort contract rather than importing PickupSystem
+// (systems/interaction) — avoids a file-level circular import through
+// InteractionSystem, which depends on LostFoundSystem.
+import { PickupPort } from '../../shared/types/pickup-port';
 import { SCENE_CONFIG } from '../world-layout';
 import {
   LOST_FOUND_ROOM, LOST_FOUND_COUNTER, LOST_FOUND_COUNTER_HALF_EXTENTS, LOST_FOUND_SHELF, LOST_FOUND_SHELF_HALF_EXTENTS,
-} from './lost-found-layout-data';
+} from '../../data/world/lost-found-layout-data';
 import { LOST_ITEM_PRESETS, LostItemPreset, LOST_FOUND_CASES, LostFoundCaseDef, LOST_FOUND_WRONG_ITEM_TEXT } from './lost-found-data';
 import { UNLOAD_PORTS, UNLOAD_SPAWN_JITTER_X, UNLOAD_SPAWN_JITTER_Z, UNLOAD_BURST_CONFIG } from '../daily-flow';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
@@ -59,7 +60,7 @@ export class LostFoundSystem {
   private scene: THREE.Scene;
   private physics: PhysicsSystem;
   private interactables: Map<string, InteractableObject>;
-  private pickupSystem: PickupSystem;
+  private pickupSystem: PickupPort;
   private ui: LostFoundUI;
   private npcSystem: LostFoundNpcSystem;
 
@@ -78,7 +79,7 @@ export class LostFoundSystem {
 
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>,
-    pickupSystem: PickupSystem, ui: LostFoundUI
+    pickupSystem: PickupPort, ui: LostFoundUI
   ) {
     this.scene = scene;
     this.physics = physics;

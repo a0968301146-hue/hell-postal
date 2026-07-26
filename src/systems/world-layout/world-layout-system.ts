@@ -4,12 +4,11 @@ import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import {
   WALL_THICKNESS, BACK_AREA, CARGO_ZONES, LAND_DOCKS, LAND_GATE, PIER, SEA_GATE, SEA_DOCKS, NORTH_GATES,
 } from './logistics-layout-data';
-// Imports lost-found-layout-data.ts directly (a zero-dependency leaf file)
-// rather than through systems/lost-found's own barrel: that barrel also
-// re-exports LostFoundSystem, which itself imports world-layout (for
-// SCENE_CONFIG) — going through the barrel here would create a file-level
-// circular import.
-import { LOST_FOUND_ROOM, LOST_FOUND_DOOR, LOST_FOUND_NPC_GATE } from '../lost-found/lost-found-layout-data';
+// Reads the room/gate coordinates from the neutral data layer (Phase 6:
+// "模組邊界修正" — moved out of systems/lost-found so world-layout and
+// lost-found never import each other's internals; both read the same
+// data/world/ file instead).
+import { LOST_FOUND_ROOM, LOST_FOUND_DOOR, LOST_FOUND_NPC_GATE } from '../../data/world/lost-found-layout-data';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
 
 export const SCENE_CONFIG = {
