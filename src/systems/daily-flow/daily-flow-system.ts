@@ -24,14 +24,15 @@ const BLOCKED_TEXT = '結束今天\n請先完成今日出貨';
  * dailyCargoIds against CargoSystem's live CargoData each time they're
  * read, rather than separately-tracked counters that could drift out of
  * sync with the real per-item organized/shipped flags (which
- * PalletSystem/RollerRackSystem/VehicleControlSystem mutate directly) —
- * this sidesteps the whole class of double-count/stale-count bugs the spec
- * explicitly worries about, at the cost of an O(dailyCargoIds) scan per
- * read (10 items, negligible).
+ * PalletSystem/VehicleControlSystem mutate directly) — this sidesteps the
+ * whole class of double-count/stale-count bugs the spec explicitly worries
+ * about, at the cost of an O(dailyCargoIds) scan per read (10 items,
+ * negligible).
  *
  * Deliberately does NOT know how to spawn cargo or animate the gate
- * (UnloadingSystem's job), judge organized-ness (PalletSystem/
- * RollerRackSystem's job), or judge/pin/destroy shipped cargo
+ * (UnloadingSystem's job), judge organized-ness (PalletSystem's job, box/
+ * large cargo only — roller cargo has no organizing fixture since "移除
+ * 滾筒架" removed the roller rack), or judge/pin/destroy shipped cargo
  * (VehicleControlSystem's job) — those systems call INTO this one
  * (registerDailyCargo/notifyUnloadingStarted/notifyUnloadingFinished/
  * notifyVehicleDocked/refreshCompletion/notifyDeparting/notifyDayComplete)

@@ -16,7 +16,7 @@ import { ManualUI } from '../systems/pause-menu';
 import { ENABLE_LEGACY_COUNTER, ENABLE_LEGACY_MAIL_FLOW, ENABLE_VEHICLE_LOADING_FLOW, ENABLE_LEGACY_TEST_CARGO } from '../game/feature-flags';
 import { DailyFlowSystem } from '../systems/daily-flow';
 import { UnloadingSystem } from '../systems/unloading';
-import { PalletSystem, RollerRackSystem } from '../systems/pallet';
+import { PalletSystem } from '../systems/pallet';
 import { CargoInspectionSystem, CargoInspectionUI } from '../systems/cargo-inspection';
 import { LostFoundSystem, LostFoundUI } from '../systems/lost-found';
 
@@ -43,7 +43,6 @@ export interface GameSystems {
   dailyFlowSystem: DailyFlowSystem;
   unloadingSystem: UnloadingSystem;
   palletSystem: PalletSystem;
-  rollerRackSystem: RollerRackSystem;
   cargoInspectionSystem: CargoInspectionSystem;
   cargoInspectionUI: CargoInspectionUI;
   lostFoundSystem: LostFoundSystem;
@@ -225,10 +224,10 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // the normal way (spec: this round only adds the ABILITY to also pick
   // up the whole pallet, it doesn't remove normal single-item placement).
   pickupSystem.addPlacementSurface(palletSystem.topMesh);
-  const rollerRackSystem = new RollerRackSystem(
-    scene, physics, cargoSystem, interactables,
-    () => settingsManager.fireTutorialEvent('rollerOrganized')
-  );
+  // RollerRackSystem removed entirely ("移除滾筒架" round) — roller-shaped
+  // cargo is now just a normal special-shape item like 'large', freely
+  // placeable/loadable with no dedicated fixture or organizing step of its
+  // own (see cargo-data.ts's `organized` field doc comment).
   // OutboundZoneSystem is intentionally NOT constructed this round — cargo
   // now ships by riding along with a vehicle instead of walking into a
   // ground zone (spec section 八/九). Its file is kept for a possible
@@ -269,7 +268,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     playerController, interactionSystem, pickupSystem, envelopeStation, envelopeSystem,
     mailBagSystem, mailSortingSystem, cargoSystem, dollySystem, vehicleControlSystem,
     scoringSystem, counterNpcSystem, counterServiceSystem, compassUI, dailyFlowSystem,
-    unloadingSystem, palletSystem, rollerRackSystem, cargoInspectionSystem, cargoInspectionUI,
+    unloadingSystem, palletSystem, cargoInspectionSystem, cargoInspectionUI,
     lostFoundSystem, lostFoundUI,
   };
 }

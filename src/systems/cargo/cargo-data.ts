@@ -86,11 +86,16 @@ export interface CargoData {
    * below never sets it) — only daily cargo (createDailyCargoData) sets
    * 'roller'/'large'. */
   shapeType: CargoShapeType;
-  /** Daily-flow round only: set true once this item has spent >=0.5s
-   * stable on its matching sorting fixture (pallet for box/large, rack for
-   * roller — see pallet-system.ts / roller-rack-system.ts). Persists after
-   * leaving the fixture. Pre-existing cargo never sets this; it stays false
-   * and unused for anything not spawned via createDailyCargoData. */
+  /** Daily-flow round only: set true once a box/large item has spent
+   * >=0.5s stable on the sorting pallet (see pallet-system.ts). Persists
+   * after leaving the fixture. Roller-shaped cargo has no dedicated
+   * organizing fixture ("移除滾筒架" round removed the wall-mounted roller
+   * rack entirely — a roller item is just a normal special-shape item now,
+   * freely placeable/loadable) so this never becomes true for shapeType
+   * 'roller'; nothing gates shipping/loading on it either way (see
+   * vehicle-control-system.ts's scanCargoForShipment). Pre-existing cargo
+   * never sets this; it stays false and unused for anything not spawned
+   * via createDailyCargoData. */
   organized: boolean;
   /** Daily-flow round only: which exact silhouette this item is (null for
    * pre-existing non-daily cargo). Drives both the decorative mesh built at

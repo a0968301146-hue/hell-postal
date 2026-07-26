@@ -208,7 +208,6 @@ export class GameApp {
       // vehicleControlSystem.update() above already runs the organized-
       // cargo-into-cargoBounds shipment scan every frame it's enabled.
       s.unloadingSystem.update(deltaTime);
-      s.rollerRackSystem.update(deltaTime);
       s.lostFoundSystem.update(deltaTime);
       const flowState = s.dailyFlowSystem.state;
       const bannerText = flowState === 'completed' ? '今日貨物已全部裝載'

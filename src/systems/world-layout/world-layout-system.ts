@@ -196,7 +196,9 @@ function buildLostFoundRoom(scene: THREE.Scene, physics: PhysicsWorldPort): THRE
 }
 
 /** White-box-only floor markers reserving space for future cargo-type zones
- * (normal/large/frozen/live/lost-found). No function yet — just space claims. */
+ * (normal/large(domestic+overseas)/frozen(domestic+overseas)/live(domestic+
+ * overseas)/lost-found — see CARGO_ZONES). No function yet — just space
+ * claims, purely decal + label, no physics collider. */
 function buildCargoZones(scene: THREE.Scene): void {
   for (const zone of CARGO_ZONES) {
     const width = zone.halfWidth * 2 - 0.2;

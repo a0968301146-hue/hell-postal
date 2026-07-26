@@ -88,9 +88,9 @@ export const LOST_FOUND_COUNTER_HALF_EXTENTS = { x: 0.35, y: 0.45, z: 1.4 };
 
 /** Relocated lost-item shelf — OUT of the small front room and into
  * BACK_AREA's own package-sorting area, against its west wall, north of the
- * player spawn/pallet/roller-rack cluster with open floor on every other
- * side ("Expand modular lost found NPC flow" round 一: 靠牆位置、保留足夠通
- * 道、不阻擋玩家整理貨物). Purely a themed landmark now — see
+ * player spawn/pallet cluster with open floor on every other side ("Expand
+ * modular lost found NPC flow" round 一: 靠牆位置、保留足夠通道、不阻擋玩家
+ * 整理貨物). Purely a themed landmark now — see
  * lost-found-system.ts buildShelf() — it no longer holds pre-placed decoy
  * items; the day's one real lost item instead bursts in from a north
  * unload port along with the regular cargo (spec六). */

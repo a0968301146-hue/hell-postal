@@ -70,15 +70,39 @@ export const PACKAGE_WORK_ZONE = {
 /** Work furniture cluster (stamp tables, crate, sorting boxes) — back area, west side. */
 export const WORK_FURNITURE_X = -8;
 
-/** Reserved (white-box only, no function yet) cargo-type zones in a row
- * further back — space is claimed now so future systems have somewhere to go. */
+/** Reserved (white-box only, no function yet) cargo-type zones — space is
+ * claimed now so future systems have somewhere to go; purely floor decals +
+ * floating labels (world-layout-system.ts buildCargoZones), no physics
+ * collider, so they never block player movement. Only help the player sort
+ * — nothing requires cargo to sit in one before it can ship (unchanged).
+ *
+ * Two rows ("移除滾筒架/特殊貨物放置區加倍" round: 特殊貨物區域加倍 — 大型/
+ * 冷凍/活體三種各多一個海外版): DOMESTIC_ROW (south, the original 5-zone
+ * row) and OVERSEAS_ROW (north, immediately adjacent — touches
+ * DOMESTIC_ROW's own minZ exactly, never overlapping it) hold matching
+ * same-size overseas copies of the large/frozen/live zones only —
+ * zone-normal and zone-lost-found stay single (this round only doubles
+ * 大型/冷凍/活體, per spec). OVERSEAS_ROW sits at Z 17.5–20.5, well clear
+ * of the player spawn (z=14.8)/pallet (z=15.5, PALLET_CONFIG)/dolly's
+ * parked spot (z=16, DOLLY_CONFIGS)/unload debris zone (z<=14.3) to its
+ * north, and the vehicle control posts (z=25.5, VEHICLE_CONTROL_POS) well
+ * south of DOMESTIC_ROW. */
+const CARGO_ZONE_HALF_WIDTH = 1.6;
+const DOMESTIC_ROW_MIN_Z = BACK_AREA.minZ + 10.5; // 20.5
+const DOMESTIC_ROW_MAX_Z = BACK_AREA.minZ + 13.5; // 23.5
+const OVERSEAS_ROW_MAX_Z = DOMESTIC_ROW_MIN_Z; // 20.5 — touches, doesn't overlap
+const OVERSEAS_ROW_MIN_Z = OVERSEAS_ROW_MAX_Z - (DOMESTIC_ROW_MAX_Z - DOMESTIC_ROW_MIN_Z); // 17.5 — same depth as the domestic row
+
 export const CARGO_ZONES = [
-  { id: 'zone-normal', label: '一般貨物區', centerX: -7.2, color: 0x8a8a8a },
-  { id: 'zone-large', label: '大型貨物區', centerX: -3.6, color: 0x8a6a4a },
-  { id: 'zone-frozen', label: '冷凍貨物區', centerX: 0, color: 0x4a90b8 },
-  { id: 'zone-live', label: '活體貨物區', centerX: 3.6, color: 0x4a9a4a },
-  { id: 'zone-lost-found', label: '失物招領區', centerX: 7.2, color: 0xb8a04a },
-].map(z => ({ ...z, minZ: BACK_AREA.minZ + 10.5, maxZ: BACK_AREA.minZ + 13.5, halfWidth: 1.6 }));
+  { id: 'zone-normal', label: '一般貨物區', centerX: -7.2, color: 0x8a8a8a, minZ: DOMESTIC_ROW_MIN_Z, maxZ: DOMESTIC_ROW_MAX_Z },
+  { id: 'zone-large-domestic', label: '國內大型貨物區', centerX: -3.6, color: 0x8a6a4a, minZ: DOMESTIC_ROW_MIN_Z, maxZ: DOMESTIC_ROW_MAX_Z },
+  { id: 'zone-large-overseas', label: '海外大型貨物區', centerX: -3.6, color: 0x8a6a4a, minZ: OVERSEAS_ROW_MIN_Z, maxZ: OVERSEAS_ROW_MAX_Z },
+  { id: 'zone-frozen-domestic', label: '國內冷凍貨物區', centerX: 0, color: 0x4a90b8, minZ: DOMESTIC_ROW_MIN_Z, maxZ: DOMESTIC_ROW_MAX_Z },
+  { id: 'zone-frozen-overseas', label: '海外冷凍貨物區', centerX: 0, color: 0x4a90b8, minZ: OVERSEAS_ROW_MIN_Z, maxZ: OVERSEAS_ROW_MAX_Z },
+  { id: 'zone-live-domestic', label: '國內活體貨物區', centerX: 3.6, color: 0x4a9a4a, minZ: DOMESTIC_ROW_MIN_Z, maxZ: DOMESTIC_ROW_MAX_Z },
+  { id: 'zone-live-overseas', label: '海外活體貨物區', centerX: 3.6, color: 0x4a9a4a, minZ: OVERSEAS_ROW_MIN_Z, maxZ: OVERSEAS_ROW_MAX_Z },
+  { id: 'zone-lost-found', label: '失物招領區', centerX: 7.2, color: 0xb8a04a, minZ: DOMESTIC_ROW_MIN_Z, maxZ: DOMESTIC_ROW_MAX_Z },
+].map(z => ({ ...z, halfWidth: CARGO_ZONE_HALF_WIDTH }));
 
 // Compass convention (see compass-ui.ts): North = -Z, East = +X, South = +Z, West = -X.
 
@@ -164,7 +188,7 @@ export const CARGO_SPAWN_CONFIG = {
 };
 
 /** Fixed (non-random) spawn spots for large cargo, inside CARGO_ZONES'
- * "大型貨物區" (zone-large: centerX -3.6, z 20.5–23.5) — comfortably clear
+ * "國內大型貨物區" (zone-large-domestic: centerX -3.6, z 20.5–23.5) — comfortably clear
  * of the front-office NPC area, player spawn, doorway/stairs, conveyor exit
  * and the vehicle control buttons. Spacing (1.6m) leaves margin against the
  * largest large-cargo footprint (1.35m) so the 4 items don't overlap at spawn. */

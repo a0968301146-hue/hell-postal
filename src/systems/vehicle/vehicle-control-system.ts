@@ -131,8 +131,8 @@ export class VehicleControlSystem {
   private pendingSettlement: DepartureSettlement | null = null;
 
   /** Per-item stability timers for the shipment scan ("至少 0.5 秒") —
-   * separate from PalletSystem/RollerRackSystem's own timers (different
-   * map, different fixture). */
+   * separate from PalletSystem's own timers (different map, different
+   * fixture). */
   private shipStableTimers: Map<string, number> = new Map();
 
   private callButtonPos: THREE.Vector3;

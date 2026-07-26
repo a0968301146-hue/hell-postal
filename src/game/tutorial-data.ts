@@ -5,7 +5,7 @@
 export type TutorialEventKey =
   | 'move' | 'pickup' | 'counterReceive' | 'stamp'
   | 'conveyor' | 'sorting' | 'cargoLoaded' | 'vehicleDeparted' | 'cargoLabelSeen'
-  | 'unloadingStarted' | 'cargoPileTouched' | 'boxOrganized' | 'rollerOrganized'
+  | 'unloadingStarted' | 'cargoPileTouched' | 'boxOrganized'
   | 'palletUsed' | 'dollyUsed' | 'outboundShipped' | 'dayCompleted' | 'vehicleCalled';
 
 export interface TutorialEntry {
@@ -64,10 +64,16 @@ export const TUTORIAL_ENTRIES: TutorialEntry[] = [
     body: '將方形或大型貨品放上中央的整理托盤，可以直接用放置模式精準疊放，不需要對齊特定格位。保持穩定靜置一小段時間後，該件貨品就會被標記為已完成整理。看向整理托盤本身按互動鍵可以將托盤連同上面所有貨品一起拿起，貨品的相對位置與擺放方式會被完整保留；再按一次即可將整組貨品一起放下。托盤無法用蓄力鍵投擲。整組托盤也可以直接搬進已停靠載具的貨艙。',
   },
   {
+    // "移除滾筒架" round: the roller rack no longer exists, so this entry
+    // can never legitimately unlock again — force-locked with an empty
+    // body, same convention as every other removed-this-round entry below
+    // (organize-box/use-dolly/ship-to-outbound/etc.), rather than deleting
+    // it outright.
     id: 'organize-roller',
     title: '使用滾筒架整理滾筒貨物',
-    unlockEvent: 'rollerOrganized',
-    body: '滾筒形貨品要放進牆邊的滾筒固定架，保持穩定靜置一小段時間後即完成整理。滾筒放上托盤、或方形貨品放進滾筒架，都不會被視為完成整理。',
+    unlockEvent: null,
+    forceLocked: true,
+    body: '',
   },
   {
     id: 'call-vehicle',

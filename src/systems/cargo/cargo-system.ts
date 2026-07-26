@@ -76,8 +76,9 @@ export class CargoSystem {
     for (const spot of frontSpots) this.spawnOne(scene, physics, interactables, spot.x, spot.z, FRONT_OFFICE.floorY);
     for (const spot of backSpots) this.spawnOne(scene, physics, interactables, spot.x, spot.z, BACK_AREA.floorY);
 
-    // Large cargo — fixed spots in the back area's "大型貨物區" (zone-large),
-    // not random like normal cargo, so the 4 items never overlap at spawn.
+    // Large cargo — fixed spots in the back area's "國內大型貨物區"
+    // (zone-large-domestic), not random like normal cargo, so the 4 items
+    // never overlap at spawn.
     // All domestic (CARGO_LABEL_PRESETS.largeDomestic).
     LARGE_CARGO_SPAWN_POSITIONS.forEach((spot, i) => {
       this.spawnLarge(scene, physics, interactables, spot.x, spot.z, BACK_AREA.floorY, i);

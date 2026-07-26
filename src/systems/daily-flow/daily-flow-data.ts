@@ -9,9 +9,8 @@
 // "刪除北邊房間" round: the separate front-office room the unload dock used
 // to sit inside has been removed entirely — the back area is now the whole
 // building, and the unload dock is mounted directly on ITS OWN north wall
-// (all positions below are now BACK_AREA-relative). PALLET_CONFIG/
-// ROLLER_RACK_CONFIG stay unchanged (still back-area furniture, untouched
-// by this round).
+// (all positions below are now BACK_AREA-relative). PALLET_CONFIG stays
+// unchanged (still back-area furniture, untouched by this round).
 import { BACK_AREA, NORTH_GATES } from '../world-layout';
 export { DAILY_CARGO_CATEGORY_POOL } from '../../data/world/daily-cargo-category-pool';
 
@@ -183,26 +182,6 @@ export const PALLET_CONFIG = {
   /** Half-height above the pallet TOP a box's center must sit within to
    * count as "on" it — generous enough for stacked boxes (spec 十三). */
   detectHeight: 1.0,
-};
-
-/** Wall-mounted roller rack — unchanged from the previous round (spec
- * section 二十: "保持不變"). posZ is the literal value the old formula
- * (WEST_GATE.centerZ + WEST_GATE.halfWidth + 3.0, back when the unload gate
- * was on the back area's west wall) resolved to — kept as a plain literal
- * now that WEST_GATE no longer exists, so the rack's real-world position is
- * byte-for-byte the same as before. */
-export const ROLLER_RACK_CONFIG = {
-  posX: -9.45,
-  posZ: 20.2,
-  width: 1.6,
-  depth: 0.7,
-  baseHeight: 0.18,
-  slotCount: 2,
-  /** Horizontal half-extent (along the rack's width axis) of each slot's
-   * valid catch zone, and the vertical window above the base a roller's
-   * center must sit within. */
-  slotHalfWidth: 0.32,
-  detectHeight: 0.9,
 };
 
 /** East-side outbound zone — NOT used by the main flow this round (spec
