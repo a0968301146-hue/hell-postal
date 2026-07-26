@@ -1,6 +1,14 @@
 import * as THREE from 'three';
 import { InteractableObject } from '../../shared/types/interactable';
-import { PhysicsSystem } from '../../adapters/rapier/physics-system';
+// Depends on the neutral PhysicsWorldPort contract (Phase 7: 解除最後一個
+// 循環依賴) rather than importing PhysicsSystem (adapters/rapier) directly
+// — that adapter used to import PLAYER_SPAWN from this very module, which
+// combined with this file's own import of PhysicsSystem created a
+// file-level circular import. PLAYER_SPAWN is now passed into
+// PhysicsSystem.init() as a parameter instead (see app/game-context.ts),
+// and this file only ever needs the one collider-creation method the port
+// exposes.
+import { PhysicsWorldPort } from '../../shared/types/physics-world-port';
 import {
   WALL_THICKNESS, BACK_AREA, CARGO_ZONES, LAND_DOCKS, LAND_GATE, PIER, SEA_GATE, SEA_DOCKS, NORTH_GATES,
 } from './logistics-layout-data';
@@ -46,7 +54,7 @@ function stdMat(color: number, opts: Partial<THREE.MeshStandardMaterialParameter
 
 /** Box wall segment with a matching Rapier static collider. */
 function addWall(
-  scene: THREE.Scene, physics: PhysicsSystem, material: THREE.Material,
+  scene: THREE.Scene, physics: PhysicsWorldPort, material: THREE.Material,
   x: number, y: number, z: number, sx: number, sy: number, sz: number
 ): void {
   const geo = new THREE.BoxGeometry(Math.max(sx, 0.01), Math.max(sy, 0.01), Math.max(sz, 0.01));
@@ -56,7 +64,7 @@ function addWall(
   physics.createStaticCuboid(x, y, z, sx / 2, sy / 2, sz / 2);
 }
 
-export function createLogisticsScene(scene: THREE.Scene, physics: PhysicsSystem): SceneData {
+export function createLogisticsScene(scene: THREE.Scene, physics: PhysicsWorldPort): SceneData {
   scene.add(new THREE.AmbientLight(0xffffff, 0.55));
   const dirLight = new THREE.DirectionalLight(0xffffff, 0.85);
   dirLight.position.set(6, 14, 4);
@@ -73,7 +81,7 @@ export function createLogisticsScene(scene: THREE.Scene, physics: PhysicsSystem)
   return { interactables, floor, pierFloor, lostFoundFloor };
 }
 
-function buildBackArea(scene: THREE.Scene, physics: PhysicsSystem): THREE.Mesh {
+function buildBackArea(scene: THREE.Scene, physics: PhysicsWorldPort): THREE.Mesh {
   const { minX, maxX, minZ, maxZ, floorY, ceilingHeight } = BACK_AREA;
   const width = maxX - minX;
   const depth = maxZ - minZ;
@@ -151,7 +159,7 @@ function buildBackArea(scene: THREE.Scene, physics: PhysicsSystem): THREE.Mesh {
  * (counter/shelf/NPC) is NOT built here — see lost-found-system.ts/
  * lost-found-npc-system.ts, same split as every other system building its
  * own furniture while structural walls stay in this file. */
-function buildLostFoundRoom(scene: THREE.Scene, physics: PhysicsSystem): THREE.Mesh {
+function buildLostFoundRoom(scene: THREE.Scene, physics: PhysicsWorldPort): THREE.Mesh {
   const { minX, maxX, minZ, maxZ, floorY, ceilingHeight } = LOST_FOUND_ROOM;
   const width = maxX - minX;
   const depth = maxZ - minZ;
@@ -222,7 +230,7 @@ function buildLandDocks(scene: THREE.Scene): void {
   }
 }
 
-function buildPierAndWater(scene: THREE.Scene, physics: PhysicsSystem): THREE.Mesh {
+function buildPierAndWater(scene: THREE.Scene, physics: PhysicsWorldPort): THREE.Mesh {
   const { minX, maxX, minZ, maxZ, floorY, waterY } = PIER;
   const width = maxX - minX;
   const depth = maxZ - minZ;

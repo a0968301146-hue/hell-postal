@@ -1,13 +1,13 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { PLAYER_SPAWN } from '../../systems/world-layout';
+import { PhysicsWorldPort } from '../../shared/types/physics-world-port';
 
 // Collision groups
 export const GROUP_STATIC = 0x0001;
 export const GROUP_PLAYER = 0x0002;
 export const GROUP_BOX = 0x0004;
 
-export class PhysicsSystem {
+export class PhysicsSystem implements PhysicsWorldPort {
   world!: RAPIER.World;
   private initialized = false;
   private accumulator = 0;
@@ -18,7 +18,11 @@ export class PhysicsSystem {
   playerCollider!: RAPIER.Collider;
   characterController!: RAPIER.KinematicCharacterController;
 
-  async init(): Promise<void> {
+  /** playerSpawn: where to place the player capsule — caller-provided
+   * rather than imported (Phase 7: 解除最後一個循環依賴 — this adapter must
+   * not know about systems/world-layout's PLAYER_SPAWN constant; see
+   * app/game-context.ts, the only caller). */
+  async init(playerSpawn: { x: number; y: number; z: number }): Promise<void> {
     await RAPIER.init();
     this.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
     this.initialized = true;
@@ -29,7 +33,7 @@ export class PhysicsSystem {
     this.characterController.enableSnapToGround(0.3);
     this.characterController.setApplyImpulsesToDynamicBodies(true);
 
-    this.createPlayer();
+    this.createPlayer(playerSpawn);
   }
 
   createStaticCuboid(x: number, y: number, z: number, hx: number, hy: number, hz: number): void {
@@ -111,12 +115,12 @@ export class PhysicsSystem {
     this.world.removeRigidBody(body);
   }
 
-  private createPlayer(): void {
+  private createPlayer(playerSpawn: { x: number; y: number; z: number }): void {
     const radius = 0.35;
     const halfHeight = 0.55; // total capsule height ~1.8m
 
     const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased()
-      .setTranslation(PLAYER_SPAWN.x, PLAYER_SPAWN.y - 0.3, PLAYER_SPAWN.z);
+      .setTranslation(playerSpawn.x, playerSpawn.y - 0.3, playerSpawn.z);
     this.playerBody = this.world.createRigidBody(bodyDesc);
 
     const colliderDesc = RAPIER.ColliderDesc.capsule(halfHeight, radius)

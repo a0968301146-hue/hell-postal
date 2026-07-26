@@ -45,9 +45,11 @@ function effectiveCargoKind(data: CargoData): CargoType {
 
 /** Whether `vehicle` is one of the six creature haulers allowed to accept
  * this item — the ONLY "correctly loaded" test (spec: "貨物放入正確載具才算
- * 成功出貨"); physically being inside ANY docked vehicle's cargoBounds is
- * still what flips CargoData.shipped (see scanCargoForShipment) — this is
- * the SEPARATE, stricter check applied only at departure settlement. */
+ * 成功出貨"). Computed exactly once per load event, inside
+ * scanCargoForShipment, which stamps the result onto CargoData.
+ * correctlyShipped (Phase 7: 統一狀態來源) — nothing else re-derives this
+ * independently; pressDepartButton's scoring and DailyFlowSystem's HUD
+ * counts both just read the already-computed field. */
 function vehicleAcceptsCargo(config: VehicleConfig, data: CargoData): boolean {
   return config.acceptedCargoTypes.includes(effectiveCargoKind(data));
 }
@@ -312,11 +314,11 @@ export class VehicleControlSystem {
    *      "未出貨貨物照既有扣分與隔天清除規則處理" / "已隨載具離場的貨物照
    *      原流程清除").
    *   2. Score settlement snapshot: SEPARATELY, an item only counts as a
-   *      genuine success if it's shipped AND in a vehicle whose
-   *      acceptedCargoTypes actually cover its effective kind — everything
-   *      else (never shipped, or shipped under the wrong vehicle) counts
-   *      as unshipped and is penalized (unchanged formula/constant from
-   *      the previous round). */
+   *      genuine success if CargoData.correctlyShipped is true (Phase 7:
+   *      統一狀態來源 — already computed once by scanCargoForShipment, never
+   *      re-derived here) — everything else (never loaded, or loaded into
+   *      the wrong vehicle) counts as unshipped and is penalized (unchanged
+   *      formula/constant from the previous round). */
   pressDepartButton(): void {
     if (!this.canDepart) {
       this.flash(this.departLabel, this.departBlockedMessage(), DEPART_IDLE_TEXT);
@@ -332,14 +334,17 @@ export class VehicleControlSystem {
       const obj = this.interactables.get(id);
       if (!data || !obj) { unshipped++; continue; }
 
-      const slot = data.shippedVehicleType ? slotById.get(data.shippedVehicleType) : undefined;
+      const slot = data.loadedVehicleId ? slotById.get(data.loadedVehicleId) : undefined;
 
-      if (data.shipped && slot) {
+      // Physically pinned/carried off regardless of correctness — a
+      // wrong-vehicle item still physically rides along with whatever bay
+      // it's resting in (spec: "已隨載具離場的貨物照原流程清除"), it's just
+      // never counted as a successful shipment below.
+      if (data.loadedVehicleId && slot) {
         slot.pinnedCargo.push(obj);
       }
 
-      const correct = !!data.shipped && !!slot && vehicleAcceptsCargo(slot.config, data);
-      if (correct) shippedCorrect++; else unshipped++;
+      if (data.correctlyShipped) shippedCorrect++; else unshipped++;
     }
 
     // The sorting pallet itself is never in dailyCargoIds (spec: "托盤本身
@@ -433,17 +438,23 @@ export class VehicleControlSystem {
 
   /** Continuously scans every daily cargo item against whichever of the six
    * slots are currently 'docked' — any cargo that sits stable inside a
-   * cargoBounds for SHIP_STABLE_THRESHOLD seconds gets marked shipped
-   * (loading needs no organized=true, or ever having touched the pallet/
-   * roller rack — being inside a docked vehicle's cargo bay and settling
-   * for 0.5s is the whole rule). If an item is simultaneously inside
-   * multiple docked vehicles' bounds (possible now that up to three per
-   * route sit close together), the NEAREST one wins, mirroring the old
-   * land-vs-sea tie-break. Anything previously shipped that leaves every
-   * bounds (or gets picked back up) immediately un-ships (spec: "貨物在
-   * 發車前被拿出cargoBounds，要取消loaded/shipped並更新數量") — no debounce
-   * needed on that direction since it only happens from a deliberate player
-   * action, not physics jitter. */
+   * cargoBounds for SHIP_STABLE_THRESHOLD seconds gets its
+   * `loadedVehicleId` set (loading needs no organized=true, or ever having
+   * touched the pallet/roller rack — being inside a docked vehicle's cargo
+   * bay and settling for 0.5s is the whole rule for PHYSICAL presence). If
+   * an item is simultaneously inside multiple docked vehicles' bounds
+   * (possible now that up to three per route sit close together), the
+   * NEAREST one wins, mirroring the old land-vs-sea tie-break — an item can
+   * never be `loadedVehicleId`'d under two vehicles at once. `correctlyShipped`
+   * is derived alongside `loadedVehicleId` every time it's (re)assigned,
+   * via vehicleAcceptsCargo — the ONE place that check runs (Phase 7: 統一
+   * 狀態來源) — so a wrong-vehicle item gets `loadedVehicleId` set but
+   * `correctlyShipped` stays false; it does NOT count as shipped anywhere
+   * downstream (HUD counts, departure settlement). Anything previously
+   * loaded that leaves every bounds (or gets picked back up) immediately
+   * clears both fields (spec "貨物在發車前被拿出cargoBounds，要取消loaded/
+   * shipped並更新數量") — no debounce needed on that direction since it only
+   * happens from a deliberate player action, not physics jitter. */
   private scanCargoForShipment(deltaTime: number): void {
     const dockedSlots = this.slots.filter((s) => s.state === 'docked' && s.vehicle);
     if (dockedSlots.length === 0) return;
@@ -457,7 +468,7 @@ export class VehicleControlSystem {
 
       if (obj.isHeld || !obj.mesh.visible) {
         this.shipStableTimers.delete(id);
-        if (data.shipped) { data.shipped = false; data.shippedVehicleType = null; anyChanged = true; }
+        if (data.loadedVehicleId) { data.loadedVehicleId = null; data.correctlyShipped = false; anyChanged = true; }
         continue;
       }
 
@@ -471,12 +482,20 @@ export class VehicleControlSystem {
 
       if (!target) {
         this.shipStableTimers.delete(id);
-        if (data.shipped) { data.shipped = false; data.shippedVehicleType = null; anyChanged = true; }
+        if (data.loadedVehicleId) { data.loadedVehicleId = null; data.correctlyShipped = false; anyChanged = true; }
         continue;
       }
 
-      if (data.shipped) {
-        if (data.shippedVehicleType !== target.config.id) data.shippedVehicleType = target.config.id;
+      if (data.loadedVehicleId) {
+        if (data.loadedVehicleId !== target.config.id) {
+          // Settled inside a DIFFERENT vehicle's bounds than before without
+          // ever fully leaving a bay in between — re-derive correctness for
+          // the new target rather than only retagging the id, so
+          // correctlyShipped never goes stale for the wrong vehicle.
+          data.loadedVehicleId = target.config.id;
+          data.correctlyShipped = vehicleAcceptsCargo(target.config, data);
+          anyChanged = true;
+        }
         continue;
       }
 
@@ -493,10 +512,13 @@ export class VehicleControlSystem {
       this.shipStableTimers.set(id, next);
 
       if (next >= SHIP_STABLE_THRESHOLD) {
-        data.shipped = true;
-        data.shippedVehicleType = target.config.id;
+        data.loadedVehicleId = target.config.id;
+        data.correctlyShipped = vehicleAcceptsCargo(target.config, data);
         this.shipStableTimers.delete(id);
         anyChanged = true;
+        // Fires on any physical load (correct or not) — a tutorial hint
+        // ("you loaded something"), not a correctness signal; unchanged
+        // from before this round's fix.
         this.onCargoLoaded?.();
       }
     }

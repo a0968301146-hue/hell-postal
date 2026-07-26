@@ -106,8 +106,11 @@ export class OutboundZoneSystem {
       this.hasShipped = true;
       // NOT the main flow's completion path this round (see DailyFlowSystem
       // — cargo ships by riding a vehicle now, not a ground zone), kept only
-      // so this file still compiles/works standalone if reused later.
-      data.shipped = true;
+      // so this file still compiles/works standalone if reused later. This
+      // old ground-zone flow never had a "wrong vehicle" concept, so it
+      // just marks success directly (Phase 7 renamed CargoData.shipped to
+      // correctlyShipped — see cargo-data.ts).
+      data.correctlyShipped = true;
       this.dailyFlowSystem.refreshCompletion();
       this.cargoSystem.removeCargo(id);
       this.warnedIds.delete(id);

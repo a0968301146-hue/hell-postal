@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { InteractableObject, createInteractableObject } from '../../shared/types/interactable';
 import {
-  CargoData, CargoLabelPreset, CargoSize, CargoSubtypePreset,
+  CargoData, CargoLabelPreset, CargoSize, CargoSubtypePreset, ShippingStatus,
   CARGO_LABEL_PRESETS, createCargoData, pickCargoSize, pickLargeCargoSize,
   createDailyCargoData,
 } from './cargo-data';
@@ -106,6 +106,18 @@ export class CargoSystem {
 
   getCargoData(id: string): CargoData | undefined {
     return this.cargoDataMap.get(id);
+  }
+
+  /** Single public query for "is this item shipped, and correctly?" (Phase
+   * 7: 統一狀態來源) — VehicleControlSystem's shipment scan is the ONLY
+   * writer of loadedVehicleId/correctlyShipped; everything else (scoring,
+   * HUD counts, UI) should read through here (or the equivalent CargoData
+   * fields directly) rather than re-deriving vehicle-acceptance rules of
+   * its own. Returns undefined for an unknown/already-removed id. */
+  getShippingStatus(id: string): ShippingStatus | undefined {
+    const data = this.cargoDataMap.get(id);
+    if (!data) return undefined;
+    return { loadedVehicleId: data.loadedVehicleId, correctlyShipped: data.correctlyShipped };
   }
 
   /** Resolves any raycast hit (root cargo mesh, a decoration child, or an

@@ -112,12 +112,15 @@ export class DailyFlowSystem {
     return this.totalCargoCount - this.organizedCount;
   }
 
-  /** How many of today's cargo have shipped === true (i.e. riding in a
-   * vehicle right now). */
+  /** How many of today's cargo are CORRECTLY shipped right now (Phase 7:
+   * 修正貨物狀態語意 — reads CargoData.correctlyShipped, not merely
+   * `loadedVehicleId`, so an item physically sitting in the WRONG vehicle's
+   * bay does NOT inflate this count or prematurely flip `state` to
+   * 'completed' below). */
   get shippedCount(): number {
     let n = 0;
     for (const id of this.dailyCargoIds) {
-      if (this.cargoSystem.getCargoData(id)?.shipped) n++;
+      if (this.cargoSystem.getCargoData(id)?.correctlyShipped) n++;
     }
     return n;
   }

@@ -61,22 +61,27 @@ export interface CargoData {
   labels: CargoLabel[];
   displayName: string;
   dimensions: CargoDimensions;
-  /** Daily-flow round only: set true once this item has spent >=0.5s stable
-   * inside a docked vehicle's cargoBounds while already organized (see
-   * vehicle-control-system.ts's per-frame shipment scan). Cleared back to
-   * false if the player pulls it back out of the vehicle (spec "北側卸貨口/
-   * 重新啟用呼叫載具" section 十三). Pre-existing cargo never sets this. */
-  shipped: boolean;
-  /** Which SPECIFIC vehicle (its VehicleConfig.id, e.g. 'land-frog-01') this
-   * item is currently shipped under — null whenever `shipped` is false.
-   * ("Add six fixed vehicle docking slots" round: widened from a bare
-   * 'land'|'sea' route tag now that up to 3 vehicles per route can be
-   * docked at once — see vehicle-control-system.ts, the only reader/writer
-   * of this field.) Set alongside `shipped` so a later re-scan always knows
-   * which specific slot's pinned-cargo list to destroy the item from once
-   * that vehicle actually departs, and so departure-time scoring can check
-   * the exact vehicle's acceptedCargoTypes rather than just its route. */
-  shippedVehicleType: string | null;
+  /** Daily-flow round only (Phase 7: 修正貨物狀態語意): which SPECIFIC
+   * vehicle (its VehicleConfig.id, e.g. 'land-frog-01') this item is
+   * CURRENTLY resting stably inside (>=0.5s inside that vehicle's
+   * cargoBounds — see vehicle-control-system.ts's per-frame shipment scan),
+   * regardless of whether that vehicle actually accepts this item's kind —
+   * null whenever it isn't physically settled in any docked vehicle right
+   * now. Purely a PHYSICAL-PRESENCE fact, never a success judgment by
+   * itself; use `correctlyShipped` (or CargoSystem.getShippingStatus) for
+   * that. Cleared back to null if the player pulls the item back out of the
+   * vehicle. Pre-existing cargo never sets this. */
+  loadedVehicleId: string | null;
+  /** True ONLY when `loadedVehicleId` is set AND that vehicle's
+   * acceptedCargoTypes actually cover this item's effective kind (see
+   * vehicle-control-system.ts's vehicleAcceptsCargo) — the ONE place this
+   * check is computed; nothing else (ScoringSystem, HUD counts, departure
+   * settlement) re-derives correctness independently, they all just read
+   * this field (or CargoSystem.getShippingStatus). Sitting inside the WRONG
+   * vehicle's cargoBounds sets `loadedVehicleId` but leaves this false —
+   * such an item is NOT shipped, counts as unshipped at departure
+   * settlement, and is penalized by the existing unshipped-cargo rule. */
+  correctlyShipped: boolean;
   /** Defaults to 'box' for every pre-existing cargo item (createCargoData
    * below never sets it) — only daily cargo (createDailyCargoData) sets
    * 'roller'/'large'. */
@@ -112,6 +117,16 @@ export interface CargoData {
    * to VehicleConfig.acceptedRouteTypes (vehicle-data.ts) — this round does
    * not touch vehicle-loading compatibility at all. */
   region: CargoRegion | null;
+}
+
+/** Single-source-of-truth shipping status snapshot (Phase 7: 統一狀態來源)
+ * — the shape CargoSystem.getShippingStatus() returns, mirroring exactly
+ * the `loadedVehicleId`/`correctlyShipped` pair on CargoData so callers
+ * never need to reach into CargoData's other, unrelated fields just to ask
+ * "is this shipped, and correctly?". */
+export interface ShippingStatus {
+  loadedVehicleId: string | null;
+  correctlyShipped: boolean;
 }
 
 const CARGO_TYPE_DISPLAY_NAME: Record<CargoType, string> = {
@@ -158,8 +173,8 @@ export function createCargoData(id: string, preset: CargoLabelPreset, dimensions
     labels: preset.labels,
     displayName: routePrefix + CARGO_TYPE_DISPLAY_NAME[preset.cargoType],
     dimensions,
-    shipped: false,
-    shippedVehicleType: null,
+    loadedVehicleId: null,
+    correctlyShipped: false,
     shapeType: 'box',
     organized: false,
     subtype: null,
@@ -250,8 +265,8 @@ export function createDailyCargoData(id: string, preset: CargoSubtypePreset): Ca
     labels: [],
     displayName: preset.label,
     dimensions: preset.dimensions,
-    shipped: false,
-    shippedVehicleType: null,
+    loadedVehicleId: null,
+    correctlyShipped: false,
     shapeType: preset.shapeType,
     organized: false,
     subtype: preset.subtype,

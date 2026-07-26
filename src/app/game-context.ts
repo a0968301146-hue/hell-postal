@@ -7,7 +7,7 @@ import { SettingsManager } from '../systems/settings';
 import { InteractableObject } from '../shared/types/interactable';
 import { PlayerInteractionData, createPlayerInteractionData } from '../core/game-state';
 import { GameEventBus } from '../core/game-events';
-import { createLogisticsScene, SceneData } from '../systems/world-layout';
+import { createLogisticsScene, SceneData, PLAYER_SPAWN } from '../systems/world-layout';
 
 /** The engine/UI-level singletons every system is built from — created ONCE
  * per game session (see createGameContext below) and injected into each
@@ -41,7 +41,7 @@ export async function createGameContext(): Promise<GameContext> {
   const { scene, camera, renderer } = createThreeRenderer();
 
   const physics = new PhysicsSystem();
-  await physics.init();
+  await physics.init(PLAYER_SPAWN);
 
   const hud = new HUD();
   const pauseManager = new PauseManager();
