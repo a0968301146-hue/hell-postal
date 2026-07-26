@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { createFloatingLabel, updateFloatingLabel } from '../adapters/three/world-label-system';
+import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/world-label-system';
 
 /**
  * The NPC's head-mounted speech bubble ("Expand modular lost found NPC

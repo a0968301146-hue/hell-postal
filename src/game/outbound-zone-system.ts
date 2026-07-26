@@ -4,7 +4,7 @@ import { CargoSystem } from '../systems/cargo';
 import { DailyFlowSystem } from '../systems/daily-flow';
 import { HUD } from '../systems/hud';
 import { OUTBOUND_ZONE } from '../systems/daily-flow';
-import { BACK_AREA } from './logistics-layout-data';
+import { BACK_AREA } from '../systems/world-layout';
 import { createFloatingLabel } from '../adapters/three/world-label-system';
 
 const ZONE_MIN_Y = BACK_AREA.floorY - 0.1;

@@ -5,7 +5,7 @@ import { CounterNpcSystem, NpcEntity } from './counter-npc-system';
 import {
   NPC_QUEUE_SLOTS, NPC_AT_COUNTER_SPOT, NPC_EXIT_POINT, COUNTER_ITEM_SPOT, OPEN_BUTTON_POS,
 } from './counter-layout-data';
-import { SCENE_CONFIG } from './scene-manager';
+import { SCENE_CONFIG } from '../systems/world-layout';
 import { createPackageData, createAddressLabel } from './package-data';
 import { EnvelopeData, createEnvelopeAddressLabel } from './envelope-data';
 import { DESTINATIONS } from './destination-data';

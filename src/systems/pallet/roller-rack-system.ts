@@ -3,7 +3,7 @@ import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { InteractableObject } from '../../shared/types/interactable';
 import { CargoSystem } from '../cargo';
 import { ROLLER_RACK_CONFIG } from '../daily-flow';
-import { BACK_AREA } from '../../game/logistics-layout-data';
+import { BACK_AREA } from '../world-layout';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
 
 const STABLE_THRESHOLD = 0.5; // spec 十五: "至少 0.5 秒"

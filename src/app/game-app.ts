@@ -3,7 +3,7 @@ import { GameContext, createGameContext } from './game-context';
 import { GameLoop } from './game-loop';
 import { DisposeManager } from '../core/dispose-manager';
 import { InteractableObject } from '../shared/types/interactable';
-import { SCENE_CONFIG } from '../game/scene-manager';
+import { SCENE_CONFIG } from '../systems/world-layout';
 import { PlayerController } from '../systems/player';
 import { InteractionSystem, PickupSystem } from '../systems/interaction';
 import { StampMinigame, MinigameResult } from '../game/stamp-minigame';
@@ -24,8 +24,7 @@ import { DailyFlowSystem, DailyState } from '../systems/daily-flow';
 import { UnloadingSystem } from '../systems/unloading';
 import { PalletSystem, RollerRackSystem } from '../systems/pallet';
 import { CargoInspectionSystem, CargoInspectionUI } from '../systems/cargo-inspection';
-import { LostFoundSystem } from '../game/lost-found-system';
-import { LostFoundUI } from '../game/lost-found-ui';
+import { LostFoundSystem, LostFoundUI } from '../systems/lost-found';
 
 /**
  * The app's top-level composition root (formerly `Game` in game/game.ts) —

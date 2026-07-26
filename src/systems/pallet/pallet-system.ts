@@ -6,7 +6,7 @@ import { PlayerInteractionData } from '../../core/game-state';
 import { CargoSystem } from '../cargo';
 import { HUD } from '../hud';
 import { PALLET_CONFIG } from '../daily-flow';
-import { BACK_AREA, WORLD_BOUNDS } from '../../game/logistics-layout-data';
+import { BACK_AREA, WORLD_BOUNDS } from '../world-layout';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
 
 const STABLE_THRESHOLD = 0.5; // seconds, organize judgment

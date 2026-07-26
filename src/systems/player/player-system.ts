@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-import { SCENE_CONFIG } from '../../game/scene-manager';
+import { SCENE_CONFIG } from '../world-layout';
 import { PhysicsSystem } from '../../adapters/rapier/physics-system';
-import { PLAYER_SPAWN } from '../../game/logistics-layout-data';
+import { PLAYER_SPAWN } from '../world-layout';
 import { DOLLY_PUSH_SPEED_MULTIPLIER } from '../../game/dolly-data';
 import { PlayerInteractionData } from '../../core/game-state';
 import { HUD } from '../hud';

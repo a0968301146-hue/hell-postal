@@ -6,7 +6,7 @@ import {
   SBOX_WIDTH, SBOX_DEPTH, SBOX_HEIGHT, SBOX_WALL_THICKNESS,
   createSortingBoxData
 } from './sorting-box-data';
-import { BACK_AREA } from './logistics-layout-data';
+import { BACK_AREA } from '../systems/world-layout';
 import { createFloatingLabel } from '../adapters/three/world-label-system';
 
 // Bottom plate thickness

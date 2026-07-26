@@ -4,7 +4,7 @@ import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { InteractableObject } from '../../shared/types/interactable';
 import { VehicleConfig, assertWithinSizeLimits } from './vehicle-data';
 import { CARGO_BOUNDS_HEIGHT_MULTIPLIER } from './vehicle-cargo-bounds-data';
-import { BACK_AREA } from '../../game/logistics-layout-data';
+import { BACK_AREA } from '../world-layout';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
 
 const WALL_T = 0.08;

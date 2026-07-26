@@ -10,7 +10,7 @@ import {
   DOLLY_PUSH_OFFSET, DOLLY_CONFIGS, DollyConfig, DOLLY_FLOOR_Y,
 } from './dolly-data';
 import { createFloatingLabel, updateFloatingLabel } from '../adapters/three/world-label-system';
-import { SCENE_CONFIG } from './scene-manager';
+import { SCENE_CONFIG } from '../systems/world-layout';
 
 const IDLE_TEXT = '拖板車\n按 E 推行';
 const PUSHING_TEXT = '推行中\n按 E 放開';

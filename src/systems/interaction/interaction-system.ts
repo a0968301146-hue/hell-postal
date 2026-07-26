@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { InteractableObject } from '../../shared/types/interactable';
 import { PlayerInteractionData } from '../../core/game-state';
-import { SCENE_CONFIG } from '../../game/scene-manager';
+import { SCENE_CONFIG } from '../world-layout';
 import { PickupSystem } from './pickup-system';
 import { EnvelopeSystem } from '../../game/envelope-system';
 import { EnvelopeStampStation } from '../../game/envelope-stamp-station';
@@ -15,7 +15,7 @@ import { SettingsManager } from '../settings';
 import { UnloadingSystem } from '../unloading';
 import { DailyFlowSystem } from '../daily-flow';
 import { PalletSystem } from '../pallet';
-import { LostFoundSystem } from '../../game/lost-found-system';
+import { LostFoundSystem } from '../lost-found';
 
 export class InteractionSystem {
   private raycaster: THREE.Raycaster;

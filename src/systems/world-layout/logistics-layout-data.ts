@@ -5,7 +5,10 @@
 //
 // Coordinate convention: X = left/right, Z = depth (increasing Z = further
 // from the north unload dock, toward the docks and pier), Y = height.
-import { LOST_FOUND_ROOM } from './lost-found-layout-data';
+// Direct file import (not the systems/lost-found barrel) — see world-
+// layout-system.ts's identical import for why (avoids a circular import
+// through LostFoundSystem, which depends on this system for SCENE_CONFIG).
+import { LOST_FOUND_ROOM } from '../lost-found/lost-found-layout-data';
 
 export const WALL_THICKNESS = 0.2;
 

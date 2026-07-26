@@ -7,7 +7,7 @@ import { SettingsManager } from '../systems/settings';
 import { InteractableObject } from '../shared/types/interactable';
 import { PlayerInteractionData, createPlayerInteractionData } from '../core/game-state';
 import { GameEventBus } from '../core/game-events';
-import { createLogisticsScene, SceneData } from '../game/scene-manager';
+import { createLogisticsScene, SceneData } from '../systems/world-layout';
 
 /** The engine/UI-level singletons every system is built from — created ONCE
  * per game session (see createGameContext below) and injected into each

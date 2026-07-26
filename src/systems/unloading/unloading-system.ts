@@ -5,8 +5,8 @@ import {
   DailyFlowSystem, UNLOAD_PORTS, UnloadPortConfig, UNLOAD_SPAWN_JITTER_X, UNLOAD_SPAWN_JITTER_Z,
   UNLOAD_BUTTON_POS, DAILY_CARGO_CONFIG, UNLOAD_BURST_CONFIG,
 } from '../daily-flow';
-import { BACK_AREA } from '../../game/logistics-layout-data';
-import { SCENE_CONFIG } from '../../game/scene-manager';
+import { BACK_AREA } from '../world-layout';
+import { SCENE_CONFIG } from '../world-layout';
 import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/world-label-system';
 
 const IDLE_TEXT = '開始卸貨\n按 E 卸貨';

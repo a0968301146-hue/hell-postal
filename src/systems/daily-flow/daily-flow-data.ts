@@ -12,7 +12,7 @@
 // (all positions below are now BACK_AREA-relative). PALLET_CONFIG/
 // ROLLER_RACK_CONFIG stay unchanged (still back-area furniture, untouched
 // by this round).
-import { BACK_AREA, NORTH_GATES } from '../../game/logistics-layout-data';
+import { BACK_AREA, NORTH_GATES } from '../world-layout';
 
 /** How many cargo items spawn each day, fixed (spec "貨品外型與比例有更多
  * 變化" round section二: no infinite spawn, no per-day variation of the

@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { InteractableObject } from '../../shared/types/interactable';
 import { PlayerInteractionData } from '../../core/game-state';
-import { SCENE_CONFIG } from '../../game/scene-manager';
-import { WORLD_BOUNDS } from '../../game/logistics-layout-data';
+import { SCENE_CONFIG } from '../world-layout';
+import { WORLD_BOUNDS } from '../world-layout';
 import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { HUD } from '../hud';
 import { PauseManager } from '../../core/pause-manager';

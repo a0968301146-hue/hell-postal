@@ -3,8 +3,8 @@ import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { HUD } from '../hud';
 import { CargoSystem } from '../cargo';
 import { END_DAY_BUTTON_POS } from './daily-flow-data';
-import { SCENE_CONFIG } from '../../game/scene-manager';
-import { BACK_AREA } from '../../game/logistics-layout-data';
+import { SCENE_CONFIG } from '../world-layout';
+import { BACK_AREA } from '../world-layout';
 import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/world-label-system';
 
 export type DailyState =
