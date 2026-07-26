@@ -1,8 +1,7 @@
 import * as THREE from 'three';
-import { PhysicsSystem } from '../adapters/rapier/physics-system';
-import { InteractableObject } from '../shared/types/interactable';
-import { CargoSystem } from '../systems/cargo';
-import { CargoData, CargoType } from '../systems/cargo';
+import { PhysicsSystem } from '../../adapters/rapier/physics-system';
+import { InteractableObject } from '../../shared/types/interactable';
+import { CargoSystem, CargoData, CargoType } from '../cargo';
 // Deliberately imports pickup-system.ts directly rather than through
 // systems/interaction's own index.ts barrel: that barrel also re-exports
 // InteractionSystem, which itself imports VehicleControlSystem (to dispatch
@@ -10,18 +9,18 @@ import { CargoData, CargoType } from '../systems/cargo';
 // a file-level circular import (VehicleControlSystem -> interaction index ->
 // InteractionSystem -> VehicleControlSystem). pickup-system.ts itself has no
 // dependency back on this file, so importing it directly is cycle-free.
-import { PickupSystem } from '../systems/interaction/pickup-system';
+import { PickupSystem } from '../interaction/pickup-system';
 import { VehicleSystem } from './vehicle-system';
 import { LAND_VEHICLE_CONFIGS, SEA_VEHICLE_CONFIGS, VehicleConfig } from './vehicle-data';
 import { VEHICLE_ROUTES } from './vehicle-route-data';
-import { VEHICLE_CONTROL_POS, BACK_AREA } from './logistics-layout-data';
-import { UNSHIPPED_PENALTY_PER_ITEM } from './daily-flow-data';
-import { SCENE_CONFIG } from './scene-manager';
-import { createFloatingLabel, updateFloatingLabel } from '../adapters/three/world-label-system';
-import { HUD } from './hud';
-import { DailyFlowSystem } from './daily-flow-system';
-import { PALLET_ID } from '../systems/pallet';
-import { SettingsManager } from '../systems/settings';
+import { VEHICLE_CONTROL_POS, BACK_AREA } from '../../game/logistics-layout-data';
+import { ScoringSystem, DepartureSettlement } from '../scoring';
+import { SCENE_CONFIG } from '../../game/scene-manager';
+import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/world-label-system';
+import { HUD } from '../hud';
+import { DailyFlowSystem } from '../daily-flow';
+import { PALLET_ID } from '../pallet';
+import { SettingsManager } from '../settings';
 
 /** A daily cargo item's EFFECTIVE cargo kind for vehicle-compatibility
  * purposes ("Add six cargo vehicles" round) — derived from the fields
@@ -51,17 +50,6 @@ function effectiveCargoKind(data: CargoData): CargoType {
  * the SEPARATE, stricter check applied only at departure settlement. */
 function vehicleAcceptsCargo(config: VehicleConfig, data: CargoData): boolean {
   return config.acceptedCargoTypes.includes(effectiveCargoKind(data));
-}
-
-/** One departure's scored outcome, computed once at 載具出發 press time
- * (spec: "按下發車時，建立當日結算快照") and displayed once all six vehicles
- * finish their departure animation (see showDayCompleteSummary). */
-interface DepartureSettlement {
-  total: number;
-  shipped: number;
-  unshipped: number;
-  penalty: number;
-  finalScore: number;
 }
 
 /** Per-vehicle lifecycle. 'departed' is a terminal holding state — the
@@ -120,6 +108,7 @@ export class VehicleControlSystem {
   private hud: HUD;
   private dailyFlowSystem: DailyFlowSystem;
   private settingsManager: SettingsManager;
+  private scoringSystem: ScoringSystem;
   private onPauseChange: (paused: boolean) => void;
   private onVehicleDiscovered?: (config: VehicleConfig) => void;
   private onVehicleCalled?: () => void;
@@ -158,6 +147,7 @@ export class VehicleControlSystem {
     hud: HUD,
     dailyFlowSystem: DailyFlowSystem,
     settingsManager: SettingsManager,
+    scoringSystem: ScoringSystem,
     onPauseChange: (paused: boolean) => void,
     onVehicleDiscovered?: (config: VehicleConfig) => void,
     onVehicleCalled?: () => void,
@@ -173,6 +163,7 @@ export class VehicleControlSystem {
     this.hud = hud;
     this.dailyFlowSystem = dailyFlowSystem;
     this.settingsManager = settingsManager;
+    this.scoringSystem = scoringSystem;
     this.onPauseChange = onPauseChange;
     this.onVehicleDiscovered = onVehicleDiscovered;
     this.onVehicleCalled = onVehicleCalled;
@@ -375,15 +366,7 @@ export class VehicleControlSystem {
       slot.waypointIndex = 0;
     }
 
-    const penalty = unshipped * UNSHIPPED_PENALTY_PER_ITEM;
-    if (penalty > 0) this.settingsManager.addScore(-penalty);
-    this.pendingSettlement = {
-      total: this.dailyFlowSystem.totalCargoCount,
-      shipped: shippedCorrect,
-      unshipped,
-      penalty,
-      finalScore: this.settingsManager.progress.score,
-    };
+    this.pendingSettlement = this.scoringSystem.settleDeparture(this.dailyFlowSystem.totalCargoCount, shippedCorrect, unshipped);
 
     this.dailyFlowSystem.notifyDeparting();
 

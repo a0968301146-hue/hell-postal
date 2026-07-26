@@ -2,7 +2,7 @@ import { EnvelopeData } from './envelope-data';
 import { SortingBoxSystem } from './sorting-box-system';
 import { InteractableObject } from '../shared/types/interactable';
 import { PhysicsSystem } from '../adapters/rapier/physics-system';
-import { HUD } from './hud';
+import { HUD } from '../systems/hud';
 import { SBOX_HEIGHT } from './sorting-box-data';
 
 const STABLE_TIME_REQUIRED = 0.3; // seconds

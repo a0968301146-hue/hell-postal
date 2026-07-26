@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { InteractableObject } from '../shared/types/interactable';
 import { CargoSystem } from '../systems/cargo';
-import { DailyFlowSystem } from './daily-flow-system';
-import { HUD } from './hud';
-import { OUTBOUND_ZONE } from './daily-flow-data';
+import { DailyFlowSystem } from '../systems/daily-flow';
+import { HUD } from '../systems/hud';
+import { OUTBOUND_ZONE } from '../systems/daily-flow';
 import { BACK_AREA } from './logistics-layout-data';
 import { createFloatingLabel } from '../adapters/three/world-label-system';
 

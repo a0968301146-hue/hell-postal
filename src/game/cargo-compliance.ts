@@ -9,7 +9,7 @@
 // the system never re-derives rules from them (spec section 八: "系統判定
 // 的資料來源仍是CargoData，不要依靠材質像素或畫面文字反向解析").
 import { CargoData } from '../systems/cargo';
-import { VehicleConfig } from './vehicle-data';
+import { VehicleConfig } from '../systems/vehicle';
 
 export interface CargoOutcome {
   routeCompatible: boolean;

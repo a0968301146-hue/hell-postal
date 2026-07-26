@@ -1,11 +1,10 @@
 import * as THREE from 'three';
 import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { CargoSystem, CARGO_BOX_PRESETS, CARGO_ROLLER_PRESETS, CARGO_LARGE_PRESETS, CargoSubtypePreset } from '../cargo';
-import { DailyFlowSystem } from '../../game/daily-flow-system';
 import {
-  UNLOAD_PORTS, UnloadPortConfig, UNLOAD_SPAWN_JITTER_X, UNLOAD_SPAWN_JITTER_Z,
+  DailyFlowSystem, UNLOAD_PORTS, UnloadPortConfig, UNLOAD_SPAWN_JITTER_X, UNLOAD_SPAWN_JITTER_Z,
   UNLOAD_BUTTON_POS, DAILY_CARGO_CONFIG, UNLOAD_BURST_CONFIG,
-} from '../../game/daily-flow-data';
+} from '../daily-flow';
 import { BACK_AREA } from '../../game/logistics-layout-data';
 import { SCENE_CONFIG } from '../../game/scene-manager';
 import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/world-label-system';

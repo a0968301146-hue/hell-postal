@@ -11,7 +11,7 @@ import { EnvelopeData, createEnvelopeAddressLabel } from './envelope-data';
 import { DESTINATIONS } from './destination-data';
 import { getStampForDestination } from './stamp-data';
 import { createFloatingLabel, updateFloatingLabel } from '../adapters/three/world-label-system';
-import { HUD } from './hud';
+import { HUD } from '../systems/hud';
 
 const TOTAL_NPCS = 5;
 const SPAWN_INTERVAL = 1.4; // seconds between staggered NPC spawns

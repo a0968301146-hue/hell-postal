@@ -13,13 +13,14 @@ import { SortingBoxSystem } from '../game/sorting-box-system';
 import { MailSortingSystem } from '../game/mail-sorting-system';
 import { CargoSystem } from '../systems/cargo';
 import { DollySystem } from '../game/dolly-system';
-import { VehicleControlSystem } from '../game/vehicle-control-system';
+import { VehicleControlSystem } from '../systems/vehicle';
+import { ScoringSystem } from '../systems/scoring';
 import { CounterNpcSystem } from '../game/counter-npc-system';
 import { CounterServiceSystem } from '../game/counter-service-system';
 import { CompassUI } from '../game/compass-ui';
 import { ManualUI } from '../systems/pause-menu';
 import { ENABLE_LEGACY_COUNTER, ENABLE_LEGACY_MAIL_FLOW, ENABLE_VEHICLE_LOADING_FLOW, ENABLE_LEGACY_TEST_CARGO } from '../game/feature-flags';
-import { DailyFlowSystem, DailyState } from '../game/daily-flow-system';
+import { DailyFlowSystem, DailyState } from '../systems/daily-flow';
 import { UnloadingSystem } from '../systems/unloading';
 import { PalletSystem, RollerRackSystem } from '../systems/pallet';
 import { CargoInspectionSystem, CargoInspectionUI } from '../systems/cargo-inspection';
@@ -51,6 +52,7 @@ export class GameApp {
   private cargoSystem!: CargoSystem;
   private dollySystem!: DollySystem;
   private vehicleControlSystem!: VehicleControlSystem;
+  private scoringSystem!: ScoringSystem;
   private counterNpcSystem!: CounterNpcSystem;
   private counterServiceSystem!: CounterServiceSystem;
   private compassUI!: CompassUI;
@@ -178,10 +180,12 @@ export class GameApp {
     // pickupSystem to register/deregister the cargo bed surface as vehicles
     // come and go, and dailyFlowSystem to gate 呼叫/出發 on today's
     // unload/shipment progress instead of the old always-available rule.
+    this.scoringSystem = new ScoringSystem(settingsManager);
     this.vehicleControlSystem = new VehicleControlSystem(
       scene, physics, interactables, this.cargoSystem, this.pickupSystem, hud,
       this.dailyFlowSystem,
       settingsManager,
+      this.scoringSystem,
       (paused) => this.setPaused(paused),
       (config) => settingsManager.markVehicleDiscovered(config.id),
       () => settingsManager.fireTutorialEvent('vehicleCalled'),

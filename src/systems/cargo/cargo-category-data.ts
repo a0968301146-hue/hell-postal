@@ -10,7 +10,7 @@
 // extended from normal/fragile to also cover frozen/live (spec 四), reading
 // DAILY_CARGO_CATEGORY_POOL (daily-flow-data.ts) for which values are
 // actually available rather than hardcoding the pool here.
-import { DAILY_CARGO_CATEGORY_POOL } from '../../game/daily-flow-data';
+import { DAILY_CARGO_CATEGORY_POOL } from '../daily-flow';
 
 export type CargoCategory = 'normal' | 'fragile' | 'frozen' | 'live';
 

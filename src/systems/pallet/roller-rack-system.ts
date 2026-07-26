@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { InteractableObject } from '../../shared/types/interactable';
 import { CargoSystem } from '../cargo';
-import { ROLLER_RACK_CONFIG } from '../../game/daily-flow-data';
+import { ROLLER_RACK_CONFIG } from '../daily-flow';
 import { BACK_AREA } from '../../game/logistics-layout-data';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
 

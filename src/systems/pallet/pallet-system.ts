@@ -4,8 +4,8 @@ import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { InteractableObject, createInteractableObject } from '../../shared/types/interactable';
 import { PlayerInteractionData } from '../../core/game-state';
 import { CargoSystem } from '../cargo';
-import { HUD } from '../../game/hud';
-import { PALLET_CONFIG } from '../../game/daily-flow-data';
+import { HUD } from '../hud';
+import { PALLET_CONFIG } from '../daily-flow';
 import { BACK_AREA, WORLD_BOUNDS } from '../../game/logistics-layout-data';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
 

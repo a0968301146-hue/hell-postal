@@ -3,7 +3,7 @@
 // hand-held model — a full-screen overlay is enough for this round.
 import { PauseManager } from '../../core/pause-manager';
 import { SettingsManager, DisplayMode, ResolutionPreset, QualityPreset, SubtitleSize, TextSpeed } from '../settings';
-import { HUD } from '../../game/hud';
+import { HUD } from '../hud';
 import { TUTORIAL_ENTRIES, TutorialEntry } from '../../game/tutorial-data';
 import { buildVehicleCodexEntries, SPECIES_CODEX_ENTRIES, VehicleCodexEntry } from '../../game/codex-data';
 import {

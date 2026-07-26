@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { PhysicsSystem } from '../adapters/rapier/physics-system';
 import { createThreeRenderer } from '../adapters/three/three-renderer';
-import { HUD } from '../game/hud';
+import { HUD } from '../systems/hud';
 import { PauseManager } from '../core/pause-manager';
 import { SettingsManager } from '../systems/settings';
 import { InteractableObject } from '../shared/types/interactable';

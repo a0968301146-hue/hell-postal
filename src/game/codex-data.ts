@@ -4,7 +4,7 @@
 // entries are a static placeholder list (spec section 十三): no species
 // system exists yet, every entry is unlocked-only-by-future-work.
 
-import { LAND_VEHICLE_CONFIGS, SEA_VEHICLE_CONFIGS, VehicleConfig } from './vehicle-data';
+import { LAND_VEHICLE_CONFIGS, SEA_VEHICLE_CONFIGS, VehicleConfig } from '../systems/vehicle';
 import { CargoType, RouteType } from '../systems/cargo';
 
 const ROUTE_TYPE_LABEL: Record<RouteType, string> = { domestic: '國內', overseas: '海外' };

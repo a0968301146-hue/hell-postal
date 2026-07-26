@@ -4,7 +4,7 @@ import { PlayerInteractionData } from '../../core/game-state';
 import { SCENE_CONFIG } from '../../game/scene-manager';
 import { WORLD_BOUNDS } from '../../game/logistics-layout-data';
 import { PhysicsSystem } from '../../adapters/rapier/physics-system';
-import { HUD } from '../../game/hud';
+import { HUD } from '../hud';
 import { PauseManager } from '../../core/pause-manager';
 import { SettingsManager } from '../settings';
 

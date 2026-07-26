@@ -6,14 +6,14 @@ import { PickupSystem } from './pickup-system';
 import { EnvelopeSystem } from '../../game/envelope-system';
 import { EnvelopeStampStation } from '../../game/envelope-stamp-station';
 import { SortingBoxSystem } from '../../game/sorting-box-system';
-import { VehicleControlSystem } from '../../game/vehicle-control-system';
+import { VehicleControlSystem } from '../vehicle';
 import { CounterServiceSystem } from '../../game/counter-service-system';
 import { DollySystem } from '../../game/dolly-system';
-import { HUD } from '../../game/hud';
+import { HUD } from '../hud';
 import { PauseManager } from '../../core/pause-manager';
 import { SettingsManager } from '../settings';
 import { UnloadingSystem } from '../unloading';
-import { DailyFlowSystem } from '../../game/daily-flow-system';
+import { DailyFlowSystem } from '../daily-flow';
 import { PalletSystem } from '../pallet';
 import { LostFoundSystem } from '../../game/lost-found-system';
 
