@@ -1,9 +1,16 @@
 import * as THREE from 'three';
 import { PhysicsSystem } from '../adapters/rapier/physics-system';
 import { InteractableObject } from '../shared/types/interactable';
-import { CargoSystem } from './cargo-system';
-import { CargoData, CargoType } from './cargo-data';
-import { PickupSystem } from '../systems/interaction';
+import { CargoSystem } from '../systems/cargo';
+import { CargoData, CargoType } from '../systems/cargo';
+// Deliberately imports pickup-system.ts directly rather than through
+// systems/interaction's own index.ts barrel: that barrel also re-exports
+// InteractionSystem, which itself imports VehicleControlSystem (to dispatch
+// call/depart button presses) — going through the barrel here would create
+// a file-level circular import (VehicleControlSystem -> interaction index ->
+// InteractionSystem -> VehicleControlSystem). pickup-system.ts itself has no
+// dependency back on this file, so importing it directly is cycle-free.
+import { PickupSystem } from '../systems/interaction/pickup-system';
 import { VehicleSystem } from './vehicle-system';
 import { LAND_VEHICLE_CONFIGS, SEA_VEHICLE_CONFIGS, VehicleConfig } from './vehicle-data';
 import { VEHICLE_ROUTES } from './vehicle-route-data';
@@ -13,7 +20,7 @@ import { SCENE_CONFIG } from './scene-manager';
 import { createFloatingLabel, updateFloatingLabel } from '../adapters/three/world-label-system';
 import { HUD } from './hud';
 import { DailyFlowSystem } from './daily-flow-system';
-import { PALLET_ID } from './pallet-system';
+import { PALLET_ID } from '../systems/pallet';
 import { SettingsManager } from '../systems/settings';
 
 /** A daily cargo item's EFFECTIVE cargo kind for vehicle-compatibility

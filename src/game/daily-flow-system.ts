@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { PhysicsSystem } from '../adapters/rapier/physics-system';
 import { HUD } from './hud';
-import { CargoSystem } from './cargo-system';
+import { CargoSystem } from '../systems/cargo';
 import { END_DAY_BUTTON_POS } from './daily-flow-data';
 import { SCENE_CONFIG } from './scene-manager';
 import { BACK_AREA } from './logistics-layout-data';

@@ -1,5 +1,4 @@
-import { CargoCategory, CARGO_CATEGORY_DISPLAY } from './cargo-category-data';
-import { CargoRegion, CARGO_REGION_DISPLAY } from './cargo-region-data';
+import { CargoCategory, CARGO_CATEGORY_DISPLAY, CargoRegion, CARGO_REGION_DISPLAY } from '../cargo';
 
 /**
  * Owns ONLY the DOM element for the floating "種類：一般/易碎品\n地區：國內/

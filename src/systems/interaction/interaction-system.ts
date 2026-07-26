@@ -12,9 +12,9 @@ import { DollySystem } from '../../game/dolly-system';
 import { HUD } from '../../game/hud';
 import { PauseManager } from '../../core/pause-manager';
 import { SettingsManager } from '../settings';
-import { UnloadingSystem } from '../../game/unloading-system';
+import { UnloadingSystem } from '../unloading';
 import { DailyFlowSystem } from '../../game/daily-flow-system';
-import { PalletSystem } from '../../game/pallet-system';
+import { PalletSystem } from '../pallet';
 import { LostFoundSystem } from '../../game/lost-found-system';
 
 export class InteractionSystem {

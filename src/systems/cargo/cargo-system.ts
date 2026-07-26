@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { PhysicsSystem } from '../adapters/rapier/physics-system';
-import { InteractableObject, createInteractableObject } from '../shared/types/interactable';
+import { PhysicsSystem } from '../../adapters/rapier/physics-system';
+import { InteractableObject, createInteractableObject } from '../../shared/types/interactable';
 import {
   CargoData, CargoLabelPreset, CargoSize, CargoSubtypePreset,
   CARGO_LABEL_PRESETS, createCargoData, pickCargoSize, pickLargeCargoSize,
@@ -8,7 +8,7 @@ import {
 } from './cargo-data';
 import { attachCargoLabels } from './cargo-label-visuals';
 import { decorateCargoMesh, attachCargoSubtypeLabel } from './cargo-visuals';
-import { FRONT_OFFICE, BACK_AREA, CARGO_SPAWN_CONFIG, LARGE_CARGO_SPAWN_POSITIONS, LABELED_CARGO_SPAWN_POSITIONS } from './logistics-layout-data';
+import { FRONT_OFFICE, BACK_AREA, CARGO_SPAWN_CONFIG, LARGE_CARGO_SPAWN_POSITIONS, LABELED_CARGO_SPAWN_POSITIONS } from '../../game/logistics-layout-data';
 
 const CARGO_COLORS = [0x8b5a2b, 0xa0703a, 0x7a4e24, 0x966032, 0x8b6f47, 0x9a7040];
 // Single consistent color for ALL large cargo — a deliberately different
@@ -218,7 +218,7 @@ export class CargoSystem {
     if (obj) {
       if (obj.rigidBody) this.physics.removeRigidBody(obj.rigidBody);
       obj.mesh.parent?.remove(obj.mesh);
-      obj.mesh.traverse((child) => {
+      obj.mesh.traverse((child: THREE.Object3D) => {
         if (child instanceof THREE.Mesh) {
           child.geometry?.dispose();
           const mat = child.material;

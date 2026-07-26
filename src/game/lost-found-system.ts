@@ -1,7 +1,10 @@
 import * as THREE from 'three';
 import { PhysicsSystem } from '../adapters/rapier/physics-system';
 import { InteractableObject, createInteractableObject } from '../shared/types/interactable';
-import { PickupSystem } from '../systems/interaction';
+// See vehicle-control-system.ts's identical import for why this bypasses
+// systems/interaction's own barrel (avoids a file-level circular import
+// through InteractionSystem, which depends on LostFoundSystem).
+import { PickupSystem } from '../systems/interaction/pickup-system';
 import { SCENE_CONFIG } from './scene-manager';
 import {
   LOST_FOUND_ROOM, LOST_FOUND_COUNTER, LOST_FOUND_COUNTER_HALF_EXTENTS, LOST_FOUND_SHELF, LOST_FOUND_SHELF_HALF_EXTENTS,

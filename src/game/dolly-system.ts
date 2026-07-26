@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { PhysicsSystem } from '../adapters/rapier/physics-system';
 import { InteractableObject, createInteractableObject } from '../shared/types/interactable';
-import { CargoSystem } from './cargo-system';
+import { CargoSystem } from '../systems/cargo';
 import {
   DOLLY_PLATFORM_WIDTH, DOLLY_PLATFORM_DEPTH, DOLLY_PLATFORM_THICKNESS,
   DOLLY_RAIL_HEIGHT, DOLLY_RAIL_THICKNESS, DOLLY_HANDLE_HEIGHT,

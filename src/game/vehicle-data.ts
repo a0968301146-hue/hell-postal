@@ -2,7 +2,7 @@
 // collider and cargo-bay detection volume are built FROM these numbers —
 // no vehicle's size is ever hardcoded in VehicleSystem/VehicleControlSystem/
 // PickupSystem/Game.
-import { CargoType, RouteType } from './cargo-data';
+import { CargoType, RouteType } from '../systems/cargo';
 import { LAND_DOCK_SLOTS, SEA_DOCK_SLOTS } from './vehicle-dock-data';
 
 export interface VehicleConfig {

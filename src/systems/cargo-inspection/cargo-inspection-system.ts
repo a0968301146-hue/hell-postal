@@ -1,7 +1,6 @@
 import * as THREE from 'three';
-import { CargoSystem } from './cargo-system';
-import { CargoData } from './cargo-data';
-import { PauseManager } from '../core/pause-manager';
+import { CargoSystem, CargoData } from '../cargo';
+import { PauseManager } from '../../core/pause-manager';
 
 /** Max distance (meters) the crosshair ray will report a cargo target at —
  * spec: "距離超過約4公尺" hides the UI. */

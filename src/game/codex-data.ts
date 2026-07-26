@@ -5,7 +5,7 @@
 // system exists yet, every entry is unlocked-only-by-future-work.
 
 import { LAND_VEHICLE_CONFIGS, SEA_VEHICLE_CONFIGS, VehicleConfig } from './vehicle-data';
-import { CargoType, RouteType } from './cargo-data';
+import { CargoType, RouteType } from '../systems/cargo';
 
 const ROUTE_TYPE_LABEL: Record<RouteType, string> = { domestic: '國內', overseas: '海外' };
 const CARGO_TYPE_LABEL: Record<CargoType, string> = {

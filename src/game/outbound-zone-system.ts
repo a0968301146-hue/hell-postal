@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { InteractableObject } from '../shared/types/interactable';
-import { CargoSystem } from './cargo-system';
+import { CargoSystem } from '../systems/cargo';
 import { DailyFlowSystem } from './daily-flow-system';
 import { HUD } from './hud';
 import { OUTBOUND_ZONE } from './daily-flow-data';
