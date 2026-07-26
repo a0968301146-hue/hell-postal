@@ -1,10 +1,10 @@
 import * as THREE from 'three';
-import { PhysicsSystem } from './physics-system';
-import { InteractableObject } from './interactable-object';
+import { PhysicsSystem } from '../adapters/rapier/physics-system';
+import { InteractableObject } from '../shared/types/interactable';
 import { CargoSystem } from './cargo-system';
 import { ROLLER_RACK_CONFIG } from './daily-flow-data';
 import { BACK_AREA } from './logistics-layout-data';
-import { createFloatingLabel } from './world-label-system';
+import { createFloatingLabel } from '../adapters/three/world-label-system';
 
 const STABLE_THRESHOLD = 0.5; // spec 十五: "至少 0.5 秒"
 const VELOCITY_THRESHOLD = 0.4;

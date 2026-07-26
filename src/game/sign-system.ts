@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PhysicsSystem } from './physics-system';
+import { PhysicsSystem } from '../adapters/rapier/physics-system';
 
 export interface SignData {
   signId: string;

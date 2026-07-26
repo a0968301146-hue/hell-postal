@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { PhysicsSystem } from './physics-system';
-import { InteractableObject, createInteractableObject, PlayerInteractionData } from './interactable-object';
+import { PhysicsSystem } from '../adapters/rapier/physics-system';
+import { InteractableObject, createInteractableObject } from '../shared/types/interactable';
+import { PlayerInteractionData } from '../core/game-state';
 import { CargoSystem } from './cargo-system';
 import { HUD } from './hud';
 import { PALLET_CONFIG } from './daily-flow-data';
 import { BACK_AREA, WORLD_BOUNDS } from './logistics-layout-data';
-import { createFloatingLabel } from './world-label-system';
+import { createFloatingLabel } from '../adapters/three/world-label-system';
 
 const STABLE_THRESHOLD = 0.5; // seconds, organize judgment
 const VELOCITY_THRESHOLD = 0.4;

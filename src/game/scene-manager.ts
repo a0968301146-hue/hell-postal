@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { InteractableObject } from './interactable-object';
-import { PhysicsSystem } from './physics-system';
+import { InteractableObject } from '../shared/types/interactable';
+import { PhysicsSystem } from '../adapters/rapier/physics-system';
 import {
   WALL_THICKNESS, BACK_AREA, CARGO_ZONES, LAND_DOCKS, LAND_GATE, PIER, SEA_GATE, SEA_DOCKS, NORTH_GATES,
 } from './logistics-layout-data';
 import { LOST_FOUND_ROOM, LOST_FOUND_DOOR, LOST_FOUND_NPC_GATE } from './lost-found-layout-data';
-import { createFloatingLabel } from './world-label-system';
+import { createFloatingLabel } from '../adapters/three/world-label-system';
 
 export const SCENE_CONFIG = {
   playerEyeHeight: 1.6,

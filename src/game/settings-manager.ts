@@ -3,7 +3,7 @@ import {
   STORAGE_KEYS, SettingsState, ProgressState, DisplayMode, ResolutionPreset, QualityPreset,
   createDefaultSettings, createDefaultProgress,
 } from './settings-data';
-import { InputBindingManager } from './input-binding-manager';
+import { InputBindingManager } from '../adapters/browser-input/input-binding-manager';
 import { TutorialEventKey, TUTORIAL_ENTRIES } from './tutorial-data';
 
 function mergeSettings(saved: Partial<SettingsState> | null): SettingsState {

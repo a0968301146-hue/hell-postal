@@ -1,14 +1,6 @@
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
-import { PackageData } from './package-data';
-
-export type PlayerInteractionState = 'empty-handed' | 'holding-item' | 'placement-preview' | 'stamping-minigame' | 'vehicle-settlement' | 'pushing-dolly';
-
-export interface PlayerInteractionData {
-  state: PlayerInteractionState;
-  heldObjectId: string | null;
-  targetedObjectId: string | null;
-}
+import { PackageData } from '../../game/package-data';
 
 /** Describes the interior volume of a movable container, for content capture/restore. */
 export interface ContainerBounds {
@@ -24,6 +16,10 @@ export interface ContainerBounds {
   tolerance: number;
 }
 
+/** The shared "anything the player can pick up/place/throw" primitive — read
+ * and mutated by many systems (cargo, pallet, vehicle, lost-found, legacy
+ * envelope/counter flows). Lives in shared/types rather than any one system
+ * since no single system owns it. */
 export interface InteractableObject {
   id: string;
   displayName: string;
@@ -64,13 +60,5 @@ export function createInteractableObject(
     depth,
     packageData: null,
     containerBounds: null,
-  };
-}
-
-export function createPlayerInteractionData(): PlayerInteractionData {
-  return {
-    state: 'empty-handed',
-    heldObjectId: null,
-    targetedObjectId: null,
   };
 }

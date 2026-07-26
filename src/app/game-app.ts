@@ -1,47 +1,51 @@
 import * as THREE from 'three';
-import { createLogisticsScene, SCENE_CONFIG } from './scene-manager';
-import { PhysicsSystem } from './physics-system';
-import { PlayerController } from './player-controller';
-import { InteractionSystem } from './interaction-system';
-import { PickupSystem } from './pickup-system';
-import { HUD } from './hud';
-import { createPlayerInteractionData, InteractableObject, PlayerInteractionData } from './interactable-object';
-import { StampMinigame, MinigameResult } from './stamp-minigame';
-import { EnvelopeSystem } from './envelope-system';
-import { EnvelopeStampStation } from './envelope-stamp-station';
-import { SortingBoxSystem } from './sorting-box-system';
-import { MailSortingSystem } from './mail-sorting-system';
-import { CargoSystem } from './cargo-system';
-import { DollySystem } from './dolly-system';
-import { VehicleControlSystem } from './vehicle-control-system';
-import { CounterNpcSystem } from './counter-npc-system';
-import { CounterServiceSystem } from './counter-service-system';
-import { CompassUI } from './compass-ui';
-import { PauseManager } from './pause-manager';
-import { SettingsManager } from './settings-manager';
-import { ManualUI } from './manual-ui';
-import { ENABLE_LEGACY_COUNTER, ENABLE_LEGACY_MAIL_FLOW, ENABLE_VEHICLE_LOADING_FLOW, ENABLE_LEGACY_TEST_CARGO } from './feature-flags';
-import { DailyFlowSystem, DailyState } from './daily-flow-system';
-import { UnloadingSystem } from './unloading-system';
-import { PalletSystem } from './pallet-system';
-import { RollerRackSystem } from './roller-rack-system';
-import { CargoInspectionSystem } from './cargo-inspection-system';
-import { CargoInspectionUI } from './cargo-inspection-ui';
-import { LostFoundSystem } from './lost-found-system';
-import { LostFoundUI } from './lost-found-ui';
+import { GameContext, createGameContext } from './game-context';
+import { GameLoop } from './game-loop';
+import { DisposeManager } from '../core/dispose-manager';
+import { InteractableObject } from '../shared/types/interactable';
+import { SCENE_CONFIG } from '../game/scene-manager';
+import { PlayerController } from '../game/player-controller';
+import { InteractionSystem } from '../game/interaction-system';
+import { PickupSystem } from '../game/pickup-system';
+import { StampMinigame, MinigameResult } from '../game/stamp-minigame';
+import { EnvelopeSystem } from '../game/envelope-system';
+import { EnvelopeStampStation } from '../game/envelope-stamp-station';
+import { SortingBoxSystem } from '../game/sorting-box-system';
+import { MailSortingSystem } from '../game/mail-sorting-system';
+import { CargoSystem } from '../game/cargo-system';
+import { DollySystem } from '../game/dolly-system';
+import { VehicleControlSystem } from '../game/vehicle-control-system';
+import { CounterNpcSystem } from '../game/counter-npc-system';
+import { CounterServiceSystem } from '../game/counter-service-system';
+import { CompassUI } from '../game/compass-ui';
+import { ManualUI } from '../game/manual-ui';
+import { ENABLE_LEGACY_COUNTER, ENABLE_LEGACY_MAIL_FLOW, ENABLE_VEHICLE_LOADING_FLOW, ENABLE_LEGACY_TEST_CARGO } from '../game/feature-flags';
+import { DailyFlowSystem, DailyState } from '../game/daily-flow-system';
+import { UnloadingSystem } from '../game/unloading-system';
+import { PalletSystem } from '../game/pallet-system';
+import { RollerRackSystem } from '../game/roller-rack-system';
+import { CargoInspectionSystem } from '../game/cargo-inspection-system';
+import { CargoInspectionUI } from '../game/cargo-inspection-ui';
+import { LostFoundSystem } from '../game/lost-found-system';
+import { LostFoundUI } from '../game/lost-found-ui';
 
-export class Game {
-  private worldScene: THREE.Scene;
-  private camera: THREE.PerspectiveCamera;
-  private renderer: THREE.WebGLRenderer;
-  private physics: PhysicsSystem;
+/**
+ * The app's top-level composition root (formerly `Game` in game/game.ts) —
+ * builds the engine context, constructs every system, wires their
+ * dependencies/callbacks, starts the frame loop, and disposes on shutdown.
+ * Deliberately does NOT contain player-movement details, cargo-spawn loops,
+ * vehicle judgment, daily-flow conditions, DOM UI construction, or lost-found
+ * NPC logic itself — those all live in their own systems; this file only
+ * wires them together (spec九).
+ */
+export class GameApp {
+  private context!: GameContext;
+  private gameLoop!: GameLoop;
+  private disposeManager = new DisposeManager();
+
   private playerController!: PlayerController;
   private interactionSystem!: InteractionSystem;
   private pickupSystem!: PickupSystem;
-  private hud!: HUD;
-  private clock: THREE.Clock;
-  private interactables!: Map<string, InteractableObject>;
-  private playerData!: PlayerInteractionData;
   private envelopeStation!: EnvelopeStampStation;
   private envelopeSystem!: EnvelopeSystem;
   private mailBagSystem!: SortingBoxSystem;
@@ -53,8 +57,6 @@ export class Game {
   private counterNpcSystem!: CounterNpcSystem;
   private counterServiceSystem!: CounterServiceSystem;
   private compassUI!: CompassUI;
-  private pauseManager!: PauseManager;
-  private settingsManager!: SettingsManager;
   private dailyFlowSystem!: DailyFlowSystem;
   private unloadingSystem!: UnloadingSystem;
   private palletSystem!: PalletSystem;
@@ -64,55 +66,31 @@ export class Game {
   private lostFoundSystem!: LostFoundSystem;
   private lostFoundUI!: LostFoundUI;
 
-  constructor() {
-    this.worldScene = new THREE.Scene();
-    this.worldScene.background = new THREE.Color(0x222222);
-
-    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(window.devicePixelRatio);
-    this.renderer.autoClear = false;
-    document.body.appendChild(this.renderer.domElement);
-
-    this.clock = new THREE.Clock();
-    this.physics = new PhysicsSystem();
-
-    window.addEventListener('resize', () => this.onResize());
-  }
-
   async start(): Promise<void> {
-    await this.physics.init();
-
-    this.hud = new HUD();
-    this.pauseManager = new PauseManager();
-    this.settingsManager = new SettingsManager(this.camera, this.renderer);
-    this.playerData = createPlayerInteractionData();
-    const sceneData = createLogisticsScene(this.worldScene, this.physics);
-    this.interactables = sceneData.interactables;
+    this.context = await createGameContext();
+    const { scene, camera, physics, hud, pauseManager, settingsManager, playerData, interactables, sceneData } = this.context;
 
     // Envelope system + station — disabled this round (spec "每日貨品清空
     // 核心流程" section 三: envelope work equipment must not appear in the
     // main scene), classes kept intact via feature-flags.ts ENABLE_LEGACY_MAIL_FLOW.
-    this.envelopeSystem = new EnvelopeSystem(this.worldScene, this.physics, this.interactables, ENABLE_LEGACY_MAIL_FLOW);
-    this.envelopeStation = new EnvelopeStampStation(this.worldScene, this.physics, this.interactables, ENABLE_LEGACY_MAIL_FLOW);
+    this.envelopeSystem = new EnvelopeSystem(scene, physics, interactables, ENABLE_LEGACY_MAIL_FLOW);
+    this.envelopeStation = new EnvelopeStampStation(scene, physics, interactables, ENABLE_LEGACY_MAIL_FLOW);
 
     // Mail sorting box system — same flag
-    this.mailBagSystem = new SortingBoxSystem(this.worldScene, this.physics, this.interactables, ENABLE_LEGACY_MAIL_FLOW);
+    this.mailBagSystem = new SortingBoxSystem(scene, physics, interactables, ENABLE_LEGACY_MAIL_FLOW);
     this.mailSortingSystem = new MailSortingSystem(
-      this.mailBagSystem, this.interactables, this.physics, this.envelopeSystem.envelopeDataMap, this.hud,
-      () => this.settingsManager.fireTutorialEvent('sorting')
+      this.mailBagSystem, interactables, physics, this.envelopeSystem.envelopeDataMap, hud,
+      () => settingsManager.fireTutorialEvent('sorting')
     );
 
     // Normal cargo prototype (spawned before pickupSystem so surfaces below
     // register cleanly) — legacy test cargo (labeled/large/normal) is
     // disabled this round (spec 三/十四: "不要生成舊的測試包裹"); daily-flow
     // cargo spawns separately, on demand, via UnloadingSystem below.
-    this.cargoSystem = new CargoSystem(this.worldScene, this.physics, this.interactables, ENABLE_LEGACY_TEST_CARGO);
+    this.cargoSystem = new CargoSystem(scene, physics, interactables, ENABLE_LEGACY_TEST_CARGO);
 
     // Back-area flatbed dolly — pushable, not hand-carried (see dolly-system.ts)
-    this.dollySystem = new DollySystem(this.worldScene, this.physics, this.interactables, this.cargoSystem);
+    this.dollySystem = new DollySystem(scene, physics, interactables, this.cargoSystem);
 
     // ConveyorSystem is intentionally NOT constructed this round — the
     // cargo window + ramp it drove cargo along were part of the
@@ -123,22 +101,22 @@ export class Game {
     // Counter NPC service prototype (front office) — disabled this round
     // (spec section 三: no NPC open-for-business button/queue in the main
     // scene), see feature-flags.ts ENABLE_LEGACY_COUNTER.
-    this.counterNpcSystem = new CounterNpcSystem(this.worldScene);
+    this.counterNpcSystem = new CounterNpcSystem(scene);
     this.counterServiceSystem = new CounterServiceSystem(
-      this.worldScene, this.physics, this.interactables, this.counterNpcSystem, this.hud, ENABLE_LEGACY_COUNTER
+      scene, physics, interactables, this.counterNpcSystem, hud, ENABLE_LEGACY_COUNTER
     );
 
     this.compassUI = new CompassUI();
 
     // Player controller
     this.playerController = new PlayerController(
-      this.camera, this.renderer.domElement, this.hud, this.physics, this.playerData, this.settingsManager
+      camera, this.context.renderer.domElement, hud, physics, playerData, settingsManager
     );
 
     // Pickup system
     this.pickupSystem = new PickupSystem(
-      this.camera, this.worldScene, this.playerData, this.interactables, this.hud, this.physics, sceneData.floor,
-      this.pauseManager, this.settingsManager
+      camera, scene, playerData, interactables, hud, physics, sceneData.floor,
+      pauseManager, settingsManager
     );
 
     // Register the envelope stamp table top as a placement surface — only
@@ -177,7 +155,7 @@ export class Game {
     // via pickupSystem.forceDropHeld() on success).
     this.lostFoundUI = new LostFoundUI();
     this.lostFoundSystem = new LostFoundSystem(
-      this.worldScene, this.physics, this.interactables, this.pickupSystem, this.lostFoundUI
+      scene, physics, interactables, this.pickupSystem, this.lostFoundUI
     );
 
     // Daily unload -> sort -> ship-via-vehicle loop (this round's core).
@@ -189,12 +167,12 @@ export class Game {
     // into DailyFlowSystem rather than it reaching into them. Constructed
     // BEFORE VehicleControlSystem/UnloadingSystem since both need it.
     this.dailyFlowSystem = new DailyFlowSystem(
-      this.worldScene, this.physics, this.cargoSystem, this.hud,
+      scene, physics, this.cargoSystem, hud,
       () => {
         this.dollySystem.resetToStart(); this.unloadingSystem.resetGate(); this.palletSystem.resetToStart();
         this.lostFoundSystem.resetDaily();
       },
-      () => this.settingsManager.fireTutorialEvent('dayCompleted'),
+      () => settingsManager.fireTutorialEvent('dayCompleted'),
       () => this.lostFoundSystem.onAllVehiclesDeparted()
     );
 
@@ -204,25 +182,25 @@ export class Game {
     // come and go, and dailyFlowSystem to gate 呼叫/出發 on today's
     // unload/shipment progress instead of the old always-available rule.
     this.vehicleControlSystem = new VehicleControlSystem(
-      this.worldScene, this.physics, this.interactables, this.cargoSystem, this.pickupSystem, this.hud,
+      scene, physics, interactables, this.cargoSystem, this.pickupSystem, hud,
       this.dailyFlowSystem,
-      this.settingsManager,
+      settingsManager,
       (paused) => this.setPaused(paused),
-      (config) => this.settingsManager.markVehicleDiscovered(config.id),
-      () => this.settingsManager.fireTutorialEvent('vehicleCalled'),
-      () => this.settingsManager.fireTutorialEvent('cargoLoaded'),
-      () => this.settingsManager.fireTutorialEvent('vehicleDeparted'),
+      (config) => settingsManager.markVehicleDiscovered(config.id),
+      () => settingsManager.fireTutorialEvent('vehicleCalled'),
+      () => settingsManager.fireTutorialEvent('cargoLoaded'),
+      () => settingsManager.fireTutorialEvent('vehicleDeparted'),
       ENABLE_VEHICLE_LOADING_FLOW
     );
 
     this.unloadingSystem = new UnloadingSystem(
-      this.worldScene, this.physics, this.cargoSystem, this.dailyFlowSystem,
+      scene, physics, this.cargoSystem, this.dailyFlowSystem,
       () => {
-        this.settingsManager.fireTutorialEvent('unloadingStarted');
+        settingsManager.fireTutorialEvent('unloadingStarted');
         // Cargo carries its category label the moment it bursts into the
         // room, so "辨識貨品種類" unlocks alongside "啟動北側卸貨口" rather
         // than needing a separate dedicated trigger.
-        this.settingsManager.fireTutorialEvent('cargoLabelSeen');
+        settingsManager.fireTutorialEvent('cargoLabelSeen');
         // "Expand modular lost found NPC flow" round 六: today's lost item
         // bursts in alongside the regular cargo — picks today's case and
         // arms its own short spawn delay. UnloadingSystem itself is never
@@ -231,9 +209,9 @@ export class Game {
       }
     );
     this.palletSystem = new PalletSystem(
-      this.worldScene, this.physics, this.cargoSystem, this.interactables, this.playerData, this.hud,
-      () => this.settingsManager.fireTutorialEvent('palletUsed'),
-      () => this.settingsManager.fireTutorialEvent('boxOrganized')
+      scene, physics, this.cargoSystem, interactables, playerData, hud,
+      () => settingsManager.fireTutorialEvent('palletUsed'),
+      () => settingsManager.fireTutorialEvent('boxOrganized')
     );
     // Still registered as a normal PickupSystem placement surface — a
     // single cargo item can still be manually placed onto the pallet's top
@@ -241,8 +219,8 @@ export class Game {
     // up the whole pallet, it doesn't remove normal single-item placement).
     this.pickupSystem.addPlacementSurface(this.palletSystem.topMesh);
     this.rollerRackSystem = new RollerRackSystem(
-      this.worldScene, this.physics, this.cargoSystem, this.interactables,
-      () => this.settingsManager.fireTutorialEvent('rollerOrganized')
+      scene, physics, this.cargoSystem, interactables,
+      () => settingsManager.fireTutorialEvent('rollerOrganized')
     );
     // OutboundZoneSystem is intentionally NOT constructed this round — cargo
     // now ships by riding along with a vehicle instead of walking into a
@@ -251,14 +229,14 @@ export class Game {
 
     // 貨物種類準心檢視 UI — read-only crosshair inspection, entirely separate
     // from pickup/interaction. See cargo-inspection-system.ts/
-    // cargo-inspection-ui.ts for the actual logic; Game only constructs and
-    // updates them.
-    this.cargoInspectionSystem = new CargoInspectionSystem(this.camera, this.worldScene, this.cargoSystem, this.pauseManager);
+    // cargo-inspection-ui.ts for the actual logic; GameApp only constructs
+    // and updates them.
+    this.cargoInspectionSystem = new CargoInspectionSystem(camera, scene, this.cargoSystem, pauseManager);
     this.cargoInspectionUI = new CargoInspectionUI();
 
     // Interaction system
     this.interactionSystem = new InteractionSystem(
-      this.camera, this.interactables, this.playerData, this.pickupSystem, this.hud,
+      camera, interactables, playerData, this.pickupSystem, hud,
       () => this.playerController.isLocked,
       this.envelopeSystem,
       this.envelopeStation,
@@ -267,22 +245,24 @@ export class Game {
       this.vehicleControlSystem,
       this.counterServiceSystem,
       this.dollySystem,
-      this.pauseManager,
-      this.settingsManager,
+      pauseManager,
+      settingsManager,
       this.unloadingSystem,
       this.dailyFlowSystem,
       this.palletSystem,
       this.lostFoundSystem,
-      () => this.settingsManager.fireTutorialEvent('dollyUsed')
+      () => settingsManager.fireTutorialEvent('dollyUsed')
     );
 
     // 異世界物流手冊 — pause menu / tutorial / settings / codex (spec round).
-    // Not stored on the instance: nothing else in Game needs to reference
+    // Not stored on the instance: nothing else in GameApp needs to reference
     // it after construction (it manages its own DOM/listeners internally).
-    new ManualUI(this.pauseManager, this.settingsManager, this.hud, () => this.interruptPlayerActions());
+    new ManualUI(pauseManager, settingsManager, hud, () => this.interruptPlayerActions());
 
-    this.clock.start();
-    this.loop();
+    this.disposeManager.addEventListener(window, 'resize', () => this.onResize());
+
+    this.gameLoop = new GameLoop(SCENE_CONFIG.deltaTimeMax, (deltaTime) => this.update(deltaTime));
+    this.gameLoop.start();
   }
 
   /** HUD display text for DailyFlowSystem.state (spec section 十八's exact
@@ -307,7 +287,8 @@ export class Game {
    * (spec 二: "玩家停止目前操作"). Each call is self-guarding (no-op if that
    * state isn't currently active), so it's safe to call unconditionally. */
   private interruptPlayerActions(): void {
-    if (this.playerData.state === 'placement-preview') this.pickupSystem.cancelPlacement();
+    const playerData = this.context.playerData;
+    if (playerData.state === 'placement-preview') this.pickupSystem.cancelPlacement();
     // The sorting pallet was NEVER handed to PickupSystem (it uses its own
     // world-space carry flow — see pallet-system.ts), so calling
     // forceDropHeld() while holding it would silently clear the SHARED
@@ -319,18 +300,18 @@ export class Game {
     // 手持狀態") — PauseManager already freezes palletSystem.update() from
     // running while paused, so it just stays frozen in place and resumes
     // normally once the manual closes.
-    if (this.playerData.state === 'holding-item' && this.playerData.heldObjectId !== this.palletSystem.palletId) {
+    if (playerData.state === 'holding-item' && playerData.heldObjectId !== this.palletSystem.palletId) {
       this.pickupSystem.forceDropHeld();
     }
-    if (this.playerData.state === 'pushing-dolly') {
+    if (playerData.state === 'pushing-dolly') {
       this.dollySystem.stopPush();
-      this.playerData.state = 'empty-handed';
+      playerData.state = 'empty-handed';
     }
   }
 
   private endStampMinigame(obj: InteractableObject, _result: MinigameResult): void {
     if (this.stampMinigame) this.stampMinigame = null;
-    this.pauseManager.remove('stampMinigame');
+    this.context.pauseManager.remove('stampMinigame');
 
     // Restore package to world - fully interactable
     obj.mesh.visible = true;
@@ -341,33 +322,33 @@ export class Game {
     if (obj.rigidBody) {
       obj.rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
       obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
-      this.physics.setBodyEnabled(obj.rigidBody, true);
+      this.context.physics.setBodyEnabled(obj.rigidBody, true);
     }
 
     // Restore player state
-    this.playerData.state = 'empty-handed';
-    this.playerData.heldObjectId = null;
+    this.context.playerData.state = 'empty-handed';
+    this.context.playerData.heldObjectId = null;
     this.playerController.setInputEnabled(true);
 
     // Player needs to re-lock pointer
-    this.hud.showInstructions();
+    this.context.hud.showInstructions();
   }
 
   private startEnvelopeMinigame(): void {
     if (!this.envelopeStation.readyEnvelopeId) return;
-    const obj = this.interactables.get(this.envelopeStation.readyEnvelopeId);
+    const obj = this.context.interactables.get(this.envelopeStation.readyEnvelopeId);
     if (!obj || !obj.packageData) return;
 
-    this.settingsManager.fireTutorialEvent('stamp');
+    this.context.settingsManager.fireTutorialEvent('stamp');
 
-    this.playerData.state = 'stamping-minigame';
-    this.pauseManager.add('stampMinigame');
+    this.context.playerData.state = 'stamping-minigame';
+    this.context.pauseManager.add('stampMinigame');
     this.playerController.setInputEnabled(false);
 
     if (obj.rigidBody) {
       obj.rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
       obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
-      this.physics.setBodyEnabled(obj.rigidBody, false);
+      this.context.physics.setBodyEnabled(obj.rigidBody, false);
     }
 
     document.exitPointerLock();
@@ -383,36 +364,34 @@ export class Game {
    * playerData.state, which also naturally blocks pickup/placement/throw
    * and every station's E-key interaction. */
   private setPaused(paused: boolean): void {
+    const playerData = this.context.playerData;
     if (paused) {
-      this.playerData.state = 'vehicle-settlement';
-      this.pauseManager.add('settlement');
+      playerData.state = 'vehicle-settlement';
+      this.context.pauseManager.add('settlement');
       this.playerController.setInputEnabled(false);
       document.exitPointerLock();
     } else {
-      this.playerData.state = 'empty-handed';
-      this.playerData.heldObjectId = null;
-      this.pauseManager.remove('settlement');
+      playerData.state = 'empty-handed';
+      playerData.heldObjectId = null;
+      this.context.pauseManager.remove('settlement');
       this.playerController.setInputEnabled(true);
-      this.hud.showInstructions();
+      this.context.hud.showInstructions();
     }
   }
 
-  private loop(): void {
-    requestAnimationFrame(() => this.loop());
-
-    let deltaTime = this.clock.getDelta();
-    if (deltaTime > SCENE_CONFIG.deltaTimeMax) deltaTime = SCENE_CONFIG.deltaTimeMax;
+  private update(deltaTime: number): void {
+    const { scene, camera, renderer, physics, pauseManager, interactables, hud } = this.context;
 
     // Skip game updates while ANY pause reason is active (minigame,
-    // settlement, or the manual) — see pause-manager.ts.
-    if (!this.pauseManager.isPaused) {
+    // settlement, or the manual) — see core/pause-manager.ts.
+    if (!pauseManager.isPaused) {
       this.playerController.update(deltaTime);
-      this.physics.update(deltaTime);
+      physics.update(deltaTime);
 
       // Sync box meshes to physics bodies (skip disabled bodies — e.g. cargo
       // that has been pinned for departure and is being manually animated
       // by VehicleControlSystem's departure sequence instead)
-      for (const obj of this.interactables.values()) {
+      for (const obj of interactables.values()) {
         if (!obj.isHeld && obj.rigidBody && obj.mesh.visible && obj.rigidBody.isEnabled()) {
           // For bottom-origin containers, offset Y by -height/2
           if (obj.mesh.userData.bottomOrigin || obj.mesh.userData.crateId) {
@@ -421,7 +400,7 @@ export class Game {
             obj.mesh.position.set(t.x, t.y - obj.height / 2, t.z);
             obj.mesh.quaternion.set(r.x, r.y, r.z, r.w);
           } else {
-            this.physics.syncMeshToBody(obj.mesh, obj.rigidBody);
+            physics.syncMeshToBody(obj.mesh, obj.rigidBody);
           }
         }
       }
@@ -434,11 +413,11 @@ export class Game {
       }
       if (ENABLE_VEHICLE_LOADING_FLOW) this.vehicleControlSystem.update(deltaTime);
       const cameraForward = new THREE.Vector3();
-      this.camera.getWorldDirection(cameraForward);
+      camera.getWorldDirection(cameraForward);
       if (this.dollySystem.isPushing) {
-        this.dollySystem.update(this.camera.position, cameraForward);
+        this.dollySystem.update(camera.position, cameraForward);
       }
-      this.palletSystem.update(deltaTime, this.camera.position, cameraForward);
+      this.palletSystem.update(deltaTime, camera.position, cameraForward);
       if (ENABLE_LEGACY_COUNTER) {
         this.counterNpcSystem.update(deltaTime);
         this.counterServiceSystem.update(deltaTime);
@@ -455,7 +434,7 @@ export class Game {
       const bannerText = flowState === 'completed' ? '今日貨物已全部裝載'
         : flowState === 'dayComplete' ? '今日貨物已全部送出'
         : null;
-      this.hud.updateDailyFlow({
+      hud.updateDailyFlow({
         day: this.dailyFlowSystem.currentDay,
         stateLabel: this.dailyStateLabel(flowState),
         total: this.dailyFlowSystem.totalCargoCount,
@@ -467,7 +446,7 @@ export class Game {
       });
     }
 
-    this.compassUI.update(this.camera);
+    this.compassUI.update(camera);
 
     // Runs unconditionally (not inside the isPaused block above) so a
     // pause takes effect on the UI the SAME frame it begins — the system
@@ -483,24 +462,26 @@ export class Game {
     }
 
     // Render
-    this.renderer.clear();
-    this.renderer.render(this.worldScene, this.camera);
-    this.renderer.clearDepth();
-    this.renderer.render(this.pickupSystem.viewModelScene, this.pickupSystem.viewModelCamera);
+    renderer.clear();
+    renderer.render(scene, camera);
+    renderer.clearDepth();
+    renderer.render(this.pickupSystem.viewModelScene, this.pickupSystem.viewModelCamera);
   }
 
   private onResize(): void {
-    // Delegates to SettingsManager once it exists — a FIXED resolution
-    // preset (spec 八) deliberately does NOT track window resizes, only
-    // 'native' does. Falls back to the old always-track-window behavior
-    // during the brief window before start() has run.
-    if (this.settingsManager) {
-      this.settingsManager.onWindowResize();
-    } else {
-      this.camera.aspect = window.innerWidth / window.innerHeight;
-      this.camera.updateProjectionMatrix();
-      this.renderer.setSize(window.innerWidth, window.innerHeight);
-    }
-    if (this.pickupSystem) this.pickupSystem.onResize();
+    // Delegates to SettingsManager — a FIXED resolution preset (spec 八)
+    // deliberately does NOT track window resizes, only 'native' does.
+    this.context.settingsManager.onWindowResize();
+    this.pickupSystem?.onResize();
+  }
+
+  /** Tears down the frame loop, the event bus, and every listener this file
+   * itself registered (spec十: "每個事件監聽都必須可dispose"). Individual
+   * systems' own THREE/Rapier resources are each system's own
+   * responsibility to release, unchanged from before this refactor. */
+  dispose(): void {
+    this.gameLoop?.stop();
+    this.disposeManager.dispose();
+    this.context?.events.dispose();
   }
 }

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { PhysicsSystem } from './physics-system';
-import { InteractableObject, createInteractableObject } from './interactable-object';
+import { PhysicsSystem } from '../adapters/rapier/physics-system';
+import { InteractableObject, createInteractableObject } from '../shared/types/interactable';
 import { CounterNpcSystem, NpcEntity } from './counter-npc-system';
 import {
   NPC_QUEUE_SLOTS, NPC_AT_COUNTER_SPOT, NPC_EXIT_POINT, COUNTER_ITEM_SPOT, OPEN_BUTTON_POS,
@@ -10,7 +10,7 @@ import { createPackageData, createAddressLabel } from './package-data';
 import { EnvelopeData, createEnvelopeAddressLabel } from './envelope-data';
 import { DESTINATIONS } from './destination-data';
 import { getStampForDestination } from './stamp-data';
-import { createFloatingLabel, updateFloatingLabel } from './world-label-system';
+import { createFloatingLabel, updateFloatingLabel } from '../adapters/three/world-label-system';
 import { HUD } from './hud';
 
 const TOTAL_NPCS = 5;

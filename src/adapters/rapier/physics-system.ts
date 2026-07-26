@@ -1,6 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { PLAYER_SPAWN } from './logistics-layout-data';
+import { PLAYER_SPAWN } from '../../game/logistics-layout-data';
 
 // Collision groups
 export const GROUP_STATIC = 0x0001;

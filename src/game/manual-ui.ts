@@ -1,14 +1,14 @@
 // 異世界物流手冊 v0.1 — a DOM+CSS "book" that doubles as pause menu, tutorial
 // reference, settings, and codex (spec section 二). Deliberately NOT a 3D
 // hand-held model — a full-screen overlay is enough for this round.
-import { PauseManager } from './pause-manager';
+import { PauseManager } from '../core/pause-manager';
 import { SettingsManager } from './settings-manager';
 import { HUD } from './hud';
 import { TUTORIAL_ENTRIES, TutorialEntry } from './tutorial-data';
 import { buildVehicleCodexEntries, SPECIES_CODEX_ENTRIES, VehicleCodexEntry } from './codex-data';
 import {
   ACTION_ORDER, ACTION_LABELS, InputAction, UNWIRED_ACTIONS,
-} from './input-binding-manager';
+} from '../adapters/browser-input/input-binding-manager';
 import { DisplayMode, ResolutionPreset, QualityPreset, SubtitleSize, TextSpeed } from './settings-data';
 
 type Bookmark = 'tutorial' | 'controls' | 'display' | 'audio' | 'text' | 'data' | 'codex';

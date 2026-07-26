@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { PhysicsSystem } from './physics-system';
-import { InteractableObject, createInteractableObject } from './interactable-object';
+import { PhysicsSystem } from '../adapters/rapier/physics-system';
+import { InteractableObject, createInteractableObject } from '../shared/types/interactable';
 import { PickupSystem } from './pickup-system';
 import { SCENE_CONFIG } from './scene-manager';
 import {
@@ -8,7 +8,7 @@ import {
 } from './lost-found-layout-data';
 import { LOST_ITEM_PRESETS, LostItemPreset, LOST_FOUND_CASES, LostFoundCaseDef, LOST_FOUND_WRONG_ITEM_TEXT } from './lost-found-data';
 import { UNLOAD_PORTS, UNLOAD_SPAWN_JITTER_X, UNLOAD_SPAWN_JITTER_Z, UNLOAD_BURST_CONFIG } from './daily-flow-data';
-import { createFloatingLabel } from './world-label-system';
+import { createFloatingLabel } from '../adapters/three/world-label-system';
 import { LostFoundUI } from './lost-found-ui';
 import { LostFoundNpcSystem } from './lost-found-npc-system';
 

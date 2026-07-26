@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { PhysicsSystem } from './physics-system';
+import { PhysicsSystem } from '../adapters/rapier/physics-system';
 import { HUD } from './hud';
 import { CargoSystem } from './cargo-system';
 import { END_DAY_BUTTON_POS } from './daily-flow-data';
 import { SCENE_CONFIG } from './scene-manager';
 import { BACK_AREA } from './logistics-layout-data';
-import { createFloatingLabel, updateFloatingLabel } from './world-label-system';
+import { createFloatingLabel, updateFloatingLabel } from '../adapters/three/world-label-system';
 
 export type DailyState =
   | 'ready' | 'unloading' | 'sorting' | 'loading' | 'completed'

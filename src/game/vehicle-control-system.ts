@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { PhysicsSystem } from './physics-system';
-import { InteractableObject } from './interactable-object';
+import { PhysicsSystem } from '../adapters/rapier/physics-system';
+import { InteractableObject } from '../shared/types/interactable';
 import { CargoSystem } from './cargo-system';
 import { CargoData, CargoType } from './cargo-data';
 import { PickupSystem } from './pickup-system';
@@ -10,7 +10,7 @@ import { VEHICLE_ROUTES } from './vehicle-route-data';
 import { VEHICLE_CONTROL_POS, BACK_AREA } from './logistics-layout-data';
 import { UNSHIPPED_PENALTY_PER_ITEM } from './daily-flow-data';
 import { SCENE_CONFIG } from './scene-manager';
-import { createFloatingLabel, updateFloatingLabel } from './world-label-system';
+import { createFloatingLabel, updateFloatingLabel } from '../adapters/three/world-label-system';
 import { HUD } from './hud';
 import { DailyFlowSystem } from './daily-flow-system';
 import { PALLET_ID } from './pallet-system';

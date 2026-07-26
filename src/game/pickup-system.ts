@@ -1,10 +1,11 @@
 import * as THREE from 'three';
-import { InteractableObject, PlayerInteractionData } from './interactable-object';
+import { InteractableObject } from '../shared/types/interactable';
+import { PlayerInteractionData } from '../core/game-state';
 import { SCENE_CONFIG } from './scene-manager';
 import { WORLD_BOUNDS } from './logistics-layout-data';
-import { PhysicsSystem } from './physics-system';
+import { PhysicsSystem } from '../adapters/rapier/physics-system';
 import { HUD } from './hud';
-import { PauseManager } from './pause-manager';
+import { PauseManager } from '../core/pause-manager';
 import { SettingsManager } from './settings-manager';
 
 export class PickupSystem {

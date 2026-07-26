@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { PhysicsSystem } from './physics-system';
-import { InteractableObject, createInteractableObject } from './interactable-object';
+import { PhysicsSystem } from '../adapters/rapier/physics-system';
+import { InteractableObject, createInteractableObject } from '../shared/types/interactable';
 import {
   CargoData, CargoLabelPreset, CargoSize, CargoSubtypePreset,
   CARGO_LABEL_PRESETS, createCargoData, pickCargoSize, pickLargeCargoSize,

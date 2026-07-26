@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { InteractableObject, PlayerInteractionData } from './interactable-object';
+import { InteractableObject } from '../shared/types/interactable';
+import { PlayerInteractionData } from '../core/game-state';
 import { SCENE_CONFIG } from './scene-manager';
 import { PickupSystem } from './pickup-system';
 import { EnvelopeSystem } from './envelope-system';
@@ -9,7 +10,7 @@ import { VehicleControlSystem } from './vehicle-control-system';
 import { CounterServiceSystem } from './counter-service-system';
 import { DollySystem } from './dolly-system';
 import { HUD } from './hud';
-import { PauseManager } from './pause-manager';
+import { PauseManager } from '../core/pause-manager';
 import { SettingsManager } from './settings-manager';
 import { UnloadingSystem } from './unloading-system';
 import { DailyFlowSystem } from './daily-flow-system';

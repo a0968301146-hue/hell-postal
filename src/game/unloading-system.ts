@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PhysicsSystem } from './physics-system';
+import { PhysicsSystem } from '../adapters/rapier/physics-system';
 import { CargoSystem } from './cargo-system';
 import { DailyFlowSystem } from './daily-flow-system';
 import {
@@ -9,7 +9,7 @@ import {
 import { CARGO_BOX_PRESETS, CARGO_ROLLER_PRESETS, CARGO_LARGE_PRESETS, CargoSubtypePreset } from './cargo-data';
 import { BACK_AREA } from './logistics-layout-data';
 import { SCENE_CONFIG } from './scene-manager';
-import { createFloatingLabel, updateFloatingLabel } from './world-label-system';
+import { createFloatingLabel, updateFloatingLabel } from '../adapters/three/world-label-system';
 
 const IDLE_TEXT = '開始卸貨\n按 E 卸貨';
 const RUNNING_TEXT = '卸貨裝置運作中';

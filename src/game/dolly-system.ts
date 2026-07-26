@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { PhysicsSystem } from './physics-system';
-import { InteractableObject, createInteractableObject } from './interactable-object';
+import { PhysicsSystem } from '../adapters/rapier/physics-system';
+import { InteractableObject, createInteractableObject } from '../shared/types/interactable';
 import { CargoSystem } from './cargo-system';
 import {
   DOLLY_PLATFORM_WIDTH, DOLLY_PLATFORM_DEPTH, DOLLY_PLATFORM_THICKNESS,
@@ -9,7 +9,7 @@ import {
   DOLLY_HANDLE_ZONE_DEPTH, DOLLY_TOTAL_DEPTH,
   DOLLY_PUSH_OFFSET, DOLLY_CONFIGS, DollyConfig, DOLLY_FLOOR_Y,
 } from './dolly-data';
-import { createFloatingLabel, updateFloatingLabel } from './world-label-system';
+import { createFloatingLabel, updateFloatingLabel } from '../adapters/three/world-label-system';
 import { SCENE_CONFIG } from './scene-manager';
 
 const IDLE_TEXT = '拖板車\n按 E 推行';

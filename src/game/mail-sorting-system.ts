@@ -1,7 +1,7 @@
 import { EnvelopeData } from './envelope-data';
 import { SortingBoxSystem } from './sorting-box-system';
-import { InteractableObject } from './interactable-object';
-import { PhysicsSystem } from './physics-system';
+import { InteractableObject } from '../shared/types/interactable';
+import { PhysicsSystem } from '../adapters/rapier/physics-system';
 import { HUD } from './hud';
 import { SBOX_HEIGHT } from './sorting-box-data';
 

@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { InteractableObject } from './interactable-object';
+import { InteractableObject } from '../shared/types/interactable';
 import { CargoSystem } from './cargo-system';
 import { DailyFlowSystem } from './daily-flow-system';
 import { HUD } from './hud';
 import { OUTBOUND_ZONE } from './daily-flow-data';
 import { BACK_AREA } from './logistics-layout-data';
-import { createFloatingLabel } from './world-label-system';
+import { createFloatingLabel } from '../adapters/three/world-label-system';
 
 const ZONE_MIN_Y = BACK_AREA.floorY - 0.1;
 const ZONE_MAX_Y = BACK_AREA.floorY + 2.5;
