@@ -6,7 +6,7 @@ import { HUD } from '../hud';
 import { BACK_AREA } from '../world-layout';
 import { BAG_RACK, MAIL_BAG_INTERIOR, MAIL_BAG_WALL_THICKNESS, ENVELOPE_SIZE } from '../../data/world/mail-layout-data';
 import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/world-label-system';
-import { MailBagRecord } from './mail-types';
+import { MailBagRecord, EnvelopeRecord } from './mail-types';
 import { MAIL_DESTINATIONS, MAX_OPEN_BAGS, MAIL_BAG_CAPACITY, getMailDestination, buildBagMaterials, buildBagGeometry, buildBagCinchRing } from './mail-data';
 import { MailSystem } from './mail-system';
 
@@ -395,12 +395,7 @@ export class MailBagSystem {
     const bag = this.bags.get(bagId);
     if (!rec || !bag) return;
 
-    let failReason: string | null = null;
-    if (!bag.destinationPattern) failReason = '袋子尚未設定圖樣';
-    else if (bag.envelopeIds.length >= bag.capacity) failReason = '袋子已滿';
-    else if (rec.state !== 'stamped') failReason = '尚未貼郵票';
-    else if (rec.destination !== bag.destinationPattern) failReason = '郵票或目的地不符';
-
+    const failReason = this.checkInsertEligibility(rec, bag);
     if (failReason) {
       this.hud.showToast(failReason);
       return;
@@ -423,6 +418,74 @@ export class MailBagSystem {
     bag.envelopeIds.push(envelopeId);
     this.mailSystem.setEnvelopeBagged(envelopeId, bagId);
     this.refreshBagVisual(bagId);
+  }
+
+  /** Shared "can this envelope go into this bag right now" precondition
+   * chain ("Enlarge mail bags and add E key letter placement" round 二: the
+   * new explicit E-key insertion path must enforce the EXACT same rules as
+   * the passive sensor, never a second diverging copy) — used by both
+   * attemptInsert's passive-sensor path and tryInsertHeldEnvelope's explicit
+   * E-key path below. */
+  private checkInsertEligibility(rec: EnvelopeRecord, bag: MailBagRecord): string | null {
+    if (bag.state !== 'open') return '分類袋已封閉';
+    if (!bag.destinationPattern) return '袋子尚未設定圖樣';
+    if (bag.envelopeIds.length >= bag.capacity) return '袋子已滿';
+    if (rec.state !== 'stamped') return '尚未貼郵票';
+    if (rec.destination !== bag.destinationPattern) return '郵票或目的地不符';
+    return null;
+  }
+
+  /** Explicit E-key insertion (spec二/三/四) — called by InteractionSystem
+   * when the player is holding a stamped envelope and presses E while aiming
+   * at an open bag. Does NOT delete the envelope or set it `bagged` here
+   * (spec: "不得在按下E的當下就刪除信封或只改資料") — it only releases the
+   * held envelope and repositions it just above the bag's own CURRENT mouth
+   * (world-space, computed from the bag mesh's live position+rotation via
+   * localToWorld so a moved/rotated bag still gets a correct drop point,
+   * spec四), then lets it fall under normal gravity/physics. The EXISTING
+   * passive updateInsertion()/attemptInsert() sensor (unchanged) picks it up
+   * once it genuinely settles inside interiorBounds, exactly like any other
+   * insertion — this method only ever handles the "release + safe drop
+   * point" half. On any failed precondition the envelope is left completely
+   * untouched (still held) and the specific reason is shown, mirroring
+   * attemptInsert's own failure behavior. */
+  tryInsertHeldEnvelope(envelopeId: string, bagId: string): void {
+    const rec = this.mailSystem.getEnvelope(envelopeId);
+    const bag = this.bags.get(bagId);
+    const obj = this.interactables.get(envelopeId);
+    const bagObj = this.interactables.get(bagId);
+    if (!rec || !bag || !obj || !bagObj) return;
+
+    const failReason = this.checkInsertEligibility(rec, bag);
+    if (failReason) {
+      this.hud.showToast(failReason);
+      return;
+    }
+
+    // Safe drop point: centered above the mouth, high enough to clear the
+    // wall rims (spec四), expressed in the bag's own local space then
+    // converted to world space via its CURRENT matrix — respects both
+    // translation and rotation.
+    bagObj.mesh.updateWorldMatrix(true, false);
+    const dropWorld = bagObj.mesh.localToWorld(
+      new THREE.Vector3(0, LOCAL_INTERIOR_BOUNDS.maxY + MAIL_BAG_WALL_THICKNESS * 2, 0)
+    );
+
+    this.pickupSystem.forceDropHeld();
+
+    obj.mesh.visible = true;
+    obj.mesh.position.copy(dropWorld);
+    obj.mesh.rotation.set(0, 0, 0);
+    obj.isHeld = false;
+    obj.canPickUp = true;
+
+    if (obj.rigidBody) {
+      this.physics.setBodyEnabled(obj.rigidBody, true);
+      obj.rigidBody.setTranslation({ x: dropWorld.x, y: dropWorld.y, z: dropWorld.z }, true);
+      obj.rigidBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+      obj.rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    }
   }
 
   /** Wired into DailyFlowSystem's resetTools callback (spec十二) — clears

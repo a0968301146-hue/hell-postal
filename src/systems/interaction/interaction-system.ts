@@ -171,6 +171,31 @@ export class InteractionSystem {
         this.palletSystem.tryPlace();
         return;
       }
+      // Insert held envelope into a targeted OPEN mail bag (spec二/三) —
+      // intercepts before the sorting-box-interior/lost-found special cases
+      // below since currentTarget (set by update()'s own raycast above)
+      // already resolved specifically to an open bag's mesh. This whole
+      // branch lives entirely inside the holding-item state, so the
+      // empty-handed-only sealing priority (0.5) further down is completely
+      // unreachable from here — holding an envelope can never accidentally
+      // trigger sealing (spec三 last line).
+      const heldIdForInsert = this.playerData.heldObjectId;
+      if (heldIdForInsert && this.mailSystem.getEnvelope(heldIdForInsert) && this.currentTarget && this.mailBagSystem.isBag(this.currentTarget.id)) {
+        const targetBag = this.mailBagSystem.getBag(this.currentTarget.id);
+        if (targetBag && targetBag.state === 'open') {
+          this.mailBagSystem.tryInsertHeldEnvelope(heldIdForInsert, this.currentTarget.id);
+          // Clear the target after acting (mirrors the rack-spawn special
+          // case's own pattern above) — on success this state transitions
+          // to empty-handed while still looking at the SAME bag object, so
+          // without this the update() loop's identity-based "did the target
+          // change" check would never fire and the prompt would stay on the
+          // stale "E 放入信件" text instead of refreshing to the bag's own
+          // seal/status prompt.
+          this.clearHighlight(this.currentTarget);
+          this.currentTarget = null;
+          return;
+        }
+      }
       // Check if aiming at sorting box interior - direct placement
       const heldId = this.playerData.heldObjectId;
       const heldObj = heldId ? this.interactables.get(heldId) : null;
@@ -346,6 +371,24 @@ export class InteractionSystem {
     return this.unloadingSystem.buttonDistance(pos) <= this.dailyFlowSystem.buttonDistance(pos) ? 'unload' : 'endDay';
   }
 
+  /** Single shared raycast-and-resolve helper — the ONE raycaster instance
+   * this whole class owns, wrapped so both the normal empty-handed target
+   * resolution below AND the new "holding an envelope, aim at an open bag"
+   * check ("Enlarge mail bags and add E key letter placement" round 二: "沿
+   * 用...唯一射線系統") go through the exact same raycast, never a second
+   * one. */
+  private raycastCurrentHit(): InteractableObject | null {
+    const direction = new THREE.Vector3();
+    this.camera.getWorldDirection(direction);
+    this.raycaster.set(this.camera.position, direction);
+    const meshes = this.getInteractableMeshes();
+    const intersects = this.raycaster.intersectObjects(meshes, true);
+    if (intersects.length > 0 && intersects[0].distance <= SCENE_CONFIG.interactionDistance) {
+      return this.resolveInteractableFromHit(intersects[0].object);
+    }
+    return null;
+  }
+
   private checkFarTarget(): boolean {
     const direction = new THREE.Vector3();
     this.camera.getWorldDirection(direction);
@@ -366,6 +409,29 @@ export class InteractionSystem {
     }
 
     if (this.playerData.state === 'holding-item') {
+      // Holding a stamped/unstamped envelope and aiming at an OPEN mail bag
+      // (spec二/三: "E 放入信件") — a live raycast via the SAME shared
+      // raycastCurrentHit() every other target resolution uses, evaluated
+      // here too since this whole state otherwise skips raycasting entirely
+      // (see the pallet/lost-found proximity-only checks below).
+      const heldIdForBagPrompt = this.playerData.heldObjectId;
+      const heldEnvelopeForBagPrompt = heldIdForBagPrompt ? this.mailSystem.getEnvelope(heldIdForBagPrompt) : undefined;
+      if (heldEnvelopeForBagPrompt) {
+        const hit = this.raycastCurrentHit();
+        const hitBag = hit && this.mailBagSystem.isBag(hit.id) ? this.mailBagSystem.getBag(hit.id) : null;
+        if (hit && hitBag && hitBag.state === 'open') {
+          if (this.currentTarget !== hit) {
+            if (this.currentTarget) this.clearHighlight(this.currentTarget);
+            this.applyHighlight(hit);
+            this.currentTarget = hit;
+            this.playerData.targetedObjectId = hit.id;
+            this.hud.showInteractionPrompt(hit.displayName, 'E 放入信件');
+          }
+          this.hud.setCrosshairActive(true);
+          return;
+        }
+      }
+
       if (this.currentTarget) {
         this.clearHighlight(this.currentTarget);
         this.currentTarget = null;
@@ -402,16 +468,7 @@ export class InteractionSystem {
     }
 
     // Normal raycasting for interaction
-    const direction = new THREE.Vector3();
-    this.camera.getWorldDirection(direction);
-    this.raycaster.set(this.camera.position, direction);
-    const meshes = this.getInteractableMeshes();
-    const intersects = this.raycaster.intersectObjects(meshes, true);
-
-    let newTarget: InteractableObject | null = null;
-    if (intersects.length > 0 && intersects[0].distance <= SCENE_CONFIG.interactionDistance) {
-      newTarget = this.resolveInteractableFromHit(intersects[0].object);
-    }
+    const newTarget = this.raycastCurrentHit();
 
     if (newTarget !== this.currentTarget) {
       if (this.currentTarget) this.clearHighlight(this.currentTarget);
@@ -440,11 +497,18 @@ export class InteractionSystem {
           const pattern = bag.destinationPattern ? getMailDestination(bag.destinationPattern) : null;
           const patternText = pattern ? `${pattern.displayName}（${pattern.region === 'domestic' ? '國內' : '海外'}）` : '未設定';
           const stateText = bag.state === 'sealed' ? '已封閉' : '開啟中';
+          // "Enlarge mail bags and add E key letter placement" round 三: an
+          // open bag with zero envelopes shows "分類袋內沒有信件" while
+          // empty-handed — canSeal's own false branch here is ALREADY
+          // exactly "envelopeIds.length===0" in practice (an envelope can
+          // never enter a bag without that bag having a pattern set first,
+          // see checkInsertEligibility in mail-bag-system.ts), so this is
+          // not a new condition, just new text for the existing case.
           const actionHint = bag.state === 'sealed'
             ? '按 E 拿起'
             : this.mailBagSystem.canSeal(newTarget.id)
               ? 'E：封閉分類袋　F：更改圖樣\n右鍵：取出信封'
-              : 'F：設定圖樣　按 E 拿起';
+              : '分類袋內沒有信件\nF：設定圖樣　按 E 拿起';
           this.hud.showInteractionPrompt(
             newTarget.displayName,
             `圖樣：${patternText}\n狀態：${stateText}\n信件數：${bag.envelopeIds.length}／${bag.capacity}\n${actionHint}`

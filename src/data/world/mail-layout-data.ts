@@ -107,8 +107,19 @@ export const ENVELOPE_SIZE = {
  * clears the earlier round's own 1.25x-envelope-plane and 12-envelope-
  * stack-height minimums (this only ever grew those margins, never shrank
  * them). */
-const MAIL_BAG_EXTERIOR = CARGO_BOX_PRESETS.mediumBox.dimensions;
-export const MAIL_BAG_WALL_THICKNESS = 0.03;
+/** "Enlarge mail bags and add E key letter placement" round 一: "再加大信封
+ * 袋，整體尺寸放大為現有的1.5倍" — a single scale factor applied to both the
+ * base exterior footprint AND the wall thickness, so the interior/collider/
+ * insertion-bounds/pickup-size derivations below (already parameterized off
+ * these two constants since the previous round) all grow together with zero
+ * further code changes. */
+const MAIL_BAG_SCALE = 1.5;
+const MAIL_BAG_EXTERIOR = {
+  width: CARGO_BOX_PRESETS.mediumBox.dimensions.width * MAIL_BAG_SCALE,
+  depth: CARGO_BOX_PRESETS.mediumBox.dimensions.depth * MAIL_BAG_SCALE,
+  height: CARGO_BOX_PRESETS.mediumBox.dimensions.height * MAIL_BAG_SCALE,
+};
+export const MAIL_BAG_WALL_THICKNESS = 0.03 * MAIL_BAG_SCALE;
 export const MAIL_BAG_INTERIOR = {
   width: MAIL_BAG_EXTERIOR.width - 2 * MAIL_BAG_WALL_THICKNESS,
   depth: MAIL_BAG_EXTERIOR.depth - 2 * MAIL_BAG_WALL_THICKNESS,
