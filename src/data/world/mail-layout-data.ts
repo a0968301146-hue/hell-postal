@@ -2,27 +2,21 @@
 // modular envelope stamping and regional mail bag system" round). Kept
 // entirely separate from logistics-layout-data.ts/daily-flow-data.ts, same
 // convention as lost-found-layout-data.ts — this feature's own furniture
-// positions never scatter into scene/system files. BAG_RACK/BAG_STAGING_AREA
-// stay anchored to the original west work-furniture cluster (WORK_FURNITURE_X
-// =-8 area) — "Improve mail table placement and open mail bags" round only
-// relocates STAMP_TABLE (below) to the north wall; nothing else here moved.
-// A literal Z anchor for THIS anchor rather than importing PACKAGE_WORK_ZONE,
-// to keep this file mostly a leaf with no dependency on logistics-layout-
-// data.ts beyond the one explicit BACK_AREA/WALL_THICKNESS import below.
+// positions never scatter into scene/system files. BAG_STAGING_AREA (an
+// unused/decorative suggested-spot constant — nothing actually reads it,
+// bag spawn position is computed straight from BAG_RACK below) stays
+// anchored to the original west work-furniture cluster (WORK_FURNITURE_X=-8
+// area); it's untouched by either the "Improve mail table placement and
+// open mail bags" round (which relocated STAMP_TABLE to the north wall) or
+// this "Move mail bag supply beside stamp table" round (which relocated
+// BAG_RACK next to it) — a literal Z anchor rather than importing
+// PACKAGE_WORK_ZONE, to keep this file mostly a leaf with no dependency on
+// logistics-layout-data.ts beyond the one explicit BACK_AREA/WALL_THICKNESS
+// import below.
 import { BACK_AREA, WALL_THICKNESS } from '../../systems/world-layout/logistics-layout-data';
 
 export const MAIL_WORK_AREA_X = -8;
 export const MAIL_WORK_AREA_Z = 17.0;
-
-/** Empty-bag supply rack — press E here to spawn a new open MailBag (spec
- * 六). Its own footprint, unchanged by this round — only STAMP_TABLE moved. */
-export const BAG_RACK = {
-  posX: MAIL_WORK_AREA_X + 2.1,
-  posZ: MAIL_WORK_AREA_Z,
-  width: 0.7,
-  depth: 0.5,
-  height: 1.1,
-};
 
 /** Stamp table — moved to the north wall ("Improve mail table placement and
  * open mail bags" round 一: "工作桌貼齊北牆"). Sits in the solid wall segment
@@ -50,6 +44,35 @@ export const STAMP_TABLE = {
   depth: STAMP_TABLE_DEPTH,
   height: 0.9,
   legWidth: 0.08,
+};
+
+/** Empty-bag supply rack — press E here to spawn a new open MailBag (spec
+ * 六). "Move mail bag supply beside stamp table" round: relocated next to
+ * STAMP_TABLE, on its EAST side — the table's own front faces south/+Z (the
+ * player approaches from the open floor south of the wall), so the player
+ * faces north/-Z while interacting with it, making east/+X their own right
+ * hand (spec: "放在工作桌右側"). Both pieces' BACK faces share the exact
+ * same north-wall clearance line (northWallInnerFaceZ +
+ * STAMP_TABLE_WALL_CLEARANCE) — "沿北牆排列，背面方向一致" — and the gap
+ * between the table's east edge and the rack's west edge is computed (not
+ * hand-picked) to land inside the requested 0.4-0.6m range. The rack sits
+ * entirely east of the table (never in front of it — spec: "不要放在工作桌
+ * 正前方"), and its whole footprint (x -5.7..-5.0) stays well clear of the
+ * 開始卸貨/結束今天 button posts (x=-4, ~0.9m gap), the north-a unload gate
+ * (x -2..2, ~3m gap), UNLOAD_ZONE's own drop path (x -1.7..6.7), and the
+ * lost-found cabinet (x -9.85..-9.16, on the table's OTHER side) — no
+ * overlap with any of them, and no blocking of the player's own corridor
+ * (footprint stays tucked against the wall, z 10.18..10.68). */
+const BAG_RACK_TABLE_GAP = 0.5;
+const BAG_RACK_WIDTH = 0.7;
+const BAG_RACK_DEPTH = 0.5;
+const BAG_RACK_HEIGHT = 1.1;
+export const BAG_RACK = {
+  posX: STAMP_TABLE.posX + STAMP_TABLE_WIDTH / 2 + BAG_RACK_TABLE_GAP + BAG_RACK_WIDTH / 2,
+  posZ: northWallInnerFaceZ + STAMP_TABLE_WALL_CLEARANCE + BAG_RACK_DEPTH / 2,
+  width: BAG_RACK_WIDTH,
+  depth: BAG_RACK_DEPTH,
+  height: BAG_RACK_HEIGHT,
 };
 
 /** Open floor south of the rack/table where newly-spawned bags naturally
