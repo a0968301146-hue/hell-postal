@@ -1,10 +1,10 @@
 import * as THREE from 'three';
-import { PhysicsSystem } from './physics-system';
-import { InteractableObject, createInteractableObject } from './interactable-object';
+import { PhysicsSystem } from '../adapters/rapier/physics-system';
+import { InteractableObject, createInteractableObject } from '../shared/types/interactable';
 import { EnvelopeData, createAllEnvelopes, createEnvelopeAddressLabel, createEnvelopeStampVisual } from './envelope-data';
-import { SCENE_CONFIG } from './scene-manager';
-import { BACK_AREA } from './logistics-layout-data';
-import { createFloatingLabel } from './world-label-system';
+import { SCENE_CONFIG } from '../systems/world-layout';
+import { BACK_AREA } from '../systems/world-layout';
+import { createFloatingLabel } from '../adapters/three/world-label-system';
 
 const FLOOR_Y = BACK_AREA.floorY;
 

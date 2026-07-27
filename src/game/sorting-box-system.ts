@@ -1,13 +1,13 @@
 import * as THREE from 'three';
-import { PhysicsSystem } from './physics-system';
-import { InteractableObject, createInteractableObject } from './interactable-object';
+import { PhysicsSystem } from '../adapters/rapier/physics-system';
+import { InteractableObject, createInteractableObject } from '../shared/types/interactable';
 import {
   SortingBoxData, SortingBoxConfig, SORTING_BOX_CONFIGS, SORTING_BOX_CAPACITY,
   SBOX_WIDTH, SBOX_DEPTH, SBOX_HEIGHT, SBOX_WALL_THICKNESS,
   createSortingBoxData
 } from './sorting-box-data';
-import { BACK_AREA } from './logistics-layout-data';
-import { createFloatingLabel } from './world-label-system';
+import { BACK_AREA } from '../systems/world-layout';
+import { createFloatingLabel } from '../adapters/three/world-label-system';
 
 // Bottom plate thickness
 const BOTTOM_THICKNESS = 0.08;

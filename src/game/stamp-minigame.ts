@@ -1,6 +1,6 @@
 import { STAMPS, StampInfo } from './stamp-data';
 import { PackageData, createStampVisual } from './package-data';
-import { InteractableObject } from './interactable-object';
+import { InteractableObject } from '../shared/types/interactable';
 
 export type MinigameResult = 'completed' | 'cancelled';
 

@@ -3,7 +3,7 @@
 // into two independent sub-rooms by a counter wall at Z = COUNTER.z:
 //   - NPC_AREA  (Z: -2..4)  — customers enter, queue, step up to the counter
 //   - PLAYER_AREA (Z: 4..10) — player's work space, leads to the back area
-import { FRONT_OFFICE } from './logistics-layout-data';
+import { FRONT_OFFICE } from '../systems/world-layout';
 
 export const COUNTER = {
   z: 4,

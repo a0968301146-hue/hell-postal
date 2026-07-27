@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { InteractableObject } from './interactable-object';
+import { InteractableObject } from '../shared/types/interactable';
 
 const BELT_SPEED = 2.5; // m/s along the slope, top -> bottom
 const CAPTURE_MARGIN = 0.3; // extra length past the physical ramp ends still counts as "on belt"

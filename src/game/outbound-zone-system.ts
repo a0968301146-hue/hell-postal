@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { InteractableObject } from './interactable-object';
-import { CargoSystem } from './cargo-system';
-import { DailyFlowSystem } from './daily-flow-system';
-import { HUD } from './hud';
-import { OUTBOUND_ZONE } from './daily-flow-data';
-import { BACK_AREA } from './logistics-layout-data';
-import { createFloatingLabel } from './world-label-system';
+import { InteractableObject } from '../shared/types/interactable';
+import { CargoSystem } from '../systems/cargo';
+import { DailyFlowSystem } from '../systems/daily-flow';
+import { HUD } from '../systems/hud';
+import { OUTBOUND_ZONE } from '../systems/daily-flow';
+import { BACK_AREA } from '../systems/world-layout';
+import { createFloatingLabel } from '../adapters/three/world-label-system';
 
 const ZONE_MIN_Y = BACK_AREA.floorY - 0.1;
 const ZONE_MAX_Y = BACK_AREA.floorY + 2.5;
@@ -106,8 +106,11 @@ export class OutboundZoneSystem {
       this.hasShipped = true;
       // NOT the main flow's completion path this round (see DailyFlowSystem
       // — cargo ships by riding a vehicle now, not a ground zone), kept only
-      // so this file still compiles/works standalone if reused later.
-      data.shipped = true;
+      // so this file still compiles/works standalone if reused later. This
+      // old ground-zone flow never had a "wrong vehicle" concept, so it
+      // just marks success directly (Phase 7 renamed CargoData.shipped to
+      // correctlyShipped — see cargo-data.ts).
+      data.correctlyShipped = true;
       this.dailyFlowSystem.refreshCompletion();
       this.cargoSystem.removeCargo(id);
       this.warnedIds.delete(id);

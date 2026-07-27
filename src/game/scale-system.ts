@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { PhysicsSystem } from './physics-system';
-import { InteractableObject } from './interactable-object';
+import { PhysicsSystem } from '../adapters/rapier/physics-system';
+import { InteractableObject } from '../shared/types/interactable';
 import { MAX_PACKAGE_WEIGHT_KG } from './package-data';
 
 const SCALE_POS = { x: 2.5, z: -5.5 };
