@@ -92,24 +92,36 @@ export const LOST_FOUND_COUNTER_HALF_EXTENTS = { x: 0.35, y: 0.45, z: 1.4 };
  * modular lost found NPC flow" round 一: 靠牆位置、保留足夠通道、不阻擋玩家
  * 整理貨物). "Expand lost found return storage and scoring" round 四: rebuilt
  * from a single themed-landmark shelf into a genuine grid of individually
- * bounded cells (spec: "收納櫃仍放在包裹整理區牆邊，不要移回前台房間") — same
- * wall anchor position as the old shelf, just a real fixture now. See
- * lost-found-cabinet-system.ts for the mesh/collider/slot-bounds this
- * config drives. */
-export const LOST_FOUND_CABINET_COLUMNS = 4;
+ * bounded cells. "Fix lost found cabinet storage space" round: that grid's
+ * cells previously had NO real open interior (a full-depth solid back panel
+ * silently filled the whole footprint) — column count dropped 4->3 (still
+ * comfortably ≥ the 6 lost items generated daily, at 3x3=9 cells) and each
+ * cell's interior size is now DERIVED from the largest actual
+ * LostItemPreset collider (see lost-found-cabinet-system.ts's
+ * computeCellInteriorSize()) instead of a hand-picked constant. Only
+ * columns/rows/structural-panel-thickness/wall-clearance stay here as plain
+ * spatial config; the derived interior size intentionally lives in
+ * lost-found-cabinet-system.ts since it needs LOST_ITEM_PRESETS (this file
+ * stays pure spatial data, no preset/business knowledge). */
+export const LOST_FOUND_CABINET_COLUMNS = 3;
 export const LOST_FOUND_CABINET_ROWS = 3;
-/** One cell's outer footprint (before subtracting divider thickness for the
- * usable interior — see lost-found-cabinet-system.ts). Width runs along Z
- * (across the cabinet's face), height along Y, depth along X (into the
- * wall). Sized generously enough that most LOST_ITEM_PRESETS fit with no
- * shrinking at all; LostItemPreviewRenderer's/lost-found-system.ts's
- * auto-fit scaling (spec六) only kicks in for anything that would still
- * exceed 85% of the interior. */
-export const LOST_FOUND_CABINET_CELL_WIDTH = 0.5;
-export const LOST_FOUND_CABINET_CELL_HEIGHT = 0.5;
-export const LOST_FOUND_CABINET_CELL_DEPTH = 0.4;
-/** Divider panel thickness — subtracted from each cell's outer footprint to
- * get its usable interior (spec四: "明確隔板/獨立內部空間"). */
-export const LOST_FOUND_CABINET_DIVIDER_THICKNESS = 0.04;
-/** Cabinet's own anchor position — reuses the old shelf's exact spot. */
-export const LOST_FOUND_CABINET_POS = { x: -9.65, z: 12.0 };
+/** Thickness of the real structural panels a cell is actually built from —
+ * left/right dividers, horizontal shelves, and the single rear back panel
+ * ("Fix lost found cabinet storage space" round 一: Collider只能建立在外框/
+ * 隔板/層板/背板；每一格正面入口必須完全沒有碰撞體). */
+export const LOST_FOUND_CABINET_DIVIDER_THICKNESS = 0.05;
+export const LOST_FOUND_CABINET_SHELF_THICKNESS = 0.05;
+export const LOST_FOUND_CABINET_BACK_THICKNESS = 0.05;
+/** Gap left between the cabinet's own back panel and the shared BACK_AREA/
+ * LOST_FOUND_ROOM wall behind it (spec三: "將櫃子稍微離開牆面，避免背板或
+ * 失物Collider卡進牆壁") — lost-found-cabinet-system.ts positions the
+ * cabinet's back panel this far off that wall's own physical inner face. */
+export const LOST_FOUND_CABINET_WALL_CLEARANCE = 0.15;
+/** Cabinet's own Z anchor (center) — reuses the old shelf/cabinet's exact
+ * spot, comfortably clear of the north wall (BACK_AREA.minZ=10) behind it
+ * and PACKAGE_WORK_ZONE (z 14-19) ahead of it even at the cabinet's new,
+ * larger footprint (see lost-found-cabinet-system.ts for the exact computed
+ * span). X is no longer a fixed anchor — it's derived from
+ * LOST_FOUND_CABINET_WALL_CLEARANCE plus the cabinet's own (data-derived)
+ * depth, computed in lost-found-cabinet-system.ts. */
+export const LOST_FOUND_CABINET_ANCHOR_Z = 12.0;
