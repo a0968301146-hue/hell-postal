@@ -50,3 +50,10 @@ export const LOST_FOUND_CASES: LostFoundCaseDef[] = [
 /** Exact spec wording (spec七: "顯示「這不是他要找的失物」") — the ONE shared
  * message for any incorrect hand-over attempt, not per-case flavor text. */
 export const LOST_FOUND_WRONG_ITEM_TEXT = '這不是他要找的失物';
+
+/** Shown on the NPC's bubble the moment 載具出發 is pressed with today's NPC
+ * never having been talked to ("Spawn lost found NPC during unloading and
+ * penalize missed interaction" round 三: NPC顯示失望／離開提示) — the ONE
+ * shared message for a missed-interaction departure, not per-case flavor
+ * text (mirrors LOST_FOUND_WRONG_ITEM_TEXT's pattern above). */
+export const LOST_FOUND_MISSED_TEXT = '看來今天沒機會了……我先走了。';

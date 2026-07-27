@@ -243,15 +243,25 @@ export class HUD {
    * reuses the same DOM element/pause-then-繼續 pattern as the old
    * showVehicleSettlement (kept intact above, still unused). Fields come
    * straight from VehicleControlSystem's departure-time settlement snapshot
-   * (spec二: 今日貨物總數/成功出貨數量/未出貨數量/未出貨扣分/當日最終分數). */
-  showDayCompleteSummary(params: { total: number; shipped: number; unshipped: number; penalty: number; finalScore: number; onContinue: () => void }): void {
-    const { total, shipped, unshipped, penalty, finalScore, onContinue } = params;
+   * (spec二: 今日貨物總數/成功出貨數量/未出貨數量/未出貨扣分/當日最終分數).
+   * lostFoundMissed/lostFoundPenalty added ("Spawn lost found NPC during
+   * unloading and penalize missed interaction" round 三: 結算顯示"失物招領：
+   * 未接待"/"失物招領扣分"). */
+  showDayCompleteSummary(params: {
+    total: number; shipped: number; unshipped: number; penalty: number;
+    lostFoundMissed: boolean; lostFoundPenalty: number; finalScore: number; onContinue: () => void;
+  }): void {
+    const { total, shipped, unshipped, penalty, lostFoundMissed, lostFoundPenalty, finalScore, onContinue } = params;
+    const lostFoundLine = lostFoundMissed
+      ? `<p>失物招領：未接待</p><p>失物招領扣分：-${lostFoundPenalty}</p>`
+      : `<p>失物招領：已接待</p>`;
     this.shipmentSummaryEl.innerHTML = `
       <p class="summary-title">六台載具已出發</p>
       <p>今日貨物總數：${total}</p>
       <p>成功出貨：${shipped}</p>
       <p>未出貨：${unshipped}</p>
       <p>未出貨扣分：${penalty > 0 ? '-' : ''}${penalty}</p>
+      ${lostFoundLine}
       <p>當日最終分數：${finalScore}</p>
       <p class="summary-title">今日貨物已全部送出</p>
       <button id="settlement-continue-btn">繼續</button>

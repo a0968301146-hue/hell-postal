@@ -130,6 +130,13 @@ export class VehicleControlSystem {
   private onVehicleCalled?: () => void;
   private onCargoLoaded?: () => void;
   private onVehicleDeparted?: () => void;
+  /** Fired once, synchronously, right at 載具出發 press time ("Spawn lost
+   * found NPC during unloading and penalize missed interaction" round) —
+   * returns whether a missed-lost-found-interaction penalty is due, so it
+   * can be folded into the SAME settlement snapshot computed below. Wired
+   * to LostFoundSystem.handleShippingStarted(); this class never inspects
+   * lost-found state itself. */
+  private onShippingStarted?: () => boolean;
   private enabled = true;
 
   /** Fixed six slots, built once in the constructor from
@@ -169,6 +176,7 @@ export class VehicleControlSystem {
     onVehicleCalled?: () => void,
     onCargoLoaded?: () => void,
     onVehicleDeparted?: () => void,
+    onShippingStarted?: () => boolean,
     enabled: boolean = true
   ) {
     this.scene = scene;
@@ -185,6 +193,7 @@ export class VehicleControlSystem {
     this.onVehicleCalled = onVehicleCalled;
     this.onCargoLoaded = onCargoLoaded;
     this.onVehicleDeparted = onVehicleDeparted;
+    this.onShippingStarted = onShippingStarted;
     this.enabled = enabled;
 
     this.slots = [...LAND_VEHICLE_CONFIGS, ...SEA_VEHICLE_CONFIGS].map((config) => ({
@@ -339,6 +348,15 @@ export class VehicleControlSystem {
       return;
     }
 
+    // Settled synchronously, right here at press time (before the six
+    // vehicles' multi-second departure animation even starts) — never
+    // blocks departure either way ("Spawn lost found NPC during unloading
+    // and penalize missed interaction" round 三). LostFoundSystem decides
+    // WHETHER a penalty is due; the actual deduction happens below, folded
+    // into the same settleDeparture() call as the unshipped-cargo penalty,
+    // so ScoringSystem stays the one place either penalty is applied.
+    const lostFoundMissed = this.onShippingStarted?.() ?? false;
+
     const slotById = new Map(this.slots.map((s) => [s.config.id, s]));
     let shippedCorrect = 0;
     let unshipped = 0;
@@ -385,7 +403,7 @@ export class VehicleControlSystem {
       slot.waypointIndex = 0;
     }
 
-    this.pendingSettlement = this.scoringSystem.settleDeparture(this.dailyFlowSystem.totalCargoCount, shippedCorrect, unshipped);
+    this.pendingSettlement = this.scoringSystem.settleDeparture(this.dailyFlowSystem.totalCargoCount, shippedCorrect, unshipped, lostFoundMissed);
 
     this.dailyFlowSystem.notifyDeparting();
 
@@ -588,7 +606,8 @@ export class VehicleControlSystem {
    * pressDepartButton before departure can even begin). */
   private showDayCompleteSummary(): void {
     const settlement = this.pendingSettlement ?? {
-      total: this.dailyFlowSystem.totalCargoCount, shipped: 0, unshipped: 0, penalty: 0, finalScore: this.settingsManager.progress.score,
+      total: this.dailyFlowSystem.totalCargoCount, shipped: 0, unshipped: 0, penalty: 0,
+      lostFoundMissed: false, lostFoundPenalty: 0, finalScore: this.settingsManager.progress.score,
     };
     this.pendingSettlement = null;
 

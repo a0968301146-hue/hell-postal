@@ -170,14 +170,19 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // organized-cargo-into-cargoBounds shipment judgment. All three report
   // into DailyFlowSystem rather than it reaching into them. Constructed
   // BEFORE VehicleControlSystem/UnloadingSystem since both need it.
+  // onAllVehiclesDeparted callback removed ("Spawn lost found NPC during
+  // unloading and penalize missed interaction" round 六: "不要再使用
+  // vehiclesDeparted → spawn NPC") — the lost-found NPC no longer spawns
+  // on departure; it now spawns from UnloadingSystem's onFirstUnload
+  // callback below, alongside the case, via lostFoundSystem.
+  // onDailyUnloadStarted().
   const dailyFlowSystem = new DailyFlowSystem(
     scene, physics, cargoSystem, hud,
     () => {
       dollySystem.resetToStart(); unloadingSystem.resetGate(); palletSystem.resetToStart();
       lostFoundSystem.resetDaily();
     },
-    () => settingsManager.fireTutorialEvent('dayCompleted'),
-    () => lostFoundSystem.onAllVehiclesDeparted()
+    () => settingsManager.fireTutorialEvent('dayCompleted')
   );
 
   // Vehicle spawn/depart control (hall center) — re-enabled this round
@@ -196,6 +201,9 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     () => settingsManager.fireTutorialEvent('vehicleCalled'),
     () => settingsManager.fireTutorialEvent('cargoLoaded'),
     () => settingsManager.fireTutorialEvent('vehicleDeparted'),
+    // Settles today's lost-found missed-interaction penalty at the exact
+    // moment 載具出發 is pressed — see LostFoundSystem.handleShippingStarted.
+    () => lostFoundSystem.handleShippingStarted(),
     ENABLE_VEHICLE_LOADING_FLOW
   );
 

@@ -10,7 +10,9 @@ import { SCENE_CONFIG } from '../world-layout';
 import {
   LOST_FOUND_ROOM, LOST_FOUND_COUNTER, LOST_FOUND_COUNTER_HALF_EXTENTS, LOST_FOUND_SHELF, LOST_FOUND_SHELF_HALF_EXTENTS,
 } from '../../data/world/lost-found-layout-data';
-import { LOST_ITEM_PRESETS, LostItemPreset, LOST_FOUND_CASES, LostFoundCaseDef, LOST_FOUND_WRONG_ITEM_TEXT } from './lost-found-data';
+import {
+  LOST_ITEM_PRESETS, LostItemPreset, LOST_FOUND_CASES, LostFoundCaseDef, LOST_FOUND_WRONG_ITEM_TEXT, LOST_FOUND_MISSED_TEXT,
+} from './lost-found-data';
 import { UNLOAD_PORTS, UNLOAD_SPAWN_JITTER_X, UNLOAD_SPAWN_JITTER_Z, UNLOAD_BURST_CONFIG } from '../daily-flow';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
 import { LostFoundUI } from './lost-found-ui';
@@ -50,11 +52,19 @@ function buildLostItemGeometry(preset: LostItemPreset): THREE.BufferGeometry {
  * the NPC's own west gate) stay in scene-manager.ts. Owns a
  * LostFoundNpcSystem for the NPC's entry/exit walk but keeps all case/item
  * knowledge here, mirroring the CounterNpcSystem/CounterServiceSystem
- * split. Reacts to exactly ONE external event — DailyFlowSystem's
- * onAllVehiclesDeparted callback (wired in game.ts) — rather than polling
- * DailyFlowSystem.state itself (spec四: "不要在多處輪詢每日流程"); the lost
- * item's own burst-spawn delay timer below is a purely LOCAL countdown, not
- * a poll of anything external either.
+ * split.
+ *
+ * "Spawn lost found NPC during unloading and penalize missed interaction"
+ * round: reacts to exactly TWO external events now — UnloadingSystem's
+ * onFirstUnload callback (onDailyUnloadStarted, spawns the case+NPC
+ * together) and VehicleControlSystem's onShippingStarted callback
+ * (handleShippingStarted, settles the missed-interaction penalty) — rather
+ * than polling DailyFlowSystem.state itself (spec四: "不要在多處輪詢每日流
+ * 程"); no longer reacts to "all vehicles departed" at all (that USED to be
+ * the NPC's own spawn trigger; it now only decides whether the day's
+ * lost-found NPC ever got talked to). The lost item's own burst-spawn delay
+ * timer below is a purely LOCAL countdown, not a poll of anything external
+ * either.
  */
 export class LostFoundSystem {
   private scene: THREE.Scene;
@@ -68,6 +78,18 @@ export class LostFoundSystem {
   private todaysLostItemId: string | null = null;
   private npcSpawnedToday = false;
   private caseSolvedToday = false;
+  /** Set true the first time the player presses E at the counter while the
+   * NPC is waiting, regardless of what they're holding (spec二: "本輪『有互
+   * 動』只代表玩家已與NPC對話並得知失物需求") — deliberately NOT the same
+   * thing as caseSolvedToday (successfully handing over the correct item).
+   * Read by handleShippingStarted() to decide whether 載具出發 owes a
+   * missed-interaction penalty. */
+  private lostFoundNpcInteractedToday = false;
+  /** Set true once handleShippingStarted() has actually applied the
+   * missed-interaction penalty for today — guards against a second
+   * 載具出發 press (or any other future caller) double-penalizing or
+   * double-dismissing the NPC. */
+  private missedToday = false;
   private dayIndex = 0;
   private lostItemInstanceCounter = 0;
   /** Counts down after onDailyUnloadStarted() before the lost item actually
@@ -138,46 +160,60 @@ export class LostFoundSystem {
   }
 
   /** Picks the next case in rotation and advances dayIndex — the ONE place
-   * this happens, called both from the normal onDailyUnloadStarted() path
-   * and defensively from onAllVehiclesDeparted() below ("Fix lost found NPC
-   * spawn after shipping" round: 案件未建立時，需安全建立當日案件後再生成
-   * NPC — if departure completes before a case ever got armed, still spawn
-   * one on the spot rather than silently staying NPC-less for the day). */
+   * this happens. Called from onDailyUnloadStarted() below, immediately
+   * followed by spawnNpcForToday() — case and NPC are now always
+   * established together, in the same call, so handleShippingStarted()
+   * further down never needs its own fallback case-creation path. */
   private prepareDailyCase(): void {
     this.todaysCase = LOST_FOUND_CASES[this.dayIndex % LOST_FOUND_CASES.length];
     this.dayIndex++;
   }
 
-  /** Wired into UnloadingSystem's existing onFirstUnload callback (game.ts)
-   * — fires once, right as the daily unload burst begins (spec六: "每天生成
-   * 貨物時，同時生成1件與當日NPC對應的失物"). Picks today's case silently
-   * (the NPC itself doesn't visually appear until onAllVehiclesDeparted,
-   * spec四) and arms the lost item's own short burst-spawn delay. */
-  onDailyUnloadStarted(): void {
-    this.prepareDailyCase();
-    this.lostItemSpawnTimer = UNLOAD_PORTS[0].gate.openDuration + UNLOAD_BURST_CONFIG.chargeUpDuration;
-  }
-
-  /** Wired into DailyFlowSystem's onAllVehiclesDeparted callback (game.ts)
-   * — the ONE "vehicle departure complete" event (spec四). Guarded so it
-   * can only ever bring in the day's NPC once, and never again once that
-   * day's case is solved. Never gated on unshipped cargo, score, or
-   * correctlyShipped count — canDepart itself already allows departure with
-   * an incomplete/incorrect load, and this listens for the SAME departure
-   * event regardless of what was actually shipped. */
-  onAllVehiclesDeparted(): void {
-    if (this.npcSpawnedToday || this.caseSolvedToday) return;
-    if (!this.todaysCase) {
-      // Defensive fallback — should only happen if onDailyUnloadStarted()
-      // was somehow never called this day (e.g. a future caller skips the
-      // unload step). Still spawn today's NPC rather than silently staying
-      // NPC-less for the rest of the day.
-      console.warn('[LostFound] todaysCase was not armed before all vehicles departed — preparing one now as a fallback.');
-      this.prepareDailyCase();
-    }
+  private spawnNpcForToday(): void {
+    if (this.npcSpawnedToday || !this.todaysCase) return;
     this.npcSpawnedToday = true;
     const preset = LOST_ITEM_PRESETS.find((p) => p.id === this.todaysCase!.lostItemPresetId);
     this.npcSystem.spawn(preset?.displayName ?? '');
+  }
+
+  /** Wired into UnloadingSystem's existing onFirstUnload callback (game.ts)
+   * — fires once, right as the daily unload burst begins. "Spawn lost found
+   * NPC during unloading and penalize missed interaction" round: prepares
+   * today's case AND spawns its NPC together, right here (spec一: "每日按下
+   * 卸貨按鈕→建立當日失物案件與失物→同時生成當日唯一一名NPC") — the NPC no
+   * longer waits for all six vehicles to depart. Also arms the lost item's
+   * own short burst-spawn delay, so the physical item still bursts in from
+   * a north port alongside the regular cargo. */
+  onDailyUnloadStarted(): void {
+    this.prepareDailyCase();
+    this.lostItemSpawnTimer = UNLOAD_PORTS[0].gate.openDuration + UNLOAD_BURST_CONFIG.chargeUpDuration;
+    this.spawnNpcForToday();
+  }
+
+  /** Wired into VehicleControlSystem's new onShippingStarted callback —
+   * fires the instant the player presses 載具出發 (spec三), well before the
+   * six vehicles actually finish their multi-second departure animation.
+   * Returns whether a missed-interaction penalty is due so the caller can
+   * fold it into the SAME departure settlement snapshot ScoringSystem
+   * already builds — this method itself never touches score (spec: "接入
+   * 現有ScoringSystem，不要在...LostFoundSystem各寫一份扣分").
+   *
+   * Never blocks departure — the six vehicles leave regardless either way
+   * (spec三: "仍然允許六台載具正常出發/不阻擋發車"). If the player already
+   * talked to the NPC (lostFoundNpcInteractedToday), this is a pure no-op:
+   * no penalty, and the NPC/case are left completely alone so an
+   * already-started hand-over can still finish later today (spec四: "已互動
+   * 且案件未完成時，先保留NPC到當日結束"). */
+  handleShippingStarted(): boolean {
+    if (!this.todaysCase || this.missedToday || this.caseSolvedToday || this.lostFoundNpcInteractedToday) return false;
+    this.missedToday = true;
+    if (this.npcSystem.state === 'waiting') {
+      this.npcSystem.updateBubbleText(LOST_FOUND_MISSED_TEXT);
+      this.npcSystem.startLeaving();
+    } else if (this.npcSystem.state === 'walkingIn') {
+      this.npcSystem.forceRemove();
+    }
+    return true;
   }
 
   private spawnLostItemBurst(caseDef: LostFoundCaseDef): void {
@@ -246,9 +282,17 @@ export class LostFoundSystem {
    * against today's actual spawned lost item, so handing over ordinary
    * cargo (or the wrong day's leftover item, defensively) reads as a wrong
    * attempt exactly like the spec describes, with no separate "is this even
-   * a lost item" gate needed. */
+   * a lost item" gate needed.
+   *
+   * "Spawn lost found NPC during unloading and penalize missed interaction"
+   * round: ANY press here — right item, wrong item, or empty-handed —
+   * counts as "having talked to the NPC" (spec二: "本輪『有互動』只代表玩家
+   * 已與NPC對話並得知失物需求"), set on the FIRST such press regardless of
+   * whether the hand-over itself succeeds. This is deliberately NOT the
+   * same thing as caseSolvedToday. */
   tryConfirmAtCounter(heldId: string): void {
     if (!this.isNpcWaiting || !this.todaysCase) return;
+    this.lostFoundNpcInteractedToday = true;
 
     if (heldId === this.todaysLostItemId) {
       this.pickupSystem.forceDropHeld();
@@ -275,9 +319,11 @@ export class LostFoundSystem {
   /** Wired into DailyFlowSystem's existing resetTools callback (game.ts) —
    * fires on every day transition. Clears any NOT-yet-completed case's NPC
    * and lost item (spec七: "進入下一天時，清除尚未完成案件的NPC與失物") and
-   * resets every daily flag for tomorrow (spec四: "下一天重置每日NPC狀
-   * 態"). A no-op for an already-solved case, since both fields are already
-   * null by then. */
+   * resets every daily flag for tomorrow, including
+   * lostFoundNpcInteractedToday and missedToday (spec五: "進入隔天時清除...
+   * lostFoundNpcInteractedToday/missed狀態/本日失物扣分防重複標記") — a
+   * no-op for an already-solved case, since both case/item fields are
+   * already null by then. */
   resetDaily(): void {
     this.npcSystem.forceRemove();
     if (this.todaysLostItemId) {
@@ -295,6 +341,8 @@ export class LostFoundSystem {
     this.lostItemSpawnTimer = null;
     this.npcSpawnedToday = false;
     this.caseSolvedToday = false;
+    this.lostFoundNpcInteractedToday = false;
+    this.missedToday = false;
   }
 
   update(deltaTime: number): void {
