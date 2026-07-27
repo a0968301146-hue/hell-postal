@@ -3,6 +3,7 @@
 // no vehicle's size is ever hardcoded in VehicleSystem/VehicleControlSystem/
 // PickupSystem/Game.
 import { CargoType, CargoRegion } from '../cargo';
+import { MailRegion } from '../mail/mail-types';
 import { LAND_DOCK_SLOTS, SEA_DOCK_SLOTS } from './vehicle-dock-data';
 
 /** Uniform scale-up applied to every vehicle's chassis AND cargo-bay
@@ -63,6 +64,25 @@ export interface VehicleConfig {
    * acceptedRegions above) to count as a correctly-shipped item at
    * departure (see vehicle-control-system.ts's vehicleAcceptsCargo). */
   acceptedCargoTypes: CargoType[];
+  /** Which MailBag.region values this vehicle accepts ("Add modular
+   * envelope stamping and regional mail bag system" round 九) — a
+   * completely independent field from acceptedRegions/acceptedCargoTypes
+   * above (mail bags are never CargoData, never checked against cargo
+   * rules). Every land vehicle: ['domestic']; every sea vehicle:
+   * ['international'] — see vehicleAcceptsMailRegion below, the ONE place
+   * this field is actually evaluated (spec: "所有信件袋裝載判定必須讀取同一
+   * 份設定，不要在MailSystem、VehicleSystem、ScoringSystem各寫一份規則"). */
+  acceptedMailRegions: MailRegion[];
+}
+
+/** The ONE place a sealed MailBag's region is checked against a vehicle's
+ * own acceptance list (spec九) — VehicleControlSystem's departure-time scan
+ * is the only caller; MailBagSystem/MailSystem/ScoringSystem never
+ * duplicate this rule, they only ever read its result. Deliberately keyed
+ * purely on region, never on vehicle id/displayName (spec: "只判斷國內／海
+ * 外，不判斷特定載具名稱"). */
+export function vehicleAcceptsMailRegion(config: VehicleConfig, region: MailRegion | null): boolean {
+  return region !== null && config.acceptedMailRegions.includes(region);
 }
 
 /** Hard ceiling every VehicleConfig must stay under, so a badly-tuned
@@ -135,6 +155,7 @@ const LAND_VEHICLE_BASE_CONFIGS: VehicleConfig[] = [
     movementSpeed: 4.2,
     acceptedRegions: ['domestic'],
     acceptedCargoTypes: ['normal', 'fragile'],
+    acceptedMailRegions: ['domestic'],
   },
   {
     id: 'land-rockgiant-01',
@@ -152,6 +173,7 @@ const LAND_VEHICLE_BASE_CONFIGS: VehicleConfig[] = [
     movementSpeed: 2.0,
     acceptedRegions: ['domestic'],
     acceptedCargoTypes: ['large'],
+    acceptedMailRegions: ['domestic'],
   },
   {
     id: 'land-snail-01',
@@ -169,6 +191,7 @@ const LAND_VEHICLE_BASE_CONFIGS: VehicleConfig[] = [
     movementSpeed: 1.4,
     acceptedRegions: ['domestic'],
     acceptedCargoTypes: ['live', 'frozen'],
+    acceptedMailRegions: ['domestic'],
   },
 ];
 export const LAND_VEHICLE_CONFIGS: VehicleConfig[] = LAND_VEHICLE_BASE_CONFIGS.map(scaleVehicleDimensions);
@@ -208,6 +231,7 @@ const SEA_VEHICLE_BASE_CONFIGS: VehicleConfig[] = [
     axis: 'x',
     acceptedRegions: ['international'],
     acceptedCargoTypes: ['fragile', 'normal'],
+    acceptedMailRegions: ['international'],
   },
   {
     id: 'sea-turtle-01',
@@ -226,6 +250,7 @@ const SEA_VEHICLE_BASE_CONFIGS: VehicleConfig[] = [
     axis: 'x',
     acceptedRegions: ['international'],
     acceptedCargoTypes: ['large', 'normal'],
+    acceptedMailRegions: ['international'],
   },
   {
     id: 'sea-kraken-01',
@@ -244,6 +269,7 @@ const SEA_VEHICLE_BASE_CONFIGS: VehicleConfig[] = [
     axis: 'x',
     acceptedRegions: ['international'],
     acceptedCargoTypes: ['frozen'],
+    acceptedMailRegions: ['international'],
   },
 ];
 export const SEA_VEHICLE_CONFIGS: VehicleConfig[] = SEA_VEHICLE_BASE_CONFIGS.map(scaleVehicleDimensions);

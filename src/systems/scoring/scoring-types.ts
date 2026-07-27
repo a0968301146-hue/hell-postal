@@ -22,6 +22,16 @@ export interface LostFoundSettlementInput {
   unstored: number;
 }
 
+/** MailSystem.settleAtDeparture()'s own frozen-at-press-time snapshot ("Add
+ * modular envelope stamping and regional mail bag system" round 十一) —
+ * counted PER ENVELOPE (spec: "結算以每封信計算"), never per-bag (spec:
+ * "分類袋本身不可再額外扣一次"). */
+export interface MailSettlementInput {
+  total: number;
+  shipped: number;
+  unshipped: number;
+}
+
 export interface DepartureSettlement {
   total: number;
   shipped: number;
@@ -37,5 +47,13 @@ export interface DepartureSettlement {
   lostItemStoredCount: number;
   lostItemUnstoredCount: number;
   lostItemPenalty: number;
+  /** Mail settlement fields (spec十一: 今日信件總數/已寄出信件數/未寄出信件
+   * 數/信件扣分) — each unshipped envelope uses the SAME
+   * UNSHIPPED_PENALTY_PER_ITEM as regular cargo (spec: "使用現有「每件未出
+   * 貨扣分值」"), not a separate constant. */
+  mailTotal: number;
+  mailShipped: number;
+  mailUnshipped: number;
+  mailPenalty: number;
   finalScore: number;
 }

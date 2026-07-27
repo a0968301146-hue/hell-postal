@@ -8,6 +8,7 @@ import { SCENE_CONFIG } from '../systems/world-layout';
 import { StampMinigame, MinigameResult } from '../game/stamp-minigame';
 import { ENABLE_LEGACY_COUNTER, ENABLE_LEGACY_MAIL_FLOW, ENABLE_VEHICLE_LOADING_FLOW } from '../game/feature-flags';
 import { DailyState } from '../systems/daily-flow';
+import { StampTableUi, StampUiResult } from '../systems/mail/stamp-table-ui';
 
 /**
  * The app's top-level composition root (formerly `Game` in game/game.ts) —
@@ -27,6 +28,7 @@ export class GameApp {
   private gameLoop!: GameLoop;
   private disposeManager = new DisposeManager();
   private stampMinigame: StampMinigame | null = null;
+  private mailStampUi: StampTableUi | null = null;
 
   async start(): Promise<void> {
     this.context = await createGameContext();
@@ -35,6 +37,7 @@ export class GameApp {
       onPauseChange: (paused) => this.setPaused(paused),
       onStartEnvelopeMinigame: () => this.startEnvelopeMinigame(),
       onInterruptPlayerActions: () => this.interruptPlayerActions(),
+      onStartMailStampUi: () => this.startMailStampUi(),
     });
 
     this.disposeManager.addEventListener(window, 'resize', () => this.onResize());
@@ -137,6 +140,42 @@ export class GameApp {
     });
   }
 
+  /** This round's own mail stamp-table UI — same shape as
+   * startEnvelopeMinigame/endStampMinigame above (reuses PauseManager's
+   * existing 'stampMinigame' reason and playerData's existing
+   * 'stamping-minigame' state, spec: "使用現有PauseManager"), but reads
+   * MailSystem's envelope registry instead of the old PackageData-based
+   * one, and applies the stamp via MailSystem.applyStamp on success. */
+  private startMailStampUi(): void {
+    const { mailSystem } = this.systems;
+    const envelopeId = mailSystem.readyEnvelopeId;
+    if (!envelopeId) return;
+    const rec = mailSystem.getEnvelope(envelopeId);
+    if (!rec) return;
+
+    this.context.playerData.state = 'stamping-minigame';
+    this.context.pauseManager.add('stampMinigame');
+    this.systems.playerController.setInputEnabled(false);
+    document.exitPointerLock();
+
+    this.mailStampUi = new StampTableUi(
+      rec,
+      (stamp) => this.systems.mailSystem.applyStamp(envelopeId, stamp),
+      (result: StampUiResult) => this.endMailStampUi(result)
+    );
+  }
+
+  private endMailStampUi(_result: StampUiResult): void {
+    if (this.mailStampUi) this.mailStampUi = null;
+    this.context.pauseManager.remove('stampMinigame');
+    this.systems.mailSystem.releaseFromTable();
+
+    this.context.playerData.state = 'empty-handed';
+    this.context.playerData.heldObjectId = null;
+    this.systems.playerController.setInputEnabled(true);
+    this.context.hud.showInstructions();
+  }
+
   /** Vehicle settlement pause — mirrors the stamp-minigame pattern: exit
    * pointer lock (stops mouse-look, frees the cursor for the settlement
    * panel's button) and gate the whole per-frame update block below via
@@ -209,6 +248,8 @@ export class GameApp {
       // cargo-into-cargoBounds shipment scan every frame it's enabled.
       s.unloadingSystem.update(deltaTime);
       s.lostFoundSystem.update(deltaTime);
+      s.mailSystem.update(deltaTime);
+      s.mailBagSystem.update(deltaTime);
       const flowState = s.dailyFlowSystem.state;
       const bannerText = flowState === 'completed' ? '今日貨物已全部裝載'
         : flowState === 'dayComplete' ? '今日貨物已全部送出'

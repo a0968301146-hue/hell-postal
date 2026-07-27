@@ -11,7 +11,9 @@ import { CargoSystem, CargoData, CargoType } from '../cargo';
 // which structurally satisfies PickupPort.
 import { PickupPort } from '../../shared/types/pickup-port';
 import { VehicleSystem } from './vehicle-system';
-import { LAND_VEHICLE_CONFIGS, SEA_VEHICLE_CONFIGS, VehicleConfig } from './vehicle-data';
+import { LAND_VEHICLE_CONFIGS, SEA_VEHICLE_CONFIGS, VehicleConfig, vehicleAcceptsMailRegion } from './vehicle-data';
+import { MailSystem } from '../mail/mail-system';
+import { MailBagSystem } from '../mail/mail-bag-system';
 import { VEHICLE_ROUTES } from './vehicle-route-data';
 import { VEHICLE_CONTROL_POS, BACK_AREA } from '../world-layout';
 import { ScoringSystem, DepartureSettlement, LostFoundSettlementInput } from '../scoring';
@@ -139,6 +141,17 @@ export class VehicleControlSystem {
    * LostFoundSystem.settleAtDeparture(); this class never inspects
    * lost-found state itself. */
   private onShippingStarted?: () => LostFoundSettlementInput;
+  /** MailSystem/MailBagSystem — narrow read/write surface ("Add modular
+   * envelope stamping and regional mail bag system" round 九/十一): this
+   * class is the ONE place a sealed bag's region is checked against a
+   * vehicle's acceptedMailRegions (vehicleAcceptsMailRegion, vehicle-data.ts)
+   * and the ONE place bag physical presence in a departing bay is scanned —
+   * MailBagSystem only ever reports plain bag facts (region/sealed ids/
+   * envelope membership), never judges vehicle compatibility itself; the
+   * final per-envelope settlement tally is delegated back to MailSystem
+   * (spec: "結算以每封信計算", envelope state stays owned there). */
+  private mailSystem: MailSystem;
+  private mailBagSystem: MailBagSystem;
   private enabled = true;
 
   /** Fixed six slots, built once in the constructor from
@@ -173,6 +186,8 @@ export class VehicleControlSystem {
     dailyFlowSystem: DailyFlowSystem,
     settingsManager: SettingsManager,
     scoringSystem: ScoringSystem,
+    mailSystem: MailSystem,
+    mailBagSystem: MailBagSystem,
     onPauseChange: (paused: boolean) => void,
     onVehicleDiscovered?: (config: VehicleConfig) => void,
     onVehicleCalled?: () => void,
@@ -190,6 +205,8 @@ export class VehicleControlSystem {
     this.dailyFlowSystem = dailyFlowSystem;
     this.settingsManager = settingsManager;
     this.scoringSystem = scoringSystem;
+    this.mailSystem = mailSystem;
+    this.mailBagSystem = mailBagSystem;
     this.onPauseChange = onPauseChange;
     this.onVehicleDiscovered = onVehicleDiscovered;
     this.onVehicleCalled = onVehicleCalled;
@@ -402,13 +419,38 @@ export class VehicleControlSystem {
       }
     }
 
+    // Mail bags (spec九/十一) — same one-time physical-bay scan as the
+    // pallet block above: any SEALED bag currently resting in ANY of the
+    // six slots' cargo bays rides along with that vehicle regardless of
+    // region match (spec: "已隨載具離場的貨物照原流程清除" — same convention
+    // as wrong-vehicle cargo above); vehicleAcceptsMailRegion (vehicle-
+    // data.ts, the ONE place this rule lives) decides whether it counts as
+    // CORRECTLY shipped. A bag that never made it into any bay at all
+    // (still sitting in the mail room, or an unsealed/scattered envelope)
+    // is simply never in this set, so MailSystem.settleAtDeparture below
+    // naturally counts its envelopes as unshipped.
+    const correctlyShippedBagIds = new Set<string>();
+    for (const bagId of this.mailBagSystem.getSealedBagIds()) {
+      const bagObj = this.interactables.get(bagId);
+      if (!bagObj || bagObj.isHeld || !bagObj.mesh.visible) continue;
+      for (const slot of this.slots) {
+        if (!slot.vehicle || !slot.vehicle.isInCargoBay(bagObj.mesh.position)) continue;
+        slot.pinnedCargo.push(bagObj);
+        if (vehicleAcceptsMailRegion(slot.config, this.mailBagSystem.getBagRegion(bagId))) {
+          correctlyShippedBagIds.add(bagId);
+        }
+        break;
+      }
+    }
+    const mail = this.mailSystem.settleAtDeparture(correctlyShippedBagIds);
+
     for (const slot of this.slots) {
       this.pinCargoPhysics(slot.pinnedCargo);
       slot.state = 'departing';
       slot.waypointIndex = 0;
     }
 
-    this.pendingSettlement = this.scoringSystem.settleDeparture(this.dailyFlowSystem.totalCargoCount, shippedCorrect, unshipped, lostFound);
+    this.pendingSettlement = this.scoringSystem.settleDeparture(this.dailyFlowSystem.totalCargoCount, shippedCorrect, unshipped, lostFound, mail);
 
     this.dailyFlowSystem.notifyDeparting();
 
@@ -577,6 +619,10 @@ export class VehicleControlSystem {
       // today; PalletSystem.resetToStart() (called from DailyFlowSystem's
       // daily reset) makes it visible again at its home position next day.
       if (obj.id === PALLET_ID) { obj.mesh.visible = false; continue; }
+      // Mail bags aren't CargoData — route their teardown through
+      // MailBagSystem itself so its own bag registry doesn't keep a stale
+      // sealed-bag entry pointing at an already-destroyed InteractableObject.
+      if (this.mailBagSystem.getBag(obj.id)) { this.mailBagSystem.removeShippedBag(obj.id); continue; }
       this.cargoSystem.removeCargo(obj.id);
     }
     this.pickupSystem.removePlacementSurface(vehicle.cargoBedTopMesh);
@@ -614,6 +660,7 @@ export class VehicleControlSystem {
       total: this.dailyFlowSystem.totalCargoCount, shipped: 0, unshipped: 0, penalty: 0,
       lostFoundMissed: false, lostFoundPenalty: 0,
       lostItemTotal: 0, lostItemHandedOver: 0 as const, lostItemStoredCount: 0, lostItemUnstoredCount: 0, lostItemPenalty: 0,
+      mailTotal: 0, mailShipped: 0, mailUnshipped: 0, mailPenalty: 0,
       finalScore: this.settingsManager.progress.score,
     };
     this.pendingSettlement = null;

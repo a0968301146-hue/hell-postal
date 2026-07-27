@@ -19,6 +19,8 @@ import { UnloadingSystem } from '../systems/unloading';
 import { PalletSystem } from '../systems/pallet';
 import { CargoInspectionSystem, CargoInspectionUI } from '../systems/cargo-inspection';
 import { LostFoundSystem, LostFoundUI } from '../systems/lost-found';
+import { MailSystem } from '../systems/mail/mail-system';
+import { MailBagSystem } from '../systems/mail/mail-bag-system';
 
 /** Every gameplay system GameApp constructs once at startup and keeps for
  * the rest of the session (Phase 6: "系統建立、建構子注入、註冊" moved out of
@@ -31,7 +33,13 @@ export interface GameSystems {
   pickupSystem: PickupSystem;
   envelopeStation: EnvelopeStampStation;
   envelopeSystem: EnvelopeSystem;
-  mailBagSystem: SortingBoxSystem;
+  /** Old sorting-box system (feature-flagged off, ENABLE_LEGACY_MAIL_FLOW)
+   * — kept intact and this name preserved for continuity with the rest of
+   * this file's own prior history; renamed the local VARIABLE from its
+   * previous ambiguous `mailBagSystem` (which collided with this round's
+   * genuinely new MailBagSystem class below) to `sortingBoxSystem`,
+   * matching what it actually is. */
+  sortingBoxSystem: SortingBoxSystem;
   mailSortingSystem: MailSortingSystem;
   cargoSystem: CargoSystem;
   dollySystem: DollySystem;
@@ -47,6 +55,9 @@ export interface GameSystems {
   cargoInspectionUI: CargoInspectionUI;
   lostFoundSystem: LostFoundSystem;
   lostFoundUI: LostFoundUI;
+  /** "Add modular envelope stamping and regional mail bag system" round. */
+  mailSystem: MailSystem;
+  mailBagSystem: MailBagSystem;
 }
 
 /** Back-references into GameApp's own small orchestration methods — the
@@ -61,6 +72,15 @@ export interface GameSystemsHooks {
   onPauseChange: (paused: boolean) => void;
   onStartEnvelopeMinigame: () => void;
   onInterruptPlayerActions: () => void;
+  /** Opens this round's own mail stamp-table UI ("Add modular envelope
+   * stamping and regional mail bag system" round 四) — reuses
+   * PauseManager's existing 'stampMinigame' reason (never a new one, spec:
+   * "使用現有PauseManager") and playerData's existing 'stamping-minigame'
+   * state, exactly like the legacy onStartEnvelopeMinigame above; kept as
+   * its OWN callback rather than reusing that one since it opens a
+   * different UI class against a different registry (MailSystem, not the
+   * old EnvelopeStampStation/PackageData). */
+  onStartMailStampUi: () => void;
 }
 
 /**
@@ -81,9 +101,9 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   const envelopeStation = new EnvelopeStampStation(scene, physics, interactables, ENABLE_LEGACY_MAIL_FLOW);
 
   // Mail sorting box system — same flag
-  const mailBagSystem = new SortingBoxSystem(scene, physics, interactables, ENABLE_LEGACY_MAIL_FLOW);
+  const sortingBoxSystem = new SortingBoxSystem(scene, physics, interactables, ENABLE_LEGACY_MAIL_FLOW);
   const mailSortingSystem = new MailSortingSystem(
-    mailBagSystem, interactables, physics, envelopeSystem.envelopeDataMap, hud,
+    sortingBoxSystem, interactables, physics, envelopeSystem.envelopeDataMap, hud,
     () => settingsManager.fireTutorialEvent('sorting')
   );
 
@@ -137,7 +157,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   pickupSystem.addPlacementSurface(sceneData.pierFloor);
 
   // Register sorting box interior planes as placement surfaces
-  for (const plane of mailBagSystem.interiorPlanes.values()) {
+  for (const plane of sortingBoxSystem.interiorPlanes.values()) {
     pickupSystem.addPlacementSurface(plane);
   }
   // Register incoming crate interior plane
@@ -162,6 +182,15 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     scene, physics, interactables, pickupSystem, lostFoundUI
   );
 
+  // Mail/envelope-stamping loop ("Add modular envelope stamping and
+  // regional mail bag system" round) — MailSystem owns the envelope
+  // registry + daily spawn + stamp table; MailBagSystem owns the empty-bag
+  // rack + every bag's own lifecycle, calling back into MailSystem to keep
+  // envelope state in ONE place. Built after pickupSystem exists (both
+  // register placement surfaces / call forceDropHeld() on reset).
+  const mailSystem = new MailSystem(scene, physics, interactables, pickupSystem);
+  const mailBagSystem = new MailBagSystem(scene, physics, interactables, pickupSystem, hud, mailSystem);
+
   // Daily unload -> sort -> ship-via-vehicle loop (this round's core).
   // DailyFlowSystem owns the day/state/count bookkeeping and the 結束今天
   // button; UnloadingSystem owns the north gate/chute/spawn sequence and
@@ -181,6 +210,11 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     () => {
       dollySystem.resetToStart(); unloadingSystem.resetGate(); palletSystem.resetToStart();
       lostFoundSystem.resetDaily();
+      // Mail state clears the SAME way every other daily fixture does
+      // (spec十二) — bags first, so any bag-held envelope reference is
+      // gone before MailSystem sweeps every remaining envelope id.
+      mailBagSystem.resetDaily();
+      mailSystem.resetDaily();
     },
     () => settingsManager.fireTutorialEvent('dayCompleted')
   );
@@ -196,6 +230,8 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     dailyFlowSystem,
     settingsManager,
     scoringSystem,
+    mailSystem,
+    mailBagSystem,
     hooks.onPauseChange,
     (config) => settingsManager.markVehicleDiscovered(config.id),
     () => settingsManager.fireTutorialEvent('vehicleCalled'),
@@ -221,6 +257,10 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
       // arms its own short spawn delay. UnloadingSystem itself is never
       // touched for this (spec: 不要修改北側雙到貨口).
       lostFoundSystem.onDailyUnloadStarted();
+      // Today's 12 envelopes burst in alongside regular cargo from the SAME
+      // two north ports (spec二) — UnloadingSystem itself is never touched
+      // for this (spec: 不要修改北側雙到貨口位置).
+      mailSystem.onDailyUnloadStarted();
     }
   );
   const palletSystem = new PalletSystem(
@@ -255,7 +295,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     envelopeSystem,
     envelopeStation,
     hooks.onStartEnvelopeMinigame,
-    mailBagSystem,
+    sortingBoxSystem,
     vehicleControlSystem,
     counterServiceSystem,
     dollySystem,
@@ -265,6 +305,9 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     dailyFlowSystem,
     palletSystem,
     lostFoundSystem,
+    mailSystem,
+    mailBagSystem,
+    hooks.onStartMailStampUi,
     () => settingsManager.fireTutorialEvent('dollyUsed')
   );
 
@@ -275,9 +318,9 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
 
   return {
     playerController, interactionSystem, pickupSystem, envelopeStation, envelopeSystem,
-    mailBagSystem, mailSortingSystem, cargoSystem, dollySystem, vehicleControlSystem,
+    sortingBoxSystem, mailSortingSystem, cargoSystem, dollySystem, vehicleControlSystem,
     scoringSystem, counterNpcSystem, counterServiceSystem, compassUI, dailyFlowSystem,
     unloadingSystem, palletSystem, cargoInspectionSystem, cargoInspectionUI,
-    lostFoundSystem, lostFoundUI,
+    lostFoundSystem, lostFoundUI, mailSystem, mailBagSystem,
   };
 }

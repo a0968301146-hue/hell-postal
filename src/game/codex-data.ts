@@ -36,6 +36,17 @@ export function formatVehicleAcceptedCargoTypes(config: VehicleConfig): string[]
   return config.acceptedCargoTypes.map((c) => CARGO_TYPE_LABEL[c]);
 }
 
+/** Independent codex field for mail capability ("Add modular envelope
+ * stamping and regional mail bag system" round 十: "載具圖鑑增加獨立欄位：
+ * 可運送信件" — deliberately NOT folded into acceptedCargoLabels above,
+ * since mail bags are never a CargoType). Reads VehicleConfig.
+ * acceptedMailRegions directly — the same field vehicle-control-system.ts's
+ * vehicleAcceptsMailRegion() checks — so this display can never drift from
+ * the actual loading rule. */
+export function formatVehicleMailCapability(config: VehicleConfig): string {
+  return config.acceptedMailRegions.includes('domestic') ? '國內信件' : '海外信件';
+}
+
 export interface VehicleCodexEntry {
   id: string;
   displayName: string;
@@ -46,6 +57,7 @@ export interface VehicleCodexEntry {
    * formal world-building rule (spec section十一: "不要寫成正式圖鑑介紹"). */
   acceptedRegionLabels: string[];
   acceptedCargoLabels: string[];
+  mailCapabilityLabel: string;
   /** World-building/creature-flavor fields — not written yet this round. */
   traits: string;
   description: string;
@@ -60,6 +72,7 @@ function toCodexEntry(config: VehicleConfig): VehicleCodexEntry {
     cargoArea: { width: config.cargoAreaWidth, length: config.cargoAreaLength, height: config.cargoAreaHeight },
     acceptedRegionLabels: formatVehicleAcceptedRegions(config),
     acceptedCargoLabels: formatVehicleAcceptedCargoTypes(config),
+    mailCapabilityLabel: formatVehicleMailCapability(config),
     traits: '尚未收錄',
     description: '尚未收錄',
   };

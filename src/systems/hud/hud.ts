@@ -254,11 +254,13 @@ export class HUD {
     total: number; shipped: number; unshipped: number; penalty: number;
     lostFoundMissed: boolean; lostFoundPenalty: number;
     lostItemTotal: number; lostItemHandedOver: 0 | 1; lostItemStoredCount: number; lostItemUnstoredCount: number; lostItemPenalty: number;
+    mailTotal: number; mailShipped: number; mailUnshipped: number; mailPenalty: number;
     finalScore: number; onContinue: () => void;
   }): void {
     const {
       total, shipped, unshipped, penalty, lostFoundMissed, lostFoundPenalty,
       lostItemTotal, lostItemHandedOver, lostItemStoredCount, lostItemUnstoredCount, lostItemPenalty,
+      mailTotal, mailShipped, mailUnshipped, mailPenalty,
       finalScore, onContinue,
     } = params;
     const lostFoundLine = lostFoundMissed
@@ -271,6 +273,16 @@ export class HUD {
       <p>未收納失物：${lostItemUnstoredCount}</p>
       <p>失物收納扣分：${lostItemPenalty > 0 ? '-' : ''}${lostItemPenalty}</p>
     `;
+    // Mail settlement ("Add modular envelope stamping and regional mail bag
+    // system" round 十一) — its own independent block, same
+    // per-item-penalty convention as 未出貨扣分 above (spec: "每封未寄出信件
+    // 使用現有『每件未出貨扣分值』").
+    const mailLine = `
+      <p>今日信件總數：${mailTotal}</p>
+      <p>已寄出信件：${mailShipped}</p>
+      <p>未寄出信件：${mailUnshipped}</p>
+      <p>信件扣分：${mailPenalty > 0 ? '-' : ''}${mailPenalty}</p>
+    `;
     this.shipmentSummaryEl.innerHTML = `
       <p class="summary-title">六台載具已出發</p>
       <p>今日貨物總數：${total}</p>
@@ -279,6 +291,7 @@ export class HUD {
       <p>未出貨扣分：${penalty > 0 ? '-' : ''}${penalty}</p>
       ${lostFoundLine}
       ${lostItemLine}
+      ${mailLine}
       <p>當日最終分數：${finalScore}</p>
       <p class="summary-title">今日貨物已全部送出</p>
       <button id="settlement-continue-btn">繼續</button>

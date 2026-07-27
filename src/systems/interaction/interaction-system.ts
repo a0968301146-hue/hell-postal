@@ -16,6 +16,9 @@ import { UnloadingSystem } from '../unloading';
 import { DailyFlowSystem } from '../daily-flow';
 import { PalletSystem } from '../pallet';
 import { LostFoundSystem } from '../lost-found';
+import { MailSystem } from '../mail/mail-system';
+import { MailBagSystem } from '../mail/mail-bag-system';
+import { getMailDestination } from '../mail/mail-data';
 
 export class InteractionSystem {
   private raycaster: THREE.Raycaster;
@@ -39,6 +42,9 @@ export class InteractionSystem {
   private dailyFlowSystem: DailyFlowSystem;
   private palletSystem: PalletSystem;
   private lostFoundSystem: LostFoundSystem;
+  private mailSystem: MailSystem;
+  private mailBagSystem: MailBagSystem;
+  private onStartMailStampUi: () => void;
   private onDollyUsed?: () => void;
 
   constructor(
@@ -61,6 +67,9 @@ export class InteractionSystem {
     dailyFlowSystem: DailyFlowSystem,
     palletSystem: PalletSystem,
     lostFoundSystem: LostFoundSystem,
+    mailSystem: MailSystem,
+    mailBagSystem: MailBagSystem,
+    onStartMailStampUi: () => void,
     onDollyUsed?: () => void
   ) {
     this.raycaster = new THREE.Raycaster();
@@ -83,9 +92,29 @@ export class InteractionSystem {
     this.dailyFlowSystem = dailyFlowSystem;
     this.palletSystem = palletSystem;
     this.lostFoundSystem = lostFoundSystem;
+    this.mailSystem = mailSystem;
+    this.mailBagSystem = mailBagSystem;
+    this.onStartMailStampUi = onStartMailStampUi;
     this.onDollyUsed = onDollyUsed;
 
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
+    document.addEventListener('mousedown', (e) => this.onMouseDown(e));
+  }
+
+  /** Right-click, empty-handed, aimed at an OPEN mail bag with ≥1 envelope
+   * — takes the most-recently-inserted envelope back out (spec七: "封袋前
+   * 可以取出信封"). A dedicated raw listener rather than a new key binding
+   * (spec: "沿用現有E鍵，不建立新輸入系統" — right-click is already an
+   * existing input, just unused in this particular context; mirrors
+   * PickupSystem's own onMouseDown pattern, which already uses right-click
+   * for cancelPlacement in a different state). */
+  private onMouseDown(event: MouseEvent): void {
+    if (event.button !== 2) return;
+    if (!this.isLocked()) return;
+    if (this.pauseManager.isPaused) return;
+    if (this.playerData.state !== 'empty-handed') return;
+    if (!this.currentTarget || !this.mailBagSystem.isBag(this.currentTarget.id)) return;
+    this.mailBagSystem.tryTakeOutLast(this.currentTarget.id);
   }
 
   private onKeyDown(event: KeyboardEvent): void {
@@ -93,9 +122,15 @@ export class InteractionSystem {
     if (!this.isLocked()) return;
     if (this.pauseManager.isPaused) return;
 
-    // F key: take envelope from crate (only when empty-handed and near crate)
+    // F key: cycle a targeted OPEN mail bag's destination pattern (spec六),
+    // or (legacy, dead while ENABLE_LEGACY_MAIL_FLOW is false) take an
+    // envelope from the old crate.
     if (event.code === 'KeyF') {
       if (this.playerData.state !== 'empty-handed') return;
+      if (this.currentTarget && this.mailBagSystem.isBag(this.currentTarget.id)) {
+        this.mailBagSystem.cyclePattern(this.currentTarget.id);
+        return;
+      }
       if (this.envelopeSystem.isPlayerNearCrate(this.camera.position)) {
         if (this.envelopeSystem.hasEnvelopes()) {
           const envObj = this.envelopeSystem.takeEnvelope();
@@ -199,6 +234,16 @@ export class InteractionSystem {
       return;
     }
 
+    // Priority 0.5: sealing a targeted mail bag (spec八: "已設定圖樣且至少有
+    //一封信的袋子按E：顯示「E 封閉分類袋」") — intercepts before the generic
+    // pickup below ONLY when the bag actually qualifies for sealing; an
+    // ineligible bag (no pattern yet / still empty) just falls through and
+    // gets picked up normally like any other prop.
+    if (this.currentTarget && this.mailBagSystem.isBag(this.currentTarget.id) && this.mailBagSystem.canSeal(this.currentTarget.id)) {
+      this.mailBagSystem.trySeal(this.currentTarget.id);
+      return;
+    }
+
     // Priority 1: pick up targeted object (envelope, package, crate, or the
     // sorting pallet). The pallet goes through its own pickUp() (world-space
     // group-carry, not PickupSystem's viewmodel clone) — see pallet-system.ts.
@@ -219,9 +264,22 @@ export class InteractionSystem {
       return;
     }
 
-    // Priority 2: envelope stamp station
+    // Priority 2: envelope stamp station (legacy, dead while
+    // ENABLE_LEGACY_MAIL_FLOW is false) / this round's new mail stamp table
+    // (spec四: "玩家對工作桌按E：開啟貼郵票UI").
     if (this.envelopeStation.readyEnvelopeId && this.envelopeStation.isPlayerNearTable(this.camera.position)) {
       this.onStartEnvelopeMinigame();
+      return;
+    }
+    if (this.mailSystem.readyEnvelopeId && this.mailSystem.isPlayerNearTable(this.camera.position)) {
+      this.onStartMailStampUi();
+      return;
+    }
+
+    // Priority 2.5: empty-bag supply rack (spec六: "對供應架按E：生成一個新
+    // 的空分類袋").
+    if (this.mailBagSystem.isPlayerNearRack(this.camera.position)) {
+      this.mailBagSystem.trySpawnBag();
       return;
     }
 
@@ -358,6 +416,31 @@ export class InteractionSystem {
           this.hud.showInteractionPrompt(newTarget.displayName, `E：拿起信封箱\nF：取出信封 (剩餘${this.envelopeSystem.remainingCount})`);
         } else if (newTarget.id === this.palletSystem.palletId) {
           this.hud.showInteractionPrompt(newTarget.displayName, 'E：拿起整理托盤');
+        } else if (this.mailSystem.getEnvelope(newTarget.id)) {
+          // Crosshair inspect (spec三) — reuses this SAME raycast/prompt
+          // path, no second raycasting system.
+          const rec = this.mailSystem.getEnvelope(newTarget.id)!;
+          const dest = getMailDestination(rec.destination);
+          const regionText = dest.region === 'domestic' ? '國內' : '海外';
+          const stampText = rec.state === 'unstamped' ? '未貼票' : '已貼票';
+          this.hud.showInteractionPrompt(
+            newTarget.displayName,
+            `目的地：${dest.displayName}\n地區：${regionText}\n狀態：${stampText}\n按 E 拿起`
+          );
+        } else if (this.mailBagSystem.isBag(newTarget.id)) {
+          const bag = this.mailBagSystem.getBag(newTarget.id)!;
+          const pattern = bag.destinationPattern ? getMailDestination(bag.destinationPattern) : null;
+          const patternText = pattern ? `${pattern.displayName}（${pattern.region === 'domestic' ? '國內' : '海外'}）` : '未設定';
+          const stateText = bag.state === 'sealed' ? '已封閉' : '開啟中';
+          const actionHint = bag.state === 'sealed'
+            ? '按 E 拿起'
+            : this.mailBagSystem.canSeal(newTarget.id)
+              ? 'E：封閉分類袋　F：更改圖樣\n右鍵：取出信封'
+              : 'F：設定圖樣　按 E 拿起';
+          this.hud.showInteractionPrompt(
+            newTarget.displayName,
+            `圖樣：${patternText}\n狀態：${stateText}\n信件數：${bag.envelopeIds.length}／${bag.capacity}\n${actionHint}`
+          );
         } else {
           this.hud.showInteractionPrompt(newTarget.displayName, '按 E 拿起');
         }
@@ -404,6 +487,28 @@ export class InteractionSystem {
         this.hud.showInteractionPrompt('信封貼郵票桌', '請先將信封放到桌面');
         this.hud.setCrosshairActive(false);
       }
+      return;
+    }
+
+    // This round's new mail stamp table (spec四) — a targeted-object crosshair
+    // hit already covers "aim at a specific envelope"; this proximity check
+    // covers "just standing at the table with a ready envelope", matching
+    // the old envelope station's own pattern above.
+    if (this.mailSystem.isPlayerNearTable(this.camera.position)) {
+      if (this.mailSystem.readyEnvelopeId) {
+        this.hud.showInteractionPrompt('信封貼郵票工作桌', '按 E 開始貼郵票');
+        this.hud.setCrosshairActive(true);
+      } else {
+        this.hud.showInteractionPrompt('信封貼郵票工作桌', '請先將信封放到桌面');
+        this.hud.setCrosshairActive(false);
+      }
+      return;
+    }
+
+    // Empty-bag supply rack (spec六).
+    if (this.mailBagSystem.isPlayerNearRack(this.camera.position)) {
+      this.hud.showInteractionPrompt('空封袋供應架', this.mailBagSystem.canSpawnBag ? '按 E 取得新袋' : '空袋數量已達上限');
+      this.hud.setCrosshairActive(this.mailBagSystem.canSpawnBag);
       return;
     }
 
