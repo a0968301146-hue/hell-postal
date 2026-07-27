@@ -5,9 +5,8 @@
 // system exists yet, every entry is unlocked-only-by-future-work.
 
 import { LAND_VEHICLE_CONFIGS, SEA_VEHICLE_CONFIGS, VehicleConfig } from '../systems/vehicle';
-import { CargoType, RouteType } from '../systems/cargo';
+import { CargoType, CARGO_REGION_DISPLAY } from '../systems/cargo';
 
-const ROUTE_TYPE_LABEL: Record<RouteType, string> = { domestic: '國內', overseas: '海外' };
 const CARGO_TYPE_LABEL: Record<CargoType, string> = {
   normal: '普通', large: '大型', fragile: '易碎', frozen: '冷凍', live: '活體',
 };
@@ -20,7 +19,7 @@ export interface VehicleCodexEntry {
   cargoArea: { width: number; length: number; height: number };
   /** Directly from VehicleConfig — this round's test configuration, not a
    * formal world-building rule (spec section十一: "不要寫成正式圖鑑介紹"). */
-  acceptedRouteLabels: string[];
+  acceptedRegionLabels: string[];
   acceptedCargoLabels: string[];
   /** World-building/creature-flavor fields — not written yet this round. */
   traits: string;
@@ -34,7 +33,7 @@ function toCodexEntry(config: VehicleConfig): VehicleCodexEntry {
     transportLabel: config.vehicleType === 'sea' ? '海運' : '陸運',
     dimensions: { width: config.width, length: config.length, height: config.height },
     cargoArea: { width: config.cargoAreaWidth, length: config.cargoAreaLength, height: config.cargoAreaHeight },
-    acceptedRouteLabels: config.acceptedRouteTypes.map((r) => ROUTE_TYPE_LABEL[r]),
+    acceptedRegionLabels: config.acceptedRegions.map((r) => CARGO_REGION_DISPLAY[r]),
     acceptedCargoLabels: config.acceptedCargoTypes.map((c) => CARGO_TYPE_LABEL[c]),
     traits: '尚未收錄',
     description: '尚未收錄',

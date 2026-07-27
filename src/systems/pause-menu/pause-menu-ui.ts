@@ -544,7 +544,7 @@ export class ManualUI {
       <h2 class="manual-page-title">${selected.displayName}</h2>
       <div class="manual-vehicle-preview">${selected.transportLabel === '海運' ? '⛵' : '🚚'}</div>
       <div class="manual-data-row"><span>運輸方式</span><span>${selected.transportLabel}</span></div>
-      <div class="manual-data-row"><span>可受理路線</span><span>${selected.acceptedRouteLabels.join('、')}</span></div>
+      <div class="manual-data-row"><span>可受理路線</span><span>${selected.acceptedRegionLabels.join('、')}</span></div>
       <div class="manual-data-row"><span>可受理貨物</span><span>${selected.acceptedCargoLabels.join('、')}</span></div>
       <div class="manual-data-row"><span>大致裝載空間</span><span>${selected.cargoArea.width.toFixed(1)} × ${selected.cargoArea.length.toFixed(1)} × ${selected.cargoArea.height.toFixed(1)} m</span></div>
       <div class="manual-data-row"><span>特性</span><span>${selected.traits}</span></div>

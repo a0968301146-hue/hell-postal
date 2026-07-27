@@ -109,34 +109,55 @@ export const CARGO_ZONES = [
 /** Land docks — hugs the back area's SOUTH wall, one active slot per land
  * creature ("Expand land entrance and cargo capacity" round — see
  * vehicle-dock-data.ts for the exact per-vehicle world positions these
- * decorative floor markers echo). */
+ * decorative floor markers echo). "Update vehicle cargo compatibility and
+ * capacity" round: centerX/centerZ/width/depth all recomputed to exactly
+ * match each vehicle's own SCALED footprint (VEHICLE_VISUAL_SCALE=1.5, see
+ * vehicle-data.ts) at its new dock position (vehicle-dock-data.ts), so
+ * these decals stay accurate rather than drifting stale under the enlarged
+ * roster. */
 export const LAND_DOCKS = [
-  { id: 'land-dock-frog', centerX: -7, centerZ: 29.5, width: 2.4, depth: 3.6, active: true },
-  { id: 'land-dock-rockgiant', centerX: 0, centerZ: 29.5, width: 3.4, depth: 5.6, active: true },
-  { id: 'land-dock-snail', centerX: 7, centerZ: 29.5, width: 3.0, depth: 4.6, active: true },
+  { id: 'land-dock-frog', centerX: -3.7, centerZ: 28.0, width: 2.25, depth: 3.9, active: true },
+  { id: 'land-dock-rockgiant', centerX: 0, centerZ: 28.0, width: 3.9, depth: 6.9, active: true },
+  { id: 'land-dock-snail', centerX: 4.0, centerZ: 28.0, width: 3.0, depth: 5.1, active: true },
 ];
 
 /** Gap in the back area's south wall the land vehicles drive through —
  * widened ("Expand land entrance and cargo capacity" round) so 青蛙／石頭
  * 巨人／蝸牛 can all pass through side by side, each in its own straight
  * lane (see vehicle-dock-data.ts/vehicle-route-data.ts) rather than
- * funneling through one narrow shared point. Span [-8.4, 8.4] comfortably
- * covers all three vehicles' own dock-lane footprints — frog (dock x=-7,
- * half-width 0.75, left edge -7.75, 0.65m clear of this gate's left edge)
- * out to snail (dock x=7, half-width 1.0, right edge 8.0, 0.4m clear of
- * this gate's right edge) — with real (non-zero) solid wall segments still
- * remaining at both back-area corners (1.6m each side, BACK_AREA spans
- * x -10..10). No longer derived from LAND_DOCKS[0] — a single dock's own X
- * isn't representative of a gate wide enough for all three lanes. */
+ * funneling through one narrow shared point. "Update vehicle cargo
+ * compatibility and capacity" round: span changed from [-8.4, 8.4] to
+ * [-6.0, 6.0] — narrower, not wider, even though every vehicle grew 1.5x —
+ * because the three land vehicles' dock lanes also moved much closer
+ * together (vehicle-dock-data.ts) to fit within BACK_AREA's unchanged
+ * x -10..10 span once scaled, so the gate only needs to be as wide as
+ * those tighter lanes now require. Span [-6.0, 6.0] comfortably covers all
+ * three vehicles' own SCALED dock-lane
+ * footprints — frog (dock x=-3.7, scaled half-width 1.125, left edge
+ * -4.825, 1.175m clear of this gate's left edge) out to snail (dock x=4.0,
+ * scaled half-width 1.5, right edge 5.5, 0.5m clear of this gate's right
+ * edge) — with real (non-zero) solid wall segments still remaining at both
+ * back-area corners (4.0m each side, BACK_AREA spans x -10..10). No longer
+ * derived from LAND_DOCKS[0] — a single dock's own X isn't representative
+ * of a gate wide enough for all three lanes. */
 export const LAND_GATE = {
   centerX: 0,
-  halfWidth: 8.4,
+  halfWidth: 6.0,
 };
 
-/** Pier — now extends off the back area's EAST wall, over open water. */
+/** Pier — now extends off the back area's EAST wall, over open water.
+ * "Update vehicle cargo compatibility and capacity" round: Z-span widened
+ * from 14..22 (8m) to 12..24 (12m) — three sea vehicles' SCALED widths
+ * (VEHICLE_VISUAL_SCALE=1.5, see vehicle-data.ts) no longer fit side by
+ * side in the old 8m depth (2*(1.35+1.65+1.95) = 9.9m needed for the
+ * chassis alone, before any gaps). X-depth (10..18) stays unchanged — every
+ * scaled vehicle's length still fits comfortably within it (see
+ * vehicle-dock-data.ts's SEA_DOCK_SLOTS comments). Widened symmetrically
+ * around the same Z midpoint (18) the old span already used, so nothing
+ * else anchored to that midpoint needs to move. */
 export const PIER = {
   minX: BACK_AREA.maxX, maxX: BACK_AREA.maxX + 8, // depth 8, eastward
-  minZ: 14, maxZ: 22, // width 8, within the back-area hall's depth
+  minZ: 12, maxZ: 24, // width 12, within the back-area hall's depth
   floorY: BACK_AREA.floorY,
   waterY: BACK_AREA.floorY - 0.7,
 };
@@ -168,12 +189,22 @@ export const WORLD_BOUNDS = {
   maxZ: BACK_AREA.maxZ + 40,
 };
 
-/** Vehicle control post — hall center, reachable from the front-office door,
- * the package work zone and both dock areas without blocking the main
- * cargo-carrying paths (sits in the gap between the cargo-zone row and the
- * land dock). Two buttons sit side by side here: 呼叫載具 (centerX -
- * spacing/2, calls land AND sea together) / 載具出發 (centerX + spacing/2). */
-export const VEHICLE_CONTROL_POS = { centerX: 0, centerZ: 25.5, spacing: 1.4 };
+/** Vehicle control post — reachable from the package work zone and both
+ * dock areas without blocking the main cargo-carrying paths. Two buttons
+ * sit side by side here: 呼叫載具 (centerX - spacing/2, calls land AND sea
+ * together) / 載具出發 (centerX + spacing/2).
+ *
+ * "Update vehicle cargo compatibility and capacity" round: moved from
+ * centerX=0 to centerX=-4.5 — at the old x=0, z=25.5, this sat squarely
+ * inside 石頭巨人's enlarged dock footprint (vehicle-dock-data.ts:
+ * z=28.0±3.45 half-length = 24.55..31.45, which now includes z=25.5; the
+ * old x=0 is also exactly this slot's own centerX). z=25.5 itself is still
+ * clear at the new x=-4.5: none of the three land vehicles' dock spans
+ * include x=-4.5 (frog -4.825..-2.575, rockgiant -1.95..1.95, snail
+ * 2.5..5.5), and z=25.5 is itself north of every land vehicle's own front
+ * edge except rockgiant's and snail's, both of which are safely out of
+ * reach in X at this position. */
+export const VEHICLE_CONTROL_POS = { centerX: -4.5, centerZ: 25.5, spacing: 1.4 };
 
 /** How many normal-cargo boxes to spawn in each area, and where — kept
  * central so counts/zones aren't scattered across scene/cargo setup code. */

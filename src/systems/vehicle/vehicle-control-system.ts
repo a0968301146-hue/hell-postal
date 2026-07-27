@@ -49,9 +49,23 @@ function effectiveCargoKind(data: CargoData): CargoType {
  * scanCargoForShipment, which stamps the result onto CargoData.
  * correctlyShipped (Phase 7: 統一狀態來源) — nothing else re-derives this
  * independently; pressDepartButton's scoring and DailyFlowSystem's HUD
- * counts both just read the already-computed field. */
+ * counts both just read the already-computed field.
+ *
+ * "Update vehicle cargo compatibility and capacity" round: now ALSO checks
+ * config.acceptedRegions against data.region (every land vehicle only
+ * 'domestic', every sea vehicle only 'international') — previously only
+ * acceptedCargoTypes was checked, so a domestic-only vehicle would happily
+ * accept an overseas item of a matching category, which is no longer
+ * correct. data.region is null for pre-existing (non-daily) cargo, which
+ * this function is never actually called against in practice (only
+ * dailyFlowSystem.dailyCargoIds items reach here) — the null check is just
+ * defensive. */
 function vehicleAcceptsCargo(config: VehicleConfig, data: CargoData): boolean {
-  return config.acceptedCargoTypes.includes(effectiveCargoKind(data));
+  return (
+    data.region !== null &&
+    config.acceptedRegions.includes(data.region) &&
+    config.acceptedCargoTypes.includes(effectiveCargoKind(data))
+  );
 }
 
 /** Per-vehicle lifecycle. 'departed' is a terminal holding state — the

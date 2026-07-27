@@ -263,6 +263,18 @@ export const CARGO_CATEGORY_LABEL_BG: Record<CargoShapeType, string> = {
  * CargoData stays a single consistent shape, but nothing this round reads
  * them for daily cargo — the real identity is `subtype`/`sizeClass`. */
 export function createDailyCargoData(id: string, preset: CargoSubtypePreset): CargoData {
+  // "貨物種類準心檢視 UI" round: category decided once, at spawn, and never
+  // re-derived from the mesh/subtype/size/color afterward — see
+  // cargo-category-data.ts pickCargoCategory().
+  const category = pickCargoCategory();
+  // Same "decided once, at spawn" rule as `category` above — see
+  // cargo-region-data.ts pickCargoRegion(). "Update vehicle cargo
+  // compatibility and capacity" round: 'live' cargo has no accepting
+  // vehicle for region:'international' this round (spec: "海外活體沒有對應
+  // 載具...暫時禁止生成「海外＋活物」") — force 'domestic' rather than ever
+  // spawning an unshippable combination, instead of a plain independent
+  // pickCargoRegion() call.
+  const region = category === 'live' ? 'domestic' : pickCargoRegion();
   return {
     id,
     cargoType: 'normal',
@@ -276,13 +288,8 @@ export function createDailyCargoData(id: string, preset: CargoSubtypePreset): Ca
     organized: false,
     subtype: preset.subtype,
     sizeClass: preset.sizeClass,
-    // "貨物種類準心檢視 UI" round: decided once, at spawn, and never
-    // re-derived from the mesh/subtype/size/color afterward — see
-    // cargo-category-data.ts pickCargoCategory().
-    category: pickCargoCategory(),
-    // Same "decided once, at spawn" rule as `category` above — see
-    // cargo-region-data.ts pickCargoRegion().
-    region: pickCargoRegion(),
+    category,
+    region,
   };
 }
 
