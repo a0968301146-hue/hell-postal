@@ -4,6 +4,24 @@
  * ("Spawn lost found NPC during unloading and penalize missed interaction"
  * round) — also computed once at the same press-time moment (see
  * vehicle-control-system.ts's pressDepartButton), not re-derived later. */
+/** LostFoundSystem.settleAtDeparture()'s own frozen-at-press-time snapshot
+ * ("Expand lost found return storage and scoring" round 七/八) — the
+ * contract ScoringSystem.settleDeparture() takes in, so LostFoundSystem
+ * never needs to import anything from scoring itself (avoids a
+ * lost-found <-> scoring circular import; scoring-types.ts has no deps of
+ * its own, so it's the neutral home for this shape). */
+export interface LostFoundSettlementInput {
+  /** Today's NPC was never talked to at all before 載具出發 (spec八) — a
+   * separate flat penalty from lostItemUnstoredCount below. */
+  missed: boolean;
+  /** How many lost items (target + decoys) were spawned today. */
+  total: number;
+  /** Whether today's target item was successfully handed to its NPC. */
+  handedOver: 0 | 1;
+  stored: number;
+  unstored: number;
+}
+
 export interface DepartureSettlement {
   total: number;
   shipped: number;
@@ -11,5 +29,13 @@ export interface DepartureSettlement {
   penalty: number;
   lostFoundMissed: boolean;
   lostFoundPenalty: number;
+  /** Lost-item storage settlement fields (spec七: 今日失物總數/成功交還0或1/
+   * 已收納數量/未收納數量/失物收納扣分) — independent of lostFoundMissed/
+   * lostFoundPenalty above (spec: "兩條獨立項目"). */
+  lostItemTotal: number;
+  lostItemHandedOver: 0 | 1;
+  lostItemStoredCount: number;
+  lostItemUnstoredCount: number;
+  lostItemPenalty: number;
   finalScore: number;
 }

@@ -1,6 +1,6 @@
 import { SettingsManager } from '../settings';
-import { UNSHIPPED_PENALTY_PER_ITEM, LOST_FOUND_MISSED_PENALTY } from './scoring-data';
-import { DepartureSettlement } from './scoring-types';
+import { UNSHIPPED_PENALTY_PER_ITEM, LOST_FOUND_MISSED_PENALTY, LOST_ITEM_UNSTORED_PENALTY_PER_ITEM } from './scoring-data';
+import { DepartureSettlement, LostFoundSettlementInput } from './scoring-types';
 
 /**
  * Owns the departure settlement math (spec四-10: 成功出貨數量/未出貨數量/未
@@ -18,23 +18,30 @@ export class ScoringSystem {
     this.settingsManager = settingsManager;
   }
 
-  /** Applies the unshipped penalty (and, if the day's lost-found NPC was
-   * never talked to, LOST_FOUND_MISSED_PENALTY — the ONE place either
-   * penalty is actually applied to the running score, see scoring-data.ts)
-   * and returns the settlement snapshot shown once all vehicles finish
-   * departing. */
-  settleDeparture(total: number, shippedCorrect: number, unshipped: number, lostFoundMissed: boolean): DepartureSettlement {
+  /** Applies the unshipped penalty, the missed-lost-found-NPC penalty, and
+   * the per-unstored-lost-item penalty (the ONE place any of the three is
+   * actually applied to the running score — see scoring-data.ts) and
+   * returns the settlement snapshot shown once all vehicles finish
+   * departing. `lostFound` is LostFoundSystem's own frozen-at-press-time
+   * snapshot (spec七/八: 兩條獨立項目, computed once, not re-derived here). */
+  settleDeparture(total: number, shippedCorrect: number, unshipped: number, lostFound: LostFoundSettlementInput): DepartureSettlement {
     const penalty = unshipped * UNSHIPPED_PENALTY_PER_ITEM;
-    const lostFoundPenalty = lostFoundMissed ? LOST_FOUND_MISSED_PENALTY : 0;
-    const totalPenalty = penalty + lostFoundPenalty;
+    const lostFoundPenalty = lostFound.missed ? LOST_FOUND_MISSED_PENALTY : 0;
+    const lostItemPenalty = lostFound.unstored * LOST_ITEM_UNSTORED_PENALTY_PER_ITEM;
+    const totalPenalty = penalty + lostFoundPenalty + lostItemPenalty;
     if (totalPenalty > 0) this.settingsManager.addScore(-totalPenalty);
     return {
       total,
       shipped: shippedCorrect,
       unshipped,
       penalty,
-      lostFoundMissed,
+      lostFoundMissed: lostFound.missed,
       lostFoundPenalty,
+      lostItemTotal: lostFound.total,
+      lostItemHandedOver: lostFound.handedOver,
+      lostItemStoredCount: lostFound.stored,
+      lostItemUnstoredCount: lostFound.unstored,
+      lostItemPenalty,
       finalScore: this.settingsManager.progress.score,
     };
   }

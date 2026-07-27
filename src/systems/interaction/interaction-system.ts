@@ -186,6 +186,19 @@ export class InteractionSystem {
 
     if (this.playerData.state !== 'empty-handed') return;
 
+    // Priority 0: talk-only interaction at the lost & found counter while
+    // empty-handed (spec三 case3: "沒有持有任何物品——僅視為與NPC互動，顯示
+    // NPC要找的失物名稱與模型，不算完成案件") — the NPC's own head bubble
+    // already shows its target item's name/preview persistently while
+    // waiting, so this press only needs to flip
+    // lostFoundNpcInteractedToday via tryConfirmAtCounter(null). Checked
+    // before the generic pickup priorities below since nothing else should
+    // ever be targetable while standing at the counter.
+    if (this.lostFoundSystem.isNpcWaiting && this.lostFoundSystem.isPlayerNearCounter(this.camera.position)) {
+      this.lostFoundSystem.tryConfirmAtCounter(null);
+      return;
+    }
+
     // Priority 1: pick up targeted object (envelope, package, crate, or the
     // sorting pallet). The pallet goes through its own pickUp() (world-space
     // group-carry, not PickupSystem's viewmodel clone) — see pallet-system.ts.
@@ -305,7 +318,7 @@ export class InteractionSystem {
         this.lostFoundSystem.isNpcWaiting &&
         this.lostFoundSystem.isPlayerNearCounter(this.camera.position)
       ) {
-        this.hud.showInteractionPrompt('失物招領櫃檯', '按 E 交給委託人確認');
+        this.hud.showInteractionPrompt('失物招領櫃檯', 'E 交還失物／與顧客互動');
         this.hud.setCrosshairActive(true);
       }
       return;
@@ -358,6 +371,14 @@ export class InteractionSystem {
   }
 
   private updateStationPrompts(): void {
+    // Lost & found counter — empty-handed talk-only prompt (spec三 case3),
+    // checked first since nothing else is targetable while standing there.
+    if (this.lostFoundSystem.isNpcWaiting && this.lostFoundSystem.isPlayerNearCounter(this.camera.position)) {
+      this.hud.showInteractionPrompt('失物招領櫃檯', 'E 交還失物／與顧客互動');
+      this.hud.setCrosshairActive(true);
+      return;
+    }
+
     // Envelope crate proximity (no direct target)
     if (this.envelopeSystem.isPlayerNearCrate(this.camera.position)) {
       if (this.envelopeSystem.hasEnvelopes()) {

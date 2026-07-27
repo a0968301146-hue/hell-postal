@@ -201,9 +201,10 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     () => settingsManager.fireTutorialEvent('vehicleCalled'),
     () => settingsManager.fireTutorialEvent('cargoLoaded'),
     () => settingsManager.fireTutorialEvent('vehicleDeparted'),
-    // Settles today's lost-found missed-interaction penalty at the exact
-    // moment 載具出發 is pressed — see LostFoundSystem.handleShippingStarted.
-    () => lostFoundSystem.handleShippingStarted(),
+    // Settles today's lost-found missed-interaction AND lost-item storage
+    // penalties at the exact moment 載具出發 is pressed — see
+    // LostFoundSystem.settleAtDeparture.
+    () => lostFoundSystem.settleAtDeparture(),
     ENABLE_VEHICLE_LOADING_FLOW
   );
 

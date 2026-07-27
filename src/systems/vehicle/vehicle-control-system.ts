@@ -14,7 +14,7 @@ import { VehicleSystem } from './vehicle-system';
 import { LAND_VEHICLE_CONFIGS, SEA_VEHICLE_CONFIGS, VehicleConfig } from './vehicle-data';
 import { VEHICLE_ROUTES } from './vehicle-route-data';
 import { VEHICLE_CONTROL_POS, BACK_AREA } from '../world-layout';
-import { ScoringSystem, DepartureSettlement } from '../scoring';
+import { ScoringSystem, DepartureSettlement, LostFoundSettlementInput } from '../scoring';
 import { SCENE_CONFIG } from '../world-layout';
 import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/world-label-system';
 import { HUD } from '../hud';
@@ -131,12 +131,14 @@ export class VehicleControlSystem {
   private onCargoLoaded?: () => void;
   private onVehicleDeparted?: () => void;
   /** Fired once, synchronously, right at 載具出發 press time ("Spawn lost
-   * found NPC during unloading and penalize missed interaction" round) —
-   * returns whether a missed-lost-found-interaction penalty is due, so it
-   * can be folded into the SAME settlement snapshot computed below. Wired
-   * to LostFoundSystem.handleShippingStarted(); this class never inspects
+   * found NPC during unloading and penalize missed interaction" round,
+   * extended "Expand lost found return storage and scoring" round 七/八 to
+   * carry the full lost-item storage settlement too) — returns
+   * LostFoundSystem's own frozen snapshot, folded into the SAME settlement
+   * ScoringSystem.settleDeparture() computes below. Wired to
+   * LostFoundSystem.settleAtDeparture(); this class never inspects
    * lost-found state itself. */
-  private onShippingStarted?: () => boolean;
+  private onShippingStarted?: () => LostFoundSettlementInput;
   private enabled = true;
 
   /** Fixed six slots, built once in the constructor from
@@ -176,7 +178,7 @@ export class VehicleControlSystem {
     onVehicleCalled?: () => void,
     onCargoLoaded?: () => void,
     onVehicleDeparted?: () => void,
-    onShippingStarted?: () => boolean,
+    onShippingStarted?: () => LostFoundSettlementInput,
     enabled: boolean = true
   ) {
     this.scene = scene;
@@ -351,11 +353,14 @@ export class VehicleControlSystem {
     // Settled synchronously, right here at press time (before the six
     // vehicles' multi-second departure animation even starts) — never
     // blocks departure either way ("Spawn lost found NPC during unloading
-    // and penalize missed interaction" round 三). LostFoundSystem decides
-    // WHETHER a penalty is due; the actual deduction happens below, folded
-    // into the same settleDeparture() call as the unshipped-cargo penalty,
-    // so ScoringSystem stays the one place either penalty is applied.
-    const lostFoundMissed = this.onShippingStarted?.() ?? false;
+    // and penalize missed interaction" round 三, extended "Expand lost
+    // found return storage and scoring" round 七/八 to also freeze the
+    // lost-item storage snapshot at this same moment). LostFoundSystem
+    // decides WHETHER either penalty is due; the actual deduction happens
+    // below, folded into the same settleDeparture() call as the
+    // unshipped-cargo penalty, so ScoringSystem stays the one place any of
+    // them is applied.
+    const lostFound = this.onShippingStarted?.() ?? { missed: false, total: 0, handedOver: 0 as const, stored: 0, unstored: 0 };
 
     const slotById = new Map(this.slots.map((s) => [s.config.id, s]));
     let shippedCorrect = 0;
@@ -403,7 +408,7 @@ export class VehicleControlSystem {
       slot.waypointIndex = 0;
     }
 
-    this.pendingSettlement = this.scoringSystem.settleDeparture(this.dailyFlowSystem.totalCargoCount, shippedCorrect, unshipped, lostFoundMissed);
+    this.pendingSettlement = this.scoringSystem.settleDeparture(this.dailyFlowSystem.totalCargoCount, shippedCorrect, unshipped, lostFound);
 
     this.dailyFlowSystem.notifyDeparting();
 
@@ -607,7 +612,9 @@ export class VehicleControlSystem {
   private showDayCompleteSummary(): void {
     const settlement = this.pendingSettlement ?? {
       total: this.dailyFlowSystem.totalCargoCount, shipped: 0, unshipped: 0, penalty: 0,
-      lostFoundMissed: false, lostFoundPenalty: 0, finalScore: this.settingsManager.progress.score,
+      lostFoundMissed: false, lostFoundPenalty: 0,
+      lostItemTotal: 0, lostItemHandedOver: 0 as const, lostItemStoredCount: 0, lostItemUnstoredCount: 0, lostItemPenalty: 0,
+      finalScore: this.settingsManager.progress.score,
     };
     this.pendingSettlement = null;
 
