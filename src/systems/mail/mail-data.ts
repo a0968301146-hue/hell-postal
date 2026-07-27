@@ -140,7 +140,57 @@ function drawBagCanvas(pattern: MailDestinationInfo | null): HTMLCanvasElement {
   return canvas;
 }
 
+/** `side: THREE.DoubleSide` so the shell's INTERIOR face also renders
+ * ("Improve mail table placement and open mail bags" round三: "從上方可看到
+ * 真正內部空間") — the open-top lathe shell below only has outward-facing
+ * normals by default; without this, looking down through the open mouth
+ * would show nothing instead of the bag's own inner surface. */
 export function buildBagMaterial(pattern: MailDestinationInfo | null): THREE.MeshStandardMaterial {
   const canvas = drawBagCanvas(pattern);
-  return new THREE.MeshStandardMaterial({ map: new THREE.CanvasTexture(canvas) });
+  return new THREE.MeshStandardMaterial({ map: new THREE.CanvasTexture(canvas), side: THREE.DoubleSide });
+}
+
+/** Low-poly, irregular open-top sack silhouette ("Improve mail table
+ * placement and open mail bags" round二: "袋口略寬/中間鼓起/底部略窄") — a
+ * THREE.LatheGeometry revolved from a 4-point profile with a LOW radial
+ * segment count for the requested low-poly look. The profile deliberately
+ * does NOT return to radius 0 at the top, so the mouth stays genuinely open
+ * (no cap ever generated there); it DOES start at radius 0 at the bottom, so
+ * the base pinches closed on its own with no separate cap mesh needed —
+ * the whole visual stays exactly one THREE.Mesh (matching
+ * InteractableObject.mesh's own single-Mesh contract). Purely cosmetic: the
+ * REAL collision shape is the separate flat-walled box collider
+ * mail-bag-system.ts builds from the same interior/wallThickness numbers
+ * (spec二: "Collider只能放在：底部/左側/右側/前側/後側"), never this shape. */
+export function buildBagGeometry(interiorWidth: number, interiorDepth: number, interiorHeight: number, wallThickness: number): THREE.LatheGeometry {
+  const totalHeight = interiorHeight + wallThickness; // bottom wall only — top stays open
+  const bottomY = -totalHeight / 2;
+  const topY = totalHeight / 2; // mouth plane = interior top, no wall there
+  const avgHalf = (interiorWidth / 2 + interiorDepth / 2) / 2 + wallThickness;
+  const bottomRadius = avgHalf * 0.5;
+  const bulgeRadius = avgHalf * 1.4; // 中間鼓起 — the widest point
+  const mouthRadius = avgHalf * 1.3; // 袋口略寬 — slightly narrower than the bulge
+
+  const points = [
+    new THREE.Vector2(0, bottomY),
+    new THREE.Vector2(bottomRadius, bottomY + totalHeight * 0.12),
+    new THREE.Vector2(bulgeRadius, (bottomY + topY) / 2),
+    new THREE.Vector2(mouthRadius, topY),
+  ];
+  return new THREE.LatheGeometry(points, 8);
+}
+
+/** Sealed-bag cinch ring ("Improve mail table placement and open mail bags"
+ * round五: sealed需"新增收束袋口或綁繩視覺") — a thin torus sitting just
+ * below the mouth, toggled visible only while `state === 'sealed'`
+ * (mail-bag-system.ts adds this once at spawn and flips `.visible`, rather
+ * than rebuilding geometry on every seal/unseal). */
+export function buildBagCinchRing(mouthRadius: number, y: number): THREE.Mesh {
+  const geo = new THREE.TorusGeometry(mouthRadius * 0.75, mouthRadius * 0.12, 6, 10);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x3a2a1a });
+  const ring = new THREE.Mesh(geo, mat);
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = y;
+  ring.visible = false;
+  return ring;
 }

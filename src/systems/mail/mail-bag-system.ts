@@ -4,30 +4,57 @@ import { InteractableObject, createInteractableObject } from '../../shared/types
 import { PickupPort } from '../../shared/types/pickup-port';
 import { HUD } from '../hud';
 import { SCENE_CONFIG, BACK_AREA } from '../world-layout';
-import { BAG_RACK, MAIL_BAG_SIZE } from '../../data/world/mail-layout-data';
+import { BAG_RACK, MAIL_BAG_INTERIOR, MAIL_BAG_WALL_THICKNESS, ENVELOPE_SIZE } from '../../data/world/mail-layout-data';
 import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/world-label-system';
 import { MailBagRecord } from './mail-types';
-import { MAIL_DESTINATIONS, MAX_OPEN_BAGS, MAIL_BAG_CAPACITY, getMailDestination, buildBagMaterial } from './mail-data';
+import { MAIL_DESTINATIONS, MAX_OPEN_BAGS, MAIL_BAG_CAPACITY, getMailDestination, buildBagMaterial, buildBagGeometry, buildBagCinchRing } from './mail-data';
 import { MailSystem } from './mail-system';
 
 const BAG_ID_PREFIX = 'mailbag-';
-const BAG_INSERT_RADIUS = 0.32;
+
+/** Overall bag footprint — interior cavity (mail-layout-data.ts) plus wall
+ * thickness on X/Z (both sides) and Y (bottom only — the top stays open,
+ * spec二: "袋口上方不得有Mesh或Collider封住"). Computed once, shared by every
+ * bag instance's mesh/collider/interior-bounds math below. */
+const TOTAL_WIDTH = MAIL_BAG_INTERIOR.width + 2 * MAIL_BAG_WALL_THICKNESS;
+const TOTAL_DEPTH = MAIL_BAG_INTERIOR.depth + 2 * MAIL_BAG_WALL_THICKNESS;
+const TOTAL_HEIGHT = MAIL_BAG_INTERIOR.height + MAIL_BAG_WALL_THICKNESS;
+
+/** Local-space (bag-mesh-relative) interior cavity bounds — every bag shares
+ * this same shape, so it's computed once rather than per-instance. Used by
+ * attemptInsert's "did the envelope's center genuinely enter the interior"
+ * judgment (spec三). Assumes the bag mesh stays close to axis-aligned (this
+ * game's general fidelity level — matches every other static-bounds check
+ * in this codebase, e.g. lost-found-cabinet-system.ts's own slotBounds). */
+const LOCAL_INTERIOR_BOUNDS = {
+  minX: -MAIL_BAG_INTERIOR.width / 2, maxX: MAIL_BAG_INTERIOR.width / 2,
+  minY: -TOTAL_HEIGHT / 2 + MAIL_BAG_WALL_THICKNESS, maxY: TOTAL_HEIGHT / 2,
+  minZ: -MAIL_BAG_INTERIOR.depth / 2, maxZ: MAIL_BAG_INTERIOR.depth / 2,
+};
 
 interface BagRuntime {
   label: THREE.Sprite;
-  /** Reset once the last insertion attempt's envelope leaves range, so a
-   * failed attempt's toast doesn't spam every frame while it just sits
-   * there (spec七: 失敗時顯示原因一次即可). */
+  cinchRing: THREE.Mesh;
+  /** Reset once the last insertion attempt's envelope leaves the interior
+   * bounds, so a failed attempt's toast doesn't spam every frame while it
+   * just sits there (spec: 失敗時顯示原因一次即可). */
   lastAttemptedEnvelopeId: string | null;
 }
 
 /**
  * Owns the empty-bag supply rack and every MailBag's own lifecycle — spawn
  * (spec六), pattern selection (spec六), physical envelope insertion (spec
- *七), and sealing (spec八). Calls back into MailSystem to keep an
- * envelope's own state (bagged/unbagged) as the single source of truth
- * there (spec: envelope state lives in ONE place) — this class only owns
- * bag records and the bag's own InteractableObject.
+ * 七), and sealing (spec八). "Improve mail table placement and open mail
+ * bags" round: bags are now genuine open-top containers — a low-poly Lathe
+ * shell (mail-data.ts's buildBagGeometry, purely visual) over a COMPOUND
+ * physics body of 5 separate box colliders (bottom + left/right/front/back
+ * walls, attached to one dynamic RigidBody via PhysicsSystem.
+ * addColliderToBody) — never a single solid box, and never anything at the
+ * open mouth, so the interior is genuinely hollow both visually and
+ * physically. Calls back into MailSystem to keep an envelope's own state
+ * (bagged/unbagged) as the single source of truth there (spec: envelope
+ * state lives in ONE place) — this class only owns bag records and the
+ * bag's own InteractableObject.
  */
 export class MailBagSystem {
   private scene: THREE.Scene;
@@ -88,7 +115,9 @@ export class MailBagSystem {
   }
 
   /** Spawns one new open, pattern-unset MailBag near the rack (spec六: "場上
-   * 空袋上限8個，不可無限生成"). No-op past the cap. */
+   * 空袋上限8個，不可無限生成"). No-op past the cap. Builds the open-top
+   * shell + compound (bottom/left/right/front/back, no top) collider —
+   * see the class doc comment above. */
   trySpawnBag(): void {
     if (!this.canSpawnBag) {
       this.hud.showToast('空袋數量已達上限');
@@ -98,28 +127,42 @@ export class MailBagSystem {
     const id = `${BAG_ID_PREFIX}${this.bagInstanceCounter++}`;
     const x = BAG_RACK.posX + (Math.random() - 0.5) * 0.6;
     const z = BAG_RACK.posZ + BAG_RACK.depth / 2 + 0.5 + Math.random() * 0.4;
-    const y = BACK_AREA.floorY + MAIL_BAG_SIZE.height / 2 + 0.05;
+    const y = BACK_AREA.floorY + TOTAL_HEIGHT / 2 + 0.05;
 
-    const geo = new THREE.BoxGeometry(MAIL_BAG_SIZE.width, MAIL_BAG_SIZE.height, MAIL_BAG_SIZE.depth);
+    const geo = buildBagGeometry(MAIL_BAG_INTERIOR.width, MAIL_BAG_INTERIOR.depth, MAIL_BAG_INTERIOR.height, MAIL_BAG_WALL_THICKNESS);
     const mat = buildBagMaterial(null);
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(x, y, z);
     this.scene.add(mesh);
 
-    const obj = createInteractableObject(id, '空分類袋', mesh, MAIL_BAG_SIZE.width, MAIL_BAG_SIZE.height, MAIL_BAG_SIZE.depth);
-    const { body, collider } = this.physics.createBoxBody(x, y, z, MAIL_BAG_SIZE.width / 2, MAIL_BAG_SIZE.height / 2, MAIL_BAG_SIZE.depth / 2, 8);
+    const obj = createInteractableObject(id, '空分類袋', mesh, TOTAL_WIDTH, TOTAL_HEIGHT, TOTAL_DEPTH);
+
+    const bodyDesc = this.physics.createDynamicBodyDesc(x, y, z, 8);
+    const body = this.physics.createDynamicBody(bodyDesc);
+    const wt = MAIL_BAG_WALL_THICKNESS;
+    const wallLocalY = -TOTAL_HEIGHT / 2 + wt + MAIL_BAG_INTERIOR.height / 2;
+    const bottomCollider = this.physics.addColliderToBody(body, 0, -TOTAL_HEIGHT / 2 + wt / 2, 0, TOTAL_WIDTH / 2, wt / 2, TOTAL_DEPTH / 2);
+    this.physics.addColliderToBody(body, -(MAIL_BAG_INTERIOR.width / 2 + wt / 2), wallLocalY, 0, wt / 2, MAIL_BAG_INTERIOR.height / 2, TOTAL_DEPTH / 2); // left
+    this.physics.addColliderToBody(body, (MAIL_BAG_INTERIOR.width / 2 + wt / 2), wallLocalY, 0, wt / 2, MAIL_BAG_INTERIOR.height / 2, TOTAL_DEPTH / 2); // right
+    this.physics.addColliderToBody(body, 0, wallLocalY, -(MAIL_BAG_INTERIOR.depth / 2 + wt / 2), TOTAL_WIDTH / 2, MAIL_BAG_INTERIOR.height / 2, wt / 2); // back
+    this.physics.addColliderToBody(body, 0, wallLocalY, (MAIL_BAG_INTERIOR.depth / 2 + wt / 2), TOTAL_WIDTH / 2, MAIL_BAG_INTERIOR.height / 2, wt / 2); // front
     obj.rigidBody = body;
-    obj.collider = collider;
+    obj.collider = bottomCollider;
     this.interactables.set(id, obj);
 
     const label = createFloatingLabel('未設定\n0 封信', { width: 0.7, bg: 'rgba(20,20,20,0.75)' });
-    label.position.set(0, MAIL_BAG_SIZE.height / 2 + 0.35, 0);
+    label.position.set(0, TOTAL_HEIGHT / 2 + 0.35, 0);
     mesh.add(label);
+
+    // Sealed-state cinch ring — built once, toggled visible only while
+    // sealed (spec五) rather than rebuilt on every seal/unseal.
+    const cinchRing = buildBagCinchRing(MAIL_BAG_INTERIOR.width / 2 + wt, TOTAL_HEIGHT / 2 - 0.02);
+    mesh.add(cinchRing);
 
     this.bags.set(id, {
       bagId: id, destinationPattern: null, region: null, state: 'open', envelopeIds: [], capacity: MAIL_BAG_CAPACITY,
     });
-    this.bagRuntime.set(id, { label, lastAttemptedEnvelopeId: null });
+    this.bagRuntime.set(id, { label, cinchRing, lastAttemptedEnvelopeId: null });
     updateFloatingLabel(this.rackLabel, this.rackLabelText());
   }
 
@@ -156,6 +199,7 @@ export class MailBagSystem {
     obj.mesh.material = buildBagMaterial(pattern);
     oldMat.dispose();
     if (runtime) {
+      runtime.cinchRing.visible = bag.state === 'sealed';
       const regionText = bag.region ? (bag.region === 'domestic' ? '國內' : '海外') : '';
       const patternText = pattern ? `${pattern.icon}${pattern.displayName}` : '未設定';
       const sealedText = bag.state === 'sealed' ? '（已封閉）' : '';
@@ -165,8 +209,9 @@ export class MailBagSystem {
 
   /** Attempts to seal `bagId` (spec八) — requires an open bag with a pattern
    * set and at least one envelope. Locks pattern/region, blocks further
-   * insertion/removal, and makes the bag a normal pickupable/placeable
-   * InteractableObject (it already was one; sealing only flips `state` and
+   * insertion/removal (spec五: "關閉袋內sensor/不可再投入或取出"), shows the
+   * cinch-ring visual, and leaves the bag a normal pickupable/placeable
+   * InteractableObject (it already was one — sealing only flips `state` and
    * the visual/label). */
   trySeal(bagId: string): void {
     const bag = this.bags.get(bagId);
@@ -182,7 +227,10 @@ export class MailBagSystem {
   }
 
   /** Removes the most-recently-inserted envelope from an OPEN bag (spec七:
-   * "封袋前可以取出信封") — makes it visible/physical again near the bag. */
+   * "封袋前可以取出信封") — un-parents it from the bag's own mesh (spec三's
+   * "跟隨袋子移動" is implemented by literally parenting a bagged envelope's
+   * mesh under the bag's own THREE.Mesh; taking it out reverses that) and
+   * makes it visible/physical again just outside the bag. */
   tryTakeOutLast(bagId: string): void {
     const bag = this.bags.get(bagId);
     if (!bag || bag.state !== 'open' || bag.envelopeIds.length === 0) return;
@@ -191,12 +239,18 @@ export class MailBagSystem {
     const obj = this.interactables.get(envelopeId);
     const bagObj = this.interactables.get(bagId);
     if (obj && bagObj) {
+      const worldPos = new THREE.Vector3();
+      obj.mesh.getWorldPosition(worldPos);
+      bagObj.mesh.remove(obj.mesh);
+      this.scene.add(obj.mesh);
+      obj.mesh.rotation.set(0, 0, 0);
       obj.mesh.visible = true;
       obj.canPickUp = true;
       const p = bagObj.mesh.position;
-      obj.mesh.position.set(p.x + (Math.random() - 0.5) * 0.3, p.y + MAIL_BAG_SIZE.height / 2 + 0.1, p.z + (Math.random() - 0.5) * 0.3);
+      obj.mesh.position.set(p.x + (Math.random() - 0.5) * 0.3, p.y + TOTAL_HEIGHT / 2 + 0.1, p.z + (Math.random() - 0.5) * 0.3);
       if (obj.rigidBody) {
         obj.rigidBody.setTranslation(obj.mesh.position, true);
+        obj.rigidBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
         obj.rigidBody.setLinvel({ x: 0, y: 0.5, z: 0 }, true);
         this.physics.setBodyEnabled(obj.rigidBody, true);
       }
@@ -223,7 +277,11 @@ export class MailBagSystem {
 
   /** Called by VehicleControlSystem once per bag it's decided departed —
    * lets tomorrow's resetDaily() skip anything already gone, and stops this
-   * class's own bookkeeping map from growing across days indefinitely. */
+   * class's own bookkeeping map from growing across days indefinitely.
+   * Bagged-envelope children ride along with the bag's own mesh removal —
+   * MailSystem's own resetDaily() (called separately, right after this one)
+   * disposes every remaining envelope interactable regardless of its
+   * current parent, so nothing here needs to explicitly detach them first. */
   removeShippedBag(bagId: string): void {
     const obj = this.interactables.get(bagId);
     if (obj) {
@@ -241,37 +299,46 @@ export class MailBagSystem {
     this.updateInsertion(deltaTime);
   }
 
-  /** Passive per-bag insertion sensor (spec七: "玩家將信封物理放進袋口") —
-   * mirrors MailSystem's own stamp-table sensor pattern, but distance-based
-   * rather than a static Box3 since bags are mobile props. Any stamped,
-   * not-yet-bagged envelope that settles within BAG_INSERT_RADIUS of an
-   * OPEN bag attempts insertion exactly once per approach (guarded by
-   * lastAttemptedEnvelopeId so a stationary failed envelope doesn't spam
-   * the failure toast every frame). */
+  /** Passive per-bag insertion sensor (spec三: "玩家必須真的將信封從袋口放
+   * 入袋內...使用袋內sensor／interiorBounds判定：信封中心從袋口進入內部，信
+   * 封位於袋子內部範圍") — checks each unbagged envelope's WORLD position
+   * against the bag's CURRENT world-space interior cavity (LOCAL_INTERIOR_
+   * BOUNDS offset by the bag's own live position), not mere proximity to the
+   * bag's outside. Since the only way into that interior volume is down
+   * through the genuinely open top (every other side is a real wall
+   * collider), an envelope merely resting against an outer wall face never
+   * satisfies this check — it has to have actually gone in through the
+   * mouth. One attempt per approach (guarded by lastAttemptedEnvelopeId) so
+   * a stationary failed envelope doesn't spam the failure toast. */
   private updateInsertion(_deltaTime: number): void {
     for (const bag of this.bags.values()) {
       if (bag.state !== 'open') continue;
       const bagObj = this.interactables.get(bag.bagId);
       const runtime = this.bagRuntime.get(bag.bagId);
       if (!bagObj || !runtime) continue;
+      const bp = bagObj.mesh.position;
 
-      let nearbyId: string | null = null;
+      let insideId: string | null = null;
       for (const id of this.trackedUnbaggedEnvelopeIds()) {
         const obj = this.interactables.get(id);
         if (!obj || obj.isHeld || !obj.mesh.visible) continue;
-        const dx = obj.mesh.position.x - bagObj.mesh.position.x;
-        const dy = obj.mesh.position.y - bagObj.mesh.position.y;
-        const dz = obj.mesh.position.z - bagObj.mesh.position.z;
-        if (Math.sqrt(dx * dx + dy * dy + dz * dz) < BAG_INSERT_RADIUS) { nearbyId = id; break; }
+        const lx = obj.mesh.position.x - bp.x;
+        const ly = obj.mesh.position.y - bp.y;
+        const lz = obj.mesh.position.z - bp.z;
+        if (
+          lx >= LOCAL_INTERIOR_BOUNDS.minX && lx <= LOCAL_INTERIOR_BOUNDS.maxX &&
+          ly >= LOCAL_INTERIOR_BOUNDS.minY && ly <= LOCAL_INTERIOR_BOUNDS.maxY &&
+          lz >= LOCAL_INTERIOR_BOUNDS.minZ && lz <= LOCAL_INTERIOR_BOUNDS.maxZ
+        ) { insideId = id; break; }
       }
 
-      if (!nearbyId) {
+      if (!insideId) {
         runtime.lastAttemptedEnvelopeId = null;
         continue;
       }
-      if (runtime.lastAttemptedEnvelopeId === nearbyId) continue; // already attempted this approach
-      runtime.lastAttemptedEnvelopeId = nearbyId;
-      this.attemptInsert(nearbyId, bag.bagId);
+      if (runtime.lastAttemptedEnvelopeId === insideId) continue; // already attempted this approach
+      runtime.lastAttemptedEnvelopeId = insideId;
+      this.attemptInsert(insideId, bag.bagId);
     }
   }
 
@@ -288,6 +355,14 @@ export class MailBagSystem {
     return ids;
   }
 
+  /** On success, the envelope is re-parented under the bag's own mesh at a
+   * fixed local slot (spec三: "可將信封保存為相對袋子的局部位置，跟隨袋子移
+   * 動") — reparenting under the bag's THREE.Mesh means every subsequent
+   * frame's bag movement (held/thrown/placed/pinned-for-departure) carries
+   * it along for free via the normal scene-graph transform, no per-frame
+   * position-copying code needed anywhere. On any failure the envelope is
+   * untouched — stays exactly where it physically is, still fully normal
+   * (spec: "未貼票、圖樣錯誤或袋子已滿時，信封保持正常物理，不得消失"). */
   private attemptInsert(envelopeId: string, bagId: string): void {
     const rec = this.mailSystem.getEnvelope(envelopeId);
     const bag = this.bags.get(bagId);
@@ -304,14 +379,22 @@ export class MailBagSystem {
       return;
     }
 
+    const obj = this.interactables.get(envelopeId);
+    const bagObj = this.interactables.get(bagId);
+    if (obj && bagObj) {
+      if (obj.rigidBody) this.physics.setBodyEnabled(obj.rigidBody, false);
+      bagObj.mesh.add(obj.mesh);
+      const stackIndex = bag.envelopeIds.length;
+      const localY = LOCAL_INTERIOR_BOUNDS.minY + ENVELOPE_SIZE.height / 2 + stackIndex * (ENVELOPE_SIZE.height + 0.005);
+      const jitterRangeX = Math.max(0, MAIL_BAG_INTERIOR.width - ENVELOPE_SIZE.width) * 0.4;
+      const jitterRangeZ = Math.max(0, MAIL_BAG_INTERIOR.depth - ENVELOPE_SIZE.depth) * 0.4;
+      obj.mesh.position.set((Math.random() - 0.5) * jitterRangeX, localY, (Math.random() - 0.5) * jitterRangeZ);
+      obj.mesh.rotation.set(0, 0, 0);
+      obj.canPickUp = false;
+    }
+
     bag.envelopeIds.push(envelopeId);
     this.mailSystem.setEnvelopeBagged(envelopeId, bagId);
-    const obj = this.interactables.get(envelopeId);
-    if (obj) {
-      obj.mesh.visible = false;
-      obj.canPickUp = false;
-      if (obj.rigidBody) this.physics.setBodyEnabled(obj.rigidBody, false);
-    }
     this.refreshBagVisual(bagId);
   }
 
