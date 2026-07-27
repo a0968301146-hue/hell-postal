@@ -104,21 +104,25 @@ export function computeLostItemFitScale(visualHalfExtents: { x: number; y: numbe
  * same pattern as lost-found-system.ts's counter).
  *
  * "Fix lost found cabinet storage space" round: rebuilt from a solid block
- * with painted-on divider lines (every cell's own "interior" was actually
- * 100% filled by a full-depth back-panel collider, so nothing could ever
- * physically rest inside one) into cells with a genuinely open, hollow
- * interior. Collider only ever exists on the outer frame / left-right
- * dividers / horizontal shelves / the single rear back panel — the front
- * face of every cell is left completely clear (spec一). Every shelf,
- * divider, and the back panel is ALSO registered as a PickupSystem
- * placement surface: shelves are real (top-facing-normal) placement
- * targets, while dividers/the back panel exist in that same list purely so
- * PickupSystem's own existing raycast correctly stops AT them (their
- * exposed faces are vertical, so PickupSystem's "must be a top-facing
- * surface" check already rejects them as placement targets) instead of the
- * ray passing straight through into a neighboring cell (spec四: "射線命中隔
- * 板時不可把物品生成到另一格") — no second placement system, no
- * PickupSystem changes needed.
+ * with painted-on divider lines into cells with a genuinely open, hollow
+ * interior. "Fix hollow lost found cabinet placement" round: that fix's own
+ * full-depth back PANEL — though thin front-to-back — still sat squarely
+ * facing the player's own sightline, so it visually read as one solid wall
+ * filling every cell; replaced with slender per-row anti-fall RAILS (spec
+ * 一) that leave each cell's interior genuinely visible from the front.
+ * Collider only ever exists on the outer frame / left-right dividers /
+ * horizontal shelves / those rear rails — the front face of every cell is
+ * left completely clear (spec一). Every shelf, divider, and rail is ALSO
+ * registered as a PickupSystem placement surface: shelves are real
+ * (top-facing-normal) placement targets, while dividers/rails exist in that
+ * same list purely so PickupSystem's own existing raycast correctly stops
+ * AT them (their exposed faces are vertical, so PickupSystem's "must be a
+ * top-facing surface" check already rejects them as placement targets)
+ * instead of the ray passing straight through into a neighboring cell
+ * (spec: "射線命中隔板時不可把物品生成到另一格") — no second placement
+ * system, no PickupSystem raycast-logic changes needed (only a minimal
+ * "which surface is this" wiring addition — see pickup-system.ts's
+ * `previewIsLostFoundShelf`).
  *
  * Purely passive detection otherwise, no forced snapping or mini-game — see
  * update() below, which just watches which cell each tracked item's center
@@ -159,34 +163,55 @@ export class LostFoundCabinetSystem {
     const centerY = floorY + totalHeight / 2;
     const leftZ = centerZ - totalWidth / 2;
 
-    // backInnerX = the back panel's own FRONT face = the rear boundary of
-    // every cell's real interior. frontX = the cabinet's open front plane —
-    // no collider is ever built at this X coordinate (spec一: "櫃子正面不得
-    // 存在整片封閉Collider").
+    // backInnerX = the rear structural zone's own front edge = the rear
+    // boundary of every cell's real interior (the rails built below sit
+    // centered within this same zone). frontX = the cabinet's open front
+    // plane — no collider is ever built at this X coordinate (spec一: "櫃子
+    // 正面不得存在整片封閉Collider").
     const backInnerX = centerX - totalDepth / 2 + backT;
     const frontX = centerX + totalDepth / 2;
     const structDepth = frontX - backInnerX; // == CELL_INTERIOR.depth
     const structCenterX = (backInnerX + frontX) / 2;
 
-    // Back panel — the ONE piece spanning the full depth, and only this
-    // one (spec一: Collider只能建立在外框/隔板/層板/背板).
+    // Rear anti-fall bars ("Fix hollow lost found cabinet placement" round
+    // 一: replaces the old full-depth solid back panel, which — even though
+    // it was only backT=0.05 thick — sat perpendicular to the player's own
+    // sightline into the cabinet, so its full totalHeight x totalWidth face
+    // visually read as one solid wall filling every cell, hiding the real
+    // open interior behind it). ONE slender bar per row, spanning the full
+    // width at that row's own mid-height only — thin enough, and covering
+    // only a small fraction of each cell's own height, that the shelf/back
+    // wall behind each cell stays clearly visible through the opening
+    // (spec一: "每一格從正面看必須能清楚看到空的內部空間"). Still a real
+    // static collider (stops an item from being shoved out through the
+    // wall) and still registered as a placement surface purely so
+    // PickupSystem's own raycast stops here instead of passing through —
+    // its vertical-normal face never passes PickupSystem's "must be
+    // top-facing" check, so it can never itself become a valid placement
+    // target.
     const frameMat = new THREE.MeshStandardMaterial({ color: 0x5a4530 });
-    const backGeo = new THREE.BoxGeometry(backT, totalHeight, totalWidth);
-    const backMesh = new THREE.Mesh(backGeo, frameMat);
-    backMesh.position.set(centerX - totalDepth / 2 + backT / 2, centerY, centerZ);
-    scene.add(backMesh);
-    physics.createStaticCuboid(backMesh.position.x, centerY, centerZ, backT / 2, totalHeight / 2, totalWidth / 2);
-    // Registered purely so PickupSystem's own raycast stops here instead of
-    // passing through to whatever's beyond — its vertical-normal face never
-    // passes PickupSystem's own top-facing-surface check, so it can never
-    // itself become a valid placement target.
-    pickupSystem.addPlacementSurface(backMesh);
+    const railHeight = 0.04;
+    const railX = centerX - totalDepth / 2 + backT / 2;
+    for (let r = 0; r < rows; r++) {
+      const railCenterY = floorY + shelfT + r * (shelfT + CELL_INTERIOR.height) + CELL_INTERIOR.height / 2;
+      const railGeo = new THREE.BoxGeometry(backT, railHeight, totalWidth);
+      const rail = new THREE.Mesh(railGeo, frameMat);
+      rail.position.set(railX, railCenterY, centerZ);
+      scene.add(rail);
+      physics.createStaticCuboid(railX, railCenterY, centerZ, backT / 2, railHeight / 2, totalWidth / 2);
+      pickupSystem.addPlacementSurface(rail);
+    }
 
     // Horizontal shelves (rows+1) — real floors/ceilings each cell rests
     // between, spanning the open interior depth (never past the front
     // plane) and the cabinet's full width. Registered as placement
     // surfaces — a shelf's top face is what actually makes it a valid
-    // PickupSystem placement target.
+    // PickupSystem placement target. Tagged `lostFoundShelf` so
+    // pickup-system.ts can recognize "aiming at a cabinet cell's own floor"
+    // specifically, for the dedicated "E 放入失物" prompt/confirm this round
+    // adds — a plain additive marker that the existing `surfaceType`
+    // whitelist filter never inspects, so it has zero effect on any other
+    // placement surface's existing behavior.
     const shelfMat = new THREE.MeshStandardMaterial({ color: 0x6b5540 });
     const shelfYs: number[] = [];
     {
@@ -197,6 +222,7 @@ export class LostFoundCabinetSystem {
         const shelfGeo = new THREE.BoxGeometry(structDepth, shelfT, totalWidth);
         const shelf = new THREE.Mesh(shelfGeo, shelfMat);
         shelf.position.set(structCenterX, shelfCenterY, centerZ);
+        shelf.userData.lostFoundShelf = true;
         scene.add(shelf);
         physics.createStaticCuboid(structCenterX, shelfCenterY, centerZ, structDepth / 2, shelfT / 2, totalWidth / 2);
         pickupSystem.addPlacementSurface(shelf);

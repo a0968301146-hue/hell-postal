@@ -34,6 +34,13 @@ export class PickupSystem implements PickupPort {
   private previewMesh: THREE.Mesh | null = null;
   private previewValid = false;
   private placementRaycaster: THREE.Raycaster;
+  /** True while the current placement preview is resting on a lost-found
+   * cabinet cell's own shelf (`userData.lostFoundShelf`, set by
+   * lost-found-cabinet-system.ts — "Fix hollow lost found cabinet
+   * placement" round). Drives the "E 放入失物" prompt/confirm below —
+   * every other placement surface (floor, tables, pallet, cargo) is
+   * untouched, still confirmed by left-click only, exactly as before. */
+  private previewIsLostFoundShelf = false;
 
   // Charge/throw
   private isCharging = false;
@@ -655,6 +662,8 @@ export class PickupSystem implements PickupPort {
     const obj = this.interactables.get(this.playerData.heldObjectId);
     if (!obj) return;
 
+    this.previewIsLostFoundShelf = false;
+
     const direction = new THREE.Vector3();
     this.camera.getWorldDirection(direction);
     this.placementRaycaster.set(this.camera.position, direction);
@@ -708,6 +717,12 @@ export class PickupSystem implements PickupPort {
     }
 
     const hit = intersects[0];
+    // "Fix hollow lost found cabinet placement" round: recognize a
+    // lost-found cabinet cell's own shelf specifically (see
+    // lost-found-cabinet-system.ts's `userData.lostFoundShelf` tag) so the
+    // prompt/confirm-input below can special-case it — every other surface
+    // (floor, tables, pallet, cargo) leaves this false, unaffected.
+    this.previewIsLostFoundShelf = !!hit.object.userData.lostFoundShelf;
     let worldNormal = new THREE.Vector3(0, 1, 0);
     if (hit.face) {
       worldNormal = hit.face.normal.clone();
@@ -739,7 +754,15 @@ export class PickupSystem implements PickupPort {
     this.previewValid = this.validatePlacement(this.previewMesh.position, obj);
     const mat = this.previewMesh.material as THREE.MeshStandardMaterial;
     mat.color.setHex(this.previewValid ? 0x00ff00 : 0xff0000);
-    this.hud.showPlacementPrompt(this.previewValid);
+    // "Fix hollow lost found cabinet placement" round 二: a dedicated
+    // "E 放入失物" prompt while aiming at an empty cabinet cell — every
+    // other placement target keeps the existing left-click prompt
+    // unchanged (spec: 不要修改貨物與載具).
+    if (this.previewIsLostFoundShelf) {
+      this.hud.showInteractionPrompt('失物收納格', this.previewValid ? 'E 放入失物' : '此格已被佔用或空間不足');
+    } else {
+      this.hud.showPlacementPrompt(this.previewValid);
+    }
   }
 
   private validatePlacement(position: THREE.Vector3, obj: InteractableObject): boolean {
@@ -801,6 +824,7 @@ export class PickupSystem implements PickupPort {
       this.previewMesh = null;
     }
     this.previewValid = false;
+    this.previewIsLostFoundShelf = false;
   }
 
   // --- INPUT ---
@@ -817,6 +841,22 @@ export class PickupSystem implements PickupPort {
     if (event.repeat) return;
     if (this.settingsManager.inputBindings.matches('chargeThrow', event.code) && this.playerData.state === 'holding-item') {
       this.startCharge();
+    }
+    // "Fix hollow lost found cabinet placement" round 二: E also confirms
+    // placement (in addition to the existing left-click path above) while
+    // aiming at a valid, empty lost-found cabinet cell — reuses the exact
+    // same confirmPlacement() every other placement already commits
+    // through (real Rigidbody/Collider re-enabled, no teleport-into-a-data-
+    // slot, no forced snapping). Scoped to previewIsLostFoundShelf so every
+    // other placement target (cargo, pallet, tables) keeps its existing
+    // left-click-only confirm, unchanged. InteractionSystem's own E handler
+    // already no-ops entirely during 'placement-preview' state, so there's
+    // no double-handling between the two listeners.
+    if (
+      this.playerData.state === 'placement-preview' && this.previewIsLostFoundShelf && this.previewValid &&
+      (this.settingsManager.inputBindings.matches('interact', event.code) || this.settingsManager.inputBindings.matches('pickupPlace', event.code))
+    ) {
+      this.confirmPlacement();
     }
   }
 
