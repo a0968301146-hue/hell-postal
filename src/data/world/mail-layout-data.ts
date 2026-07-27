@@ -14,6 +14,7 @@
 // logistics-layout-data.ts beyond the one explicit BACK_AREA/WALL_THICKNESS
 // import below.
 import { BACK_AREA, WALL_THICKNESS } from '../../systems/world-layout/logistics-layout-data';
+import { CARGO_BOX_PRESETS } from '../../systems/cargo/cargo-data';
 
 export const MAIL_WORK_AREA_X = -8;
 export const MAIL_WORK_AREA_Z = 17.0;
@@ -93,22 +94,23 @@ export const ENVELOPE_SIZE = {
   depth: 0.17,
 };
 
-/** Mail bag INTERIOR — a genuine open-top cavity now ("Improve mail table
- * placement and open mail bags" round二/四), not a solid box. width/depth
- * comfortably exceed 1.25x ENVELOPE_SIZE's own plane dims (spec四:
- * 0.24*1.25=0.30 / 0.17*1.25=0.2125 minimums — width=0.32/depth=0.24 here
- * both clear that with margin) and height leaves room to stack up to
- * MAIL_BAG_CAPACITY (12, mail-data.ts) envelopes (12 * ENVELOPE_SIZE.height
- * plus per-item spacing ≈ 0.3m, comfortably under height=0.35). Collider
- * walls (mail-bag-system.ts: bottom + left/right/front/back, no top) are
- * built THICKNESS beyond these interior bounds — see MAIL_BAG_WALL_THICKNESS.
- * Overall footprint (interior + 2*thickness on X/Z, + thickness on Y for the
- * bottom only) stays comfortably at/under a normal small cargo box's own
- * size (spec: "不要把袋子做得比一般貨箱更大" — cf. cargo-data.ts smallBox
- * 0.28x0.26x0.28). */
-export const MAIL_BAG_INTERIOR = {
-  width: 0.32,
-  depth: 0.24,
-  height: 0.35,
-};
+/** Mail bag sizing ("Resize mail bags and fix supply rack interaction" round
+ * 一: "外部尺寸至少等同現有中型貨物...直接讀取中型貨物尺寸設定，不另外寫死
+ * 一套數值") — reads CARGO_BOX_PRESETS.mediumBox.dimensions directly (the
+ * SAME preset UnloadingSystem/CargoSystem already spawn as regular daily
+ * cargo) rather than a separate hand-picked bag-size constant. Interior is
+ * back-derived so mail-bag-system.ts's own existing TOTAL_WIDTH/HEIGHT/DEPTH
+ * reconstruction (interior + wall thickness) lands EXACTLY on the medium
+ * box's own exterior dimensions — width/depth lose thickness on BOTH sides
+ * (left+right / front+back walls), height loses it on ONE side only (the
+ * open top has no wall, spec: "袋口與內部必須保持鏤空"). Comfortably still
+ * clears the earlier round's own 1.25x-envelope-plane and 12-envelope-
+ * stack-height minimums (this only ever grew those margins, never shrank
+ * them). */
+const MAIL_BAG_EXTERIOR = CARGO_BOX_PRESETS.mediumBox.dimensions;
 export const MAIL_BAG_WALL_THICKNESS = 0.03;
+export const MAIL_BAG_INTERIOR = {
+  width: MAIL_BAG_EXTERIOR.width - 2 * MAIL_BAG_WALL_THICKNESS,
+  depth: MAIL_BAG_EXTERIOR.depth - 2 * MAIL_BAG_WALL_THICKNESS,
+  height: MAIL_BAG_EXTERIOR.height - MAIL_BAG_WALL_THICKNESS,
+};

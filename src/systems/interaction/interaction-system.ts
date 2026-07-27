@@ -17,7 +17,7 @@ import { DailyFlowSystem } from '../daily-flow';
 import { PalletSystem } from '../pallet';
 import { LostFoundSystem } from '../lost-found';
 import { MailSystem } from '../mail/mail-system';
-import { MailBagSystem } from '../mail/mail-bag-system';
+import { MailBagSystem, MAIL_RACK_INTERACTABLE_ID } from '../mail/mail-bag-system';
 import { getMailDestination } from '../mail/mail-data';
 
 export class InteractionSystem {
@@ -244,6 +244,21 @@ export class InteractionSystem {
       return;
     }
 
+    // Priority 0.7: empty-bag supply rack (spec三/四: "玩家必須用準心射線直
+    // 接命中供應架互動Collider，按E才能取得新袋" — a raycast-precise target
+    // registered in the SAME shared interactables map, resolved by the SAME
+    // single crosshair raycast every other target already uses; no
+    // proximity/second raycaster). Intercepts before the generic pickup
+    // below since this target's canPickUp is only true to satisfy that
+    // raycast's own filter, never meant to actually be picked up — mirrors
+    // the sorting pallet's own special-case pattern just below.
+    if (this.currentTarget && this.currentTarget.id === MAIL_RACK_INTERACTABLE_ID) {
+      this.mailBagSystem.trySpawnBag();
+      this.clearHighlight(this.currentTarget);
+      this.currentTarget = null;
+      return;
+    }
+
     // Priority 1: pick up targeted object (envelope, package, crate, or the
     // sorting pallet). The pallet goes through its own pickUp() (world-space
     // group-carry, not PickupSystem's viewmodel clone) — see pallet-system.ts.
@@ -273,13 +288,6 @@ export class InteractionSystem {
     }
     if (this.mailSystem.readyEnvelopeId && this.mailSystem.isPlayerNearTable(this.camera.position)) {
       this.onStartMailStampUi();
-      return;
-    }
-
-    // Priority 2.5: empty-bag supply rack (spec六: "對供應架按E：生成一個新
-    // 的空分類袋").
-    if (this.mailBagSystem.isPlayerNearRack(this.camera.position)) {
-      this.mailBagSystem.trySpawnBag();
       return;
     }
 
@@ -441,6 +449,17 @@ export class InteractionSystem {
             newTarget.displayName,
             `圖樣：${patternText}\n狀態：${stateText}\n信件數：${bag.envelopeIds.length}／${bag.capacity}\n${actionHint}`
           );
+        } else if (newTarget.id === MAIL_RACK_INTERACTABLE_ID) {
+          // World prompt only while the crosshair directly hits the rack
+          // (spec三: "只在準心命中供應架時顯示...準心移開後立即隱藏") — this
+          // whole branch only runs on a newTarget CHANGE, and newTarget
+          // reverts to null (hiding it again, via updateStationPrompts'
+          // final hideInteractionPrompt fallback) the instant the raycast
+          // no longer hits this mesh.
+          this.hud.showInteractionPrompt(
+            newTarget.displayName,
+            this.mailBagSystem.canSpawnBag ? '按 E 取得新袋' : '空袋數量已達上限'
+          );
         } else {
           this.hud.showInteractionPrompt(newTarget.displayName, '按 E 拿起');
         }
@@ -502,13 +521,6 @@ export class InteractionSystem {
         this.hud.showInteractionPrompt('信封貼郵票工作桌', '請先將信封放到桌面');
         this.hud.setCrosshairActive(false);
       }
-      return;
-    }
-
-    // Empty-bag supply rack (spec六).
-    if (this.mailBagSystem.isPlayerNearRack(this.camera.position)) {
-      this.hud.showInteractionPrompt('空封袋供應架', this.mailBagSystem.canSpawnBag ? '按 E 取得新袋' : '空袋數量已達上限');
-      this.hud.setCrosshairActive(this.mailBagSystem.canSpawnBag);
       return;
     }
 

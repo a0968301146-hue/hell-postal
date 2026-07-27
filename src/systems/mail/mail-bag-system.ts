@@ -3,14 +3,29 @@ import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { InteractableObject, createInteractableObject } from '../../shared/types/interactable';
 import { PickupPort } from '../../shared/types/pickup-port';
 import { HUD } from '../hud';
-import { SCENE_CONFIG, BACK_AREA } from '../world-layout';
+import { BACK_AREA } from '../world-layout';
 import { BAG_RACK, MAIL_BAG_INTERIOR, MAIL_BAG_WALL_THICKNESS, ENVELOPE_SIZE } from '../../data/world/mail-layout-data';
 import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/world-label-system';
 import { MailBagRecord } from './mail-types';
-import { MAIL_DESTINATIONS, MAX_OPEN_BAGS, MAIL_BAG_CAPACITY, getMailDestination, buildBagMaterial, buildBagGeometry, buildBagCinchRing } from './mail-data';
+import { MAIL_DESTINATIONS, MAX_OPEN_BAGS, MAIL_BAG_CAPACITY, getMailDestination, buildBagMaterials, buildBagGeometry, buildBagCinchRing } from './mail-data';
 import { MailSystem } from './mail-system';
 
 const BAG_ID_PREFIX = 'mailbag-';
+
+/** The empty-bag supply rack's own raycast-target id ("Resize mail bags and
+ * fix supply rack interaction" round三/四: precise crosshair-hit
+ * interaction, no proximity/second raycaster) — registered once in the
+ * SAME shared `interactables` map every other pickupable prop uses, so
+ * InteractionSystem's existing single raycast pipeline picks it up for
+ * free (see interaction-system.ts's own special-case check against this
+ * id, mirroring how it already special-cases the sorting pallet). Exported
+ * so that file can reference it without a second lookup mechanism. */
+export const MAIL_RACK_INTERACTABLE_ID = 'mail-rack';
+
+function disposeMaterial(mat: THREE.Material | THREE.Material[]): void {
+  if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+  else mat.dispose();
+}
 
 /** Overall bag footprint — interior cavity (mail-layout-data.ts) plus wall
  * thickness on X/Z (both sides) and Y (bottom only — the top stays open,
@@ -97,17 +112,25 @@ export class MailBagSystem {
     group.position.set(BAG_RACK.posX, floorY, BAG_RACK.posZ);
     this.scene.add(group);
 
+    // Player-blocking collider — unrelated to the interaction fix below,
+    // unchanged from before (spec: only the INTERACTION gate changes).
     this.physics.createStaticCuboid(BAG_RACK.posX, floorY + BAG_RACK.height / 2, BAG_RACK.posZ, BAG_RACK.width / 2, BAG_RACK.height / 2, BAG_RACK.depth / 2);
+
+    // Registered in the SAME shared `interactables` map every pickupable
+    // prop uses, so InteractionSystem's existing single crosshair raycast
+    // picks it up for free — no proximity check, no second raycaster
+    // (spec三/四). `canPickUp: true` only so it PASSES that raycast's own
+    // generic filter; it's never actually handed to PickupSystem.pickUp()
+    // — interaction-system.ts intercepts E specially before that generic
+    // path runs, exactly mirroring how it already special-cases the
+    // sorting pallet. Bounds exactly match the rack's own body (width x
+    // height x depth = 0.7 x 1.1 x 0.5), not an enlarged detection volume.
+    const rackObj = createInteractableObject(MAIL_RACK_INTERACTABLE_ID, '空封袋供應架', mesh, BAG_RACK.width, BAG_RACK.height, BAG_RACK.depth);
+    this.interactables.set(MAIL_RACK_INTERACTABLE_ID, rackObj);
   }
 
   private rackLabelText(): string {
-    return `空封袋供應架\n按 E 取得新袋 (${this.bags.size}/${MAX_OPEN_BAGS})`;
-  }
-
-  isPlayerNearRack(pos: THREE.Vector3): boolean {
-    const dx = pos.x - BAG_RACK.posX;
-    const dz = pos.z - BAG_RACK.posZ;
-    return Math.sqrt(dx * dx + dz * dz) < SCENE_CONFIG.interactionDistance + 1;
+    return `空封袋供應架 (${this.bags.size}/${MAX_OPEN_BAGS})`;
   }
 
   get canSpawnBag(): boolean {
@@ -130,8 +153,8 @@ export class MailBagSystem {
     const y = BACK_AREA.floorY + TOTAL_HEIGHT / 2 + 0.05;
 
     const geo = buildBagGeometry(MAIL_BAG_INTERIOR.width, MAIL_BAG_INTERIOR.depth, MAIL_BAG_INTERIOR.height, MAIL_BAG_WALL_THICKNESS);
-    const mat = buildBagMaterial(null);
-    const mesh = new THREE.Mesh(geo, mat);
+    const mats = buildBagMaterials(null);
+    const mesh = new THREE.Mesh(geo, mats);
     mesh.position.set(x, y, z);
     this.scene.add(mesh);
 
@@ -195,9 +218,13 @@ export class MailBagSystem {
     const runtime = this.bagRuntime.get(bagId);
     if (!bag || !obj) return;
     const pattern = bag.destinationPattern ? getMailDestination(bag.destinationPattern) : null;
-    const oldMat = obj.mesh.material as THREE.Material;
-    obj.mesh.material = buildBagMaterial(pattern);
-    oldMat.dispose();
+    const oldMats = obj.mesh.material;
+    // Exterior pattern updates immediately on every F cycle (spec二: "每次
+    // 按F切換時，外側圖樣立即同步更新") — a fresh material PAIR each time
+    // (exterior texture regenerated, interior lining rebuilt alongside it
+    // purely for symmetric lifecycle/disposal, see buildBagMaterials).
+    obj.mesh.material = buildBagMaterials(pattern);
+    disposeMaterial(oldMats);
     if (runtime) {
       runtime.cinchRing.visible = bag.state === 'sealed';
       const regionText = bag.region ? (bag.region === 'domestic' ? '國內' : '海外') : '';
@@ -287,7 +314,7 @@ export class MailBagSystem {
     if (obj) {
       this.scene.remove(obj.mesh);
       obj.mesh.geometry.dispose();
-      (obj.mesh.material as THREE.Material).dispose();
+      disposeMaterial(obj.mesh.material);
       if (obj.rigidBody) this.physics.removeRigidBody(obj.rigidBody);
       this.interactables.delete(bagId);
     }
@@ -408,7 +435,7 @@ export class MailBagSystem {
         if (obj.isHeld) this.pickupSystem.forceDropHeld();
         this.scene.remove(obj.mesh);
         obj.mesh.geometry.dispose();
-        (obj.mesh.material as THREE.Material).dispose();
+        disposeMaterial(obj.mesh.material);
         if (obj.rigidBody) this.physics.removeRigidBody(obj.rigidBody);
         this.interactables.delete(bag.bagId);
       }
