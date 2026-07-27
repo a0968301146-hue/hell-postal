@@ -137,23 +137,44 @@ export class LostFoundSystem {
     this.scene.add(label);
   }
 
+  /** Picks the next case in rotation and advances dayIndex — the ONE place
+   * this happens, called both from the normal onDailyUnloadStarted() path
+   * and defensively from onAllVehiclesDeparted() below ("Fix lost found NPC
+   * spawn after shipping" round: 案件未建立時，需安全建立當日案件後再生成
+   * NPC — if departure completes before a case ever got armed, still spawn
+   * one on the spot rather than silently staying NPC-less for the day). */
+  private prepareDailyCase(): void {
+    this.todaysCase = LOST_FOUND_CASES[this.dayIndex % LOST_FOUND_CASES.length];
+    this.dayIndex++;
+  }
+
   /** Wired into UnloadingSystem's existing onFirstUnload callback (game.ts)
    * — fires once, right as the daily unload burst begins (spec六: "每天生成
    * 貨物時，同時生成1件與當日NPC對應的失物"). Picks today's case silently
    * (the NPC itself doesn't visually appear until onAllVehiclesDeparted,
    * spec四) and arms the lost item's own short burst-spawn delay. */
   onDailyUnloadStarted(): void {
-    this.todaysCase = LOST_FOUND_CASES[this.dayIndex % LOST_FOUND_CASES.length];
-    this.dayIndex++;
+    this.prepareDailyCase();
     this.lostItemSpawnTimer = UNLOAD_PORTS[0].gate.openDuration + UNLOAD_BURST_CONFIG.chargeUpDuration;
   }
 
   /** Wired into DailyFlowSystem's onAllVehiclesDeparted callback (game.ts)
    * — the ONE "vehicle departure complete" event (spec四). Guarded so it
    * can only ever bring in the day's NPC once, and never again once that
-   * day's case is solved. */
+   * day's case is solved. Never gated on unshipped cargo, score, or
+   * correctlyShipped count — canDepart itself already allows departure with
+   * an incomplete/incorrect load, and this listens for the SAME departure
+   * event regardless of what was actually shipped. */
   onAllVehiclesDeparted(): void {
-    if (this.npcSpawnedToday || this.caseSolvedToday || !this.todaysCase) return;
+    if (this.npcSpawnedToday || this.caseSolvedToday) return;
+    if (!this.todaysCase) {
+      // Defensive fallback — should only happen if onDailyUnloadStarted()
+      // was somehow never called this day (e.g. a future caller skips the
+      // unload step). Still spawn today's NPC rather than silently staying
+      // NPC-less for the rest of the day.
+      console.warn('[LostFound] todaysCase was not armed before all vehicles departed — preparing one now as a fallback.');
+      this.prepareDailyCase();
+    }
     this.npcSpawnedToday = true;
     const preset = LOST_ITEM_PRESETS.find((p) => p.id === this.todaysCase!.lostItemPresetId);
     this.npcSystem.spawn(preset?.displayName ?? '');
