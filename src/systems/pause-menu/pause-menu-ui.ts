@@ -5,7 +5,7 @@ import { PauseManager } from '../../core/pause-manager';
 import { SettingsManager, DisplayMode, ResolutionPreset, QualityPreset, SubtitleSize, TextSpeed } from '../settings';
 import { HUD } from '../hud';
 import { TUTORIAL_ENTRIES, TutorialEntry } from '../../game/tutorial-data';
-import { buildVehicleCodexEntries, SPECIES_CODEX_ENTRIES, VehicleCodexEntry } from '../../game/codex-data';
+import { buildVehicleCodexEntries, SPECIES_CODEX_ENTRIES } from '../../game/codex-data';
 import {
   ACTION_ORDER, ACTION_LABELS, InputAction, UNWIRED_ACTIONS,
 } from '../../adapters/browser-input/input-binding-manager';
@@ -44,14 +44,11 @@ export class ManualUI {
   private captureConflictMsg: string | null = null;
   private noticeMsg: string | null = null;
 
-  private vehicleCodex: VehicleCodexEntry[];
-
   constructor(pauseManager: PauseManager, settingsManager: SettingsManager, hud: HUD, interruptPlayerActions: () => void) {
     this.pauseManager = pauseManager;
     this.settingsManager = settingsManager;
     this.hud = hud;
     this.interruptPlayerActions = interruptPlayerActions;
-    this.vehicleCodex = buildVehicleCodexEntries();
 
     this.overlayEl = document.createElement('div');
     this.overlayEl.id = 'manual-overlay';
@@ -522,8 +519,16 @@ export class ManualUI {
     this.renderSpeciesCodex();
   }
 
+  /** Rebuilds the vehicle codex list from VehicleConfig fresh on every
+   * render ("Fix vehicle codex cargo list rendering" round) — rather than
+   * a snapshot cached once in the constructor, so there is no cached
+   * object for a hot-reload/long-lived-tab edge case to ever leave stale.
+   * VehicleConfig is immutable static data, so this costs nothing
+   * meaningful (six small objects) and always reflects whatever
+   * vehicle-data.ts currently exports. */
   private renderVehicleCodex(): void {
-    const rows = this.vehicleCodex.map((v) => {
+    const vehicleCodex = buildVehicleCodexEntries();
+    const rows = vehicleCodex.map((v) => {
       const discovered = this.settingsManager.isVehicleDiscovered(v.id);
       const active = v.id === this.selectedVehicleId ? 'active' : '';
       return `
@@ -534,8 +539,8 @@ export class ManualUI {
     }).join('');
     this.leftPageEl.innerHTML = `<h2 class="manual-page-title">已發現載具</h2><div class="manual-list">${rows}</div>`;
 
-    const selected = this.vehicleCodex.find((v) => v.id === this.selectedVehicleId && this.settingsManager.isVehicleDiscovered(v.id))
-      ?? this.vehicleCodex.find((v) => this.settingsManager.isVehicleDiscovered(v.id));
+    const selected = vehicleCodex.find((v) => v.id === this.selectedVehicleId && this.settingsManager.isVehicleDiscovered(v.id))
+      ?? vehicleCodex.find((v) => this.settingsManager.isVehicleDiscovered(v.id));
     if (!selected) {
       this.rightPageEl.innerHTML = `<div class="manual-placeholder"><div class="manual-placeholder-icon">❔</div><p>尚未發現任何載具</p><p class="manual-hint">在大廳按下呼叫載具即可發現</p></div>`;
       return;
