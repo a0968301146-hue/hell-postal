@@ -483,7 +483,14 @@ export class InteractionSystem {
       }
 
       // Holding a stamped/unstamped envelope and aiming at an OPEN mail bag
-      // (spec二/三: "E 放入信件").
+      // (spec二/三: "E 放入信件"). "Allow unset mail boxes to accept first
+      // envelope" round五: an UNSET, still-empty box gets its own two more
+      // specific prompts instead of the generic one — "E 放入信件並自動設
+      // 定圖樣" when the held envelope is actually stamped (E would
+      // genuinely succeed and fix the box's destination to it), or "信件尚
+      // 未貼郵票" when it isn't (E would just fail) — both replace the old,
+      // now-removed "信封箱尚未設定圖樣" blocking message, which no longer
+      // applies now that unset boxes are insertable.
       const heldIdForBagPrompt = this.playerData.heldObjectId;
       const heldEnvelopeForBagPrompt = heldIdForBagPrompt ? this.mailSystem.getEnvelope(heldIdForBagPrompt) : undefined;
       if (heldEnvelopeForBagPrompt) {
@@ -494,7 +501,11 @@ export class InteractionSystem {
             this.applyHighlight(hit);
             this.currentTarget = hit;
             this.playerData.targetedObjectId = hit.id;
-            this.hud.showInteractionPrompt(hit.displayName, 'E 放入信件');
+            const isUnsetEmptyBox = !hitBag.destinationPattern && hitBag.envelopeIds.length === 0;
+            const promptText = isUnsetEmptyBox
+              ? (heldEnvelopeForBagPrompt.state === 'stamped' ? 'E 放入信件並自動設定圖樣' : '信件尚未貼郵票')
+              : 'E 放入信件';
+            this.hud.showInteractionPrompt(hit.displayName, promptText);
           }
           this.hud.setCrosshairActive(true);
           return;
@@ -586,12 +597,16 @@ export class InteractionSystem {
           const patternText = pattern ? `${pattern.displayName}（${pattern.region === 'domestic' ? '國內' : '海外'}）` : '未設定';
           const stateText = bag.state === 'sealed' ? '已封閉' : '開啟中';
           // "Enlarge mail bags and add E key letter placement" round 三: an
-          // open bag with zero envelopes shows "分類袋內沒有信件" while
+          // open bag with zero envelopes shows "信封箱內沒有信件" while
           // empty-handed — canSeal's own false branch here is ALREADY
-          // exactly "envelopeIds.length===0" in practice (an envelope can
-          // never enter a bag without that bag having a pattern set first,
-          // see checkInsertEligibility in mail-bag-system.ts), so this is
-          // not a new condition, just new text for the existing case.
+          // exactly "envelopeIds.length===0" in practice (canSeal requires
+          // both a pattern AND at least one envelope; "Allow unset mail
+          // boxes to accept first envelope" round means a pattern can now
+          // exist with zero envelopes too — e.g. right after F sets one on
+          // an otherwise-empty box — but canSeal's own envelopeIds.length>0
+          // check alone already covers that case correctly, see
+          // canAcceptEnvelope in mail-bag-system.ts), so this is not a new
+          // condition, just new text for the existing case.
           const actionHint = bag.state === 'sealed'
             ? '按 E 拿起'
             : this.mailBagSystem.canSeal(newTarget.id)

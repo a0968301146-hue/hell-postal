@@ -220,10 +220,22 @@ export class MailBagSystem {
    * (spec六: 台北/台中/日本/美國) — a simple press-F-to-cycle rather than a
    * separate popup menu, reusing the existing E/F key surface with zero new
    * UI system. Region is auto-derived and re-locked alongside the pattern.
-   * No-op on a sealed bag (spec: "封袋後圖樣與地區鎖定"). */
+   * No-op on a sealed bag (spec: "封袋後圖樣與地區鎖定"). "Allow unset mail
+   * boxes to accept first envelope" round四: ALSO a no-op once the box holds
+   * any envelope (that first envelope has already fixed the box's own
+   * destination — see attemptInsert's auto-set logic — so F must not be
+   * able to contradict it) — shows a toast explaining why rather than
+   * silently doing nothing. Once the box empties back out (its last
+   * envelope removed/taken out), this guard naturally passes again on its
+   * own; the pattern itself is deliberately left exactly as it was (spec:
+   * "保留目前圖樣即可，不必自動變回未設定"). */
   cyclePattern(bagId: string): void {
     const bag = this.bags.get(bagId);
     if (!bag || bag.state !== 'open') return;
+    if (bag.envelopeIds.length > 0) {
+      this.hud.showToast('箱內已有信件，無法更改圖樣');
+      return;
+    }
     const idx = bag.destinationPattern ? MAIL_DESTINATIONS.findIndex((d) => d.id === bag.destinationPattern) : -1;
     const next = MAIL_DESTINATIONS[(idx + 1) % MAIL_DESTINATIONS.length];
     bag.destinationPattern = next.id;
@@ -436,10 +448,22 @@ export class MailBagSystem {
     const bag = this.bags.get(bagId);
     if (!rec || !bag) return;
 
-    const failReason = this.checkInsertEligibility(rec, bag);
+    const failReason = this.canAcceptEnvelope(rec, bag);
     if (failReason) {
       this.hud.showToast(failReason);
       return;
+    }
+
+    // "Allow unset mail boxes to accept first envelope" round二: the FIRST
+    // correctly-stamped envelope to genuinely settle into an unset box
+    // fixes that box's own destination to the envelope's own (full 4-way)
+    // destination — never merely its domestic/international region. Set
+    // BEFORE refreshBagVisual() below so the exterior texture/floating
+    // label both update to the new pattern in this same call, no separate
+    // follow-up render needed.
+    if (!bag.destinationPattern) {
+      bag.destinationPattern = rec.destination;
+      bag.region = rec.region;
     }
 
     const obj = this.interactables.get(envelopeId);
@@ -464,15 +488,27 @@ export class MailBagSystem {
   /** Shared "can this envelope go into this bag right now" precondition
    * chain ("Enlarge mail bags and add E key letter placement" round 二: the
    * new explicit E-key insertion path must enforce the EXACT same rules as
-   * the passive sensor, never a second diverging copy) — used by both
-   * attemptInsert's passive-sensor path and tryInsertHeldEnvelope's explicit
-   * E-key path below. */
-  private checkInsertEligibility(rec: EnvelopeRecord, bag: MailBagRecord): string | null {
+   * the passive sensor, never a second diverging copy) — used by BOTH
+   * attemptInsert's passive Q/physics-settle sensor path AND
+   * tryInsertHeldEnvelope's explicit E-key path below, so the two can never
+   * diverge into separate rule sets (spec三: "E與Q必須共用同一套
+   * canAcceptEnvelope()判定").
+   *
+   * "Allow unset mail boxes to accept first envelope" round一/三: an UNSET
+   * box (`destinationPattern === null`) no longer blocks insertion outright
+   * — it accepts any correctly-stamped envelope as its potential FIRST one
+   * (attemptInsert then fixes the box's own destination to that envelope's,
+   * see its own doc comment). Once a box already has ITS OWN destination
+   * (either previously unset-then-filled, or set directly via F), the
+   * original destination-match rule applies exactly as before — this is
+   * naturally already true here since `rec.destination !== bag.
+   * destinationPattern` only ever runs once destinationPattern is
+   * non-null. */
+  private canAcceptEnvelope(rec: EnvelopeRecord, bag: MailBagRecord): string | null {
     if (bag.state !== 'open') return '信封箱已封閉';
-    if (!bag.destinationPattern) return '信封箱尚未設定圖樣';
     if (bag.envelopeIds.length >= bag.capacity) return '信封箱已滿';
     if (rec.state !== 'stamped') return '尚未貼郵票';
-    if (rec.destination !== bag.destinationPattern) return '郵票或目的地不符';
+    if (bag.destinationPattern && rec.destination !== bag.destinationPattern) return '郵票或目的地不符';
     return null;
   }
 
@@ -497,7 +533,7 @@ export class MailBagSystem {
     const bagObj = this.interactables.get(bagId);
     if (!rec || !bag || !obj || !bagObj) return;
 
-    const failReason = this.checkInsertEligibility(rec, bag);
+    const failReason = this.canAcceptEnvelope(rec, bag);
     if (failReason) {
       this.hud.showToast(failReason);
       return;
