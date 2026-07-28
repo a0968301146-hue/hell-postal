@@ -8,7 +8,7 @@
 // Neutral data-layer import — see world-layout-system.ts's identical import
 // for why (Phase 6: world-layout and lost-found both read this file rather
 // than importing each other).
-import { LOST_FOUND_ROOM } from '../../data/world/lost-found-layout-data';
+import { LOST_FOUND_ROOM, LOST_FOUND_DOOR } from '../../data/world/lost-found-layout-data';
 
 export const WALL_THICKNESS = 0.2;
 
@@ -69,6 +69,57 @@ export const PACKAGE_WORK_ZONE = {
 
 /** Work furniture cluster (stamp tables, crate, sorting boxes) — back area, west side. */
 export const WORK_FURNITURE_X = -8;
+
+/** West-wall storage shelves ("Add storage shelves along west wall" round) —
+ * free-standing open wooden shelving hugging BACK_AREA's own west wall
+ * (never the lost-found room, spec一: "不要放進失物招領前台房間"), south of
+ * the lost-found door (LOST_FOUND_DOOR) with a real walking buffer clear of
+ * it, and far enough south of the lost-found cabinet
+ * (lost-found-cabinet-system.ts's own computed footprint, roughly Z
+ * 10.3-13.7) that the two structures never come close. Purely a free
+ * staging/organizing surface (spec四: "只作為自由暫存與整理工具，不強制區分
+ * 國內／海外或貨物種類，不新增計分／容量／整理判定") — WorldLayoutSystem
+ * builds the Mesh/Collider/placement-surface geometry straight from this
+ * data (spec五), no separate ShelfSystem. */
+const SHELF_WALL_CLEARANCE = 0.08; // spec一: "保留約0.05~0.1m" from the wall's own inner face
+const SHELF_DEPTH = 0.5; // spec二: deep enough to fully support a medium box (0.40m deep, cargo-shape-presets.ts medium-box)
+const SHELF_WIDTH = 1.1; // spec二: several small/medium items per level
+const SHELF_GROUP_GAP = 0.5; // spec一: "彼此保留約0.4~0.6m間距"
+/** Top-surface Y offsets above the floor for each of the 3 levels (spec二:
+ * "3層"). Comfortably clears a medium box's own height (0.38m) with
+ * headroom, and keeps the top level (floor + 1.35m) well below player eye
+ * height (floor + 1.6m, SCENE_CONFIG.playerEyeHeight) so every level stays
+ * easy to see/reach (spec二: "高度讓玩家能正常看見、拾取與放置"). */
+export const SHELF_LEVEL_Y_OFFSETS = [0.45, 0.9, 1.35];
+export const SHELF_BOARD_THICKNESS = 0.04;
+export const SHELF_POST_THICKNESS = 0.06;
+/** Extra frame height above the top level's own board (a finished-looking
+ * open top, not a full roof — spec二: "不需要門板、抽屜或吸附格位"). */
+export const SHELF_FRAME_TOP_MARGIN = 0.15;
+
+const westWallInnerFaceX = BACK_AREA.minX + WALL_THICKNESS / 2;
+const shelfCenterX = westWallInnerFaceX + SHELF_WALL_CLEARANCE + SHELF_DEPTH / 2;
+// Starts comfortably south of the lost-found door's own south edge (spec一:
+// "不得擋住...玩家通道") — the open floor south of the door runs all the way
+// to the vehicle-control cluster (z=25.5) and beyond, so there's no need to
+// crowd the narrow gap between the cabinet and the door further north.
+const shelfGroupStartZ = LOST_FOUND_DOOR.centerZ + LOST_FOUND_DOOR.halfWidth + 0.8;
+
+export interface WestWallShelfConfig {
+  id: string;
+  centerX: number;
+  centerZ: number;
+  width: number;
+  depth: number;
+}
+
+export const WEST_WALL_SHELVES: WestWallShelfConfig[] = [0, 1, 2].map((i) => ({
+  id: `west-shelf-${i + 1}`,
+  centerX: shelfCenterX,
+  centerZ: shelfGroupStartZ + SHELF_WIDTH / 2 + i * (SHELF_WIDTH + SHELF_GROUP_GAP),
+  width: SHELF_WIDTH,
+  depth: SHELF_DEPTH,
+}));
 
 /** Reserved (white-box only, no function yet) cargo-type zones — space is
  * claimed now so future systems have somewhere to go; purely floor decals +

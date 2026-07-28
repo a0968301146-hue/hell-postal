@@ -174,6 +174,16 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // lost found desk" round 二).
   pickupSystem.addPlacementSurface(sceneData.lostFoundFloor);
 
+  // Register each west-wall storage shelf's own level-top boards as
+  // placement surfaces ("Add storage shelves along west wall" round spec
+  // 三) — the boards' side panels/posts/back frame are real static
+  // colliders (world-layout-system.ts) but were never added here, so they
+  // can only ever block movement/raycasts, never become a placement
+  // surface themselves.
+  for (const surface of sceneData.shelfSurfaces) {
+    pickupSystem.addPlacementSurface(surface);
+  }
+
   // West-side lost & found desk — minimal one-case flow (spec三). Built
   // after pickupSystem exists (tryConfirmAtCounter consumes the held item
   // via pickupSystem.forceDropHeld() on success).

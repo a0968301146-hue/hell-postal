@@ -11,6 +11,7 @@ import { InteractableObject } from '../../shared/types/interactable';
 import { PhysicsWorldPort } from '../../shared/types/physics-world-port';
 import {
   WALL_THICKNESS, BACK_AREA, CARGO_ZONES, LAND_DOCKS, LAND_GATE, PIER, SEA_GATE, SEA_DOCKS, NORTH_GATES,
+  WEST_WALL_SHELVES, SHELF_LEVEL_Y_OFFSETS, SHELF_BOARD_THICKNESS, SHELF_POST_THICKNESS, SHELF_FRAME_TOP_MARGIN,
 } from './logistics-layout-data';
 // Reads the room/gate coordinates from the neutral data layer (Phase 6:
 // "模組邊界修正" — moved out of systems/lost-found so world-layout and
@@ -46,6 +47,14 @@ export interface SceneData {
    * placement surface ("Reduce daily cargo and add lost found desk" round
    * 二), same pattern as pierFloor. */
   lostFoundFloor: THREE.Mesh;
+  /** West-wall storage shelves' own level-top boards ("Add storage shelves
+   * along west wall" round spec三/五) — 3 boards per shelf group, 9 total.
+   * Registered as additional PickupSystem placement surfaces the same way
+   * pierFloor/lostFoundFloor already are (see create-game-systems.ts) —
+   * this file only builds the Mesh/Collider/candidate-surface geometry,
+   * never touches PickupSystem itself (it doesn't exist yet at this point
+   * in app startup). */
+  shelfSurfaces: THREE.Mesh[];
 }
 
 function stdMat(color: number, opts: Partial<THREE.MeshStandardMaterialParameters> = {}): THREE.MeshStandardMaterial {
@@ -76,9 +85,10 @@ export function createLogisticsScene(scene: THREE.Scene, physics: PhysicsWorldPo
   const pierFloor = buildPierAndWater(scene, physics);
   buildSeaDocks(scene);
   const lostFoundFloor = buildLostFoundRoom(scene, physics);
+  const shelfSurfaces = buildWestWallShelves(scene, physics);
 
   const interactables = new Map<string, InteractableObject>();
-  return { interactables, floor, pierFloor, lostFoundFloor };
+  return { interactables, floor, pierFloor, lostFoundFloor, shelfSurfaces };
 }
 
 function buildBackArea(scene: THREE.Scene, physics: PhysicsWorldPort): THREE.Mesh {
@@ -193,6 +203,92 @@ function buildLostFoundRoom(scene: THREE.Scene, physics: PhysicsWorldPort): THRE
   scene.add(roomLabel);
 
   return floor;
+}
+
+/** West-wall storage shelves ("Add storage shelves along west wall" round
+ * spec二/三/五) — 3 free-standing open wooden shelf groups, each a plain
+ * static frame: 4 corner posts + 1 back panel (against the wall) + 3
+ * horizontal level boards. Posts/back panel get a real Rapier collider (so
+ * they physically block movement/throws and occlude the crosshair/cargo-
+ * inspection raycasts) but are NEVER returned as candidate placement
+ * surfaces (spec三: "貨架側板、支柱與背架只阻擋射線，不可成為水平放置面") —
+ * only the 3 level boards per group (9 total) are, each also getting its
+ * own real static collider so placed cargo physically rests on it rather
+ * than falling through. Callers (create-game-systems.ts) register the
+ * returned meshes with PickupSystem.addPlacementSurface() once that system
+ * exists — this file only ever builds Mesh/Collider/candidate-surface
+ * geometry, never touches PickupSystem itself (spec五: 不建立新的
+ * ShelfSystem). */
+function buildWestWallShelves(scene: THREE.Scene, physics: PhysicsWorldPort): THREE.Mesh[] {
+  const floorY = BACK_AREA.floorY;
+  const frameMat = stdMat(0x6b4a2a);
+  const boardMat = stdMat(0x8a6438);
+  const structureHeight = SHELF_LEVEL_Y_OFFSETS[SHELF_LEVEL_Y_OFFSETS.length - 1] + SHELF_BOARD_THICKNESS / 2 + SHELF_FRAME_TOP_MARGIN;
+
+  const surfaces: THREE.Mesh[] = [];
+
+  for (const shelf of WEST_WALL_SHELVES) {
+    const { centerX, centerZ, width, depth } = shelf;
+    const halfW = width / 2;
+    const halfD = depth / 2;
+    const group = new THREE.Group();
+    group.position.set(centerX, floorY, centerZ);
+    scene.add(group);
+
+    // 4 corner posts, full structure height — local X is the shelf's own
+    // "depth" axis (wall -> room), local Z its "width" axis (along the wall).
+    const postGeo = new THREE.BoxGeometry(SHELF_POST_THICKNESS, structureHeight, SHELF_POST_THICKNESS);
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const px = sx * (halfD - SHELF_POST_THICKNESS / 2);
+        const pz = sz * (halfW - SHELF_POST_THICKNESS / 2);
+        const post = new THREE.Mesh(postGeo, frameMat);
+        post.position.set(px, structureHeight / 2, pz);
+        group.add(post);
+        physics.createStaticCuboid(
+          centerX + px, floorY + structureHeight / 2, centerZ + pz,
+          SHELF_POST_THICKNESS / 2, structureHeight / 2, SHELF_POST_THICKNESS / 2
+        );
+      }
+    }
+
+    // Back panel — against the wall (local -X), full height, spanning the
+    // whole width (spec二/三: "背架").
+    const backLocalX = -halfD + SHELF_BOARD_THICKNESS / 2;
+    const backGeo = new THREE.BoxGeometry(SHELF_BOARD_THICKNESS, structureHeight, width);
+    const back = new THREE.Mesh(backGeo, frameMat);
+    back.position.set(backLocalX, structureHeight / 2, 0);
+    group.add(back);
+    physics.createStaticCuboid(
+      centerX + backLocalX, floorY + structureHeight / 2, centerZ,
+      SHELF_BOARD_THICKNESS / 2, structureHeight / 2, width / 2
+    );
+
+    // 3 horizontal level boards — each spans the shelf's full footprint,
+    // gets a real static collider (so placed cargo physically rests on it),
+    // and is the only geometry this function returns as a placement-surface
+    // candidate (spec三).
+    for (const levelTopY of SHELF_LEVEL_Y_OFFSETS) {
+      const boardLocalY = levelTopY - SHELF_BOARD_THICKNESS / 2;
+      const boardGeo = new THREE.BoxGeometry(depth, SHELF_BOARD_THICKNESS, width);
+      const board = new THREE.Mesh(boardGeo, boardMat);
+      board.position.set(0, boardLocalY, 0);
+      group.add(board);
+      physics.createStaticCuboid(
+        centerX, floorY + boardLocalY, centerZ,
+        halfD, SHELF_BOARD_THICKNESS / 2, halfW
+      );
+      surfaces.push(board);
+    }
+
+    const label = createFloatingLabel('置物架', { width: 0.7, bg: 'rgba(30,25,15,0.7)' });
+    label.position.set(0, structureHeight + 0.3, 0);
+    group.add(label);
+
+    group.updateMatrixWorld(true);
+  }
+
+  return surfaces;
 }
 
 /** White-box-only floor markers reserving space for future cargo-type zones
