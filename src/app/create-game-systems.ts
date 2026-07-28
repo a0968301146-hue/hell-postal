@@ -21,6 +21,7 @@ import { CargoInspectionSystem, CargoInspectionUI } from '../systems/cargo-inspe
 import { LostFoundSystem, LostFoundUI } from '../systems/lost-found';
 import { MailSystem } from '../systems/mail/mail-system';
 import { MailBagSystem } from '../systems/mail/mail-bag-system';
+import { UpgradeSystem, UpgradeMenuUI, SimilarCargoHighlight } from '../systems/upgrade';
 
 /** Every gameplay system GameApp constructs once at startup and keeps for
  * the rest of the session (Phase 6: "系統建立、建構子注入、註冊" moved out of
@@ -58,6 +59,9 @@ export interface GameSystems {
   /** "Add modular envelope stamping and regional mail bag system" round. */
   mailSystem: MailSystem;
   mailBagSystem: MailBagSystem;
+  /** "Add bulletin board upgrade system" round. */
+  upgradeSystem: UpgradeSystem;
+  similarCargoHighlight: SimilarCargoHighlight;
 }
 
 /** Back-references into GameApp's own small orchestration methods — the
@@ -134,7 +138,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
 
   // Player controller
   const playerController = new PlayerController(
-    camera, context.renderer.domElement, hud, physics, playerData, settingsManager
+    camera, context.renderer.domElement, hud, physics, playerData, settingsManager, interactables
   );
 
   // Pickup system
@@ -142,6 +146,17 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     camera, scene, playerData, interactables, hud, physics, sceneData.floor,
     pauseManager, settingsManager
   );
+
+  // Bulletin board upgrade system ("Add bulletin board upgrade system"
+  // round) — constructed as early as pickupSystem/playerController exist,
+  // since both scoringSystem's onSettlement hook and dailyFlowSystem's
+  // onDayCompleted hook (both further below) need to already be able to
+  // call into it. UpgradeSystem only ever reaches PickupSystem/
+  // PlayerController through their own narrow public setters (spec三) —
+  // never touches mail/lost-found/vehicle/cargo-generation systems.
+  const upgradeSystem = new UpgradeSystem(pickupSystem, playerController);
+  const upgradeMenuUI = new UpgradeMenuUI(pauseManager, hud, playerController, upgradeSystem);
+  const similarCargoHighlight = new SimilarCargoHighlight(scene);
 
   // Register the envelope stamp table top as a placement surface — only
   // exists when the legacy mail flow is enabled (tableTopMesh stays
@@ -226,7 +241,14 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
       mailBagSystem.resetDaily();
       mailSystem.resetDaily();
     },
-    () => settingsManager.fireTutorialEvent('dayCompleted')
+    (finishedDay) => {
+      settingsManager.fireTutorialEvent('dayCompleted');
+      // Converts that day's accumulated departure settlement(s) into
+      // upgrade points, exactly once per finishedDay (spec四) — see
+      // UpgradeSystem.settleDay's own doc comment for the idempotency
+      // guard.
+      upgradeSystem.settleDay(finishedDay);
+    }
   );
 
   // Vehicle spawn/depart control (hall center) — re-enabled this round
@@ -234,7 +256,13 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // pickupSystem to register/deregister the cargo bed surface as vehicles
   // come and go, and dailyFlowSystem to gate 呼叫/出發 on today's
   // unload/shipment progress instead of the old always-available rule.
-  const scoringSystem = new ScoringSystem(settingsManager);
+  const scoringSystem = new ScoringSystem(
+    settingsManager,
+    // Feeds each departure's settlement into UpgradeSystem's own day tally
+    // (spec四) — reads only the numbers ScoringSystem just computed for
+    // THIS departure, no re-scanning of cargo/vehicle state.
+    (settlement) => upgradeSystem.recordDepartureSettlement(settlement)
+  );
   const vehicleControlSystem = new VehicleControlSystem(
     scene, physics, interactables, cargoSystem, pickupSystem, hud,
     dailyFlowSystem,
@@ -318,6 +346,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     mailSystem,
     mailBagSystem,
     hooks.onStartMailStampUi,
+    () => upgradeMenuUI.open(),
     () => settingsManager.fireTutorialEvent('dollyUsed')
   );
 
@@ -332,5 +361,6 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     scoringSystem, counterNpcSystem, counterServiceSystem, compassUI, dailyFlowSystem,
     unloadingSystem, palletSystem, cargoInspectionSystem, cargoInspectionUI,
     lostFoundSystem, lostFoundUI, mailSystem, mailBagSystem,
+    upgradeSystem, similarCargoHighlight,
   };
 }

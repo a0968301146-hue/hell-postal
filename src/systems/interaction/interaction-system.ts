@@ -19,6 +19,7 @@ import { LostFoundSystem } from '../lost-found';
 import { MailSystem } from '../mail/mail-system';
 import { MailBagSystem, MAIL_RACK_INTERACTABLE_ID } from '../mail/mail-bag-system';
 import { getMailDestination } from '../mail/mail-data';
+import { BULLETIN_BOARD_INTERACTABLE_ID } from '../world-layout';
 
 export class InteractionSystem {
   private raycaster: THREE.Raycaster;
@@ -45,6 +46,10 @@ export class InteractionSystem {
   private mailSystem: MailSystem;
   private mailBagSystem: MailBagSystem;
   private onStartMailStampUi: () => void;
+  /** Opens the bulletin board's full-screen upgrade UI ("Add bulletin board
+   * upgrade system" round spec二/三) — called ONLY from the empty-handed
+   * priority chain below, gated on PickupSystem's actual heldCount === 0. */
+  private onOpenUpgradeMenu: () => void;
   private onDollyUsed?: () => void;
 
   constructor(
@@ -70,6 +75,7 @@ export class InteractionSystem {
     mailSystem: MailSystem,
     mailBagSystem: MailBagSystem,
     onStartMailStampUi: () => void,
+    onOpenUpgradeMenu: () => void,
     onDollyUsed?: () => void
   ) {
     this.raycaster = new THREE.Raycaster();
@@ -95,6 +101,7 @@ export class InteractionSystem {
     this.mailSystem = mailSystem;
     this.mailBagSystem = mailBagSystem;
     this.onStartMailStampUi = onStartMailStampUi;
+    this.onOpenUpgradeMenu = onOpenUpgradeMenu;
     this.onDollyUsed = onDollyUsed;
 
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
@@ -160,6 +167,34 @@ export class InteractionSystem {
     }
 
     if (this.playerData.state === 'holding-item') {
+      // Bulletin board while holding anything: E does nothing at all (spec
+      // 二: "E 不執行任何動作，不能自動丟棄手持物品") — checked first so it
+      // can never fall through to the generic "enter placement mode"
+      // fallback at the bottom of this branch. currentTarget is only ever
+      // set to the board here by update()'s own holding-item raycast below.
+      if (this.currentTarget && this.currentTarget.id === BULLETIN_BOARD_INTERACTABLE_ID) {
+        return;
+      }
+      // Multi-carry: aiming at a NEW plain pickupable item with spare
+      // capacity (spec五A: "瞄準+按拾取鍵，若容量足夠加入持有") — mirrors
+      // update()'s own targeting check exactly (same exclusions: the
+      // bulletin board above, the pallet and mail bags/rack, which each
+      // already have their own dedicated holding-item interactions here or
+      // below). A plain pickUp() call, not a second code path — LIFO
+      // ordering, capacity, and exclusivity are all enforced the one place
+      // PickupSystem.canAddToHeld/pickUp already own.
+      if (
+        this.currentTarget &&
+        this.currentTarget.id !== this.palletSystem.palletId &&
+        this.currentTarget.id !== MAIL_RACK_INTERACTABLE_ID &&
+        !this.mailBagSystem.isBag(this.currentTarget.id) &&
+        this.pickupSystem.canAddToHeld(this.currentTarget)
+      ) {
+        this.pickupSystem.pickUp(this.currentTarget);
+        this.clearHighlight(this.currentTarget);
+        this.currentTarget = null;
+        return;
+      }
       // Sorting pallet: its own world-space carry/place flow (see
       // pallet-system.ts's class doc comment for why it can't go through
       // PickupSystem's generic viewmodel-clone flow like every other held
@@ -245,6 +280,21 @@ export class InteractionSystem {
     }
 
     if (this.playerData.state !== 'empty-handed') return;
+
+    // Priority -1: bulletin board upgrade UI (spec二) — reads
+    // PickupSystem's actual heldCount rather than trusting playerData.state
+    // alone (spec二: "空手判定必須讀取PickupSystem實際持有數量
+    // heldCount===0"), checked before every other empty-handed priority
+    // since aiming at the board should never simultaneously trigger
+    // anything else.
+    if (this.currentTarget && this.currentTarget.id === BULLETIN_BOARD_INTERACTABLE_ID) {
+      if (this.pickupSystem.heldCount === 0) {
+        this.onOpenUpgradeMenu();
+      }
+      this.clearHighlight(this.currentTarget);
+      this.currentTarget = null;
+      return;
+    }
 
     // Priority 0: talk-only interaction at the lost & found counter while
     // empty-handed (spec三 case3: "沒有持有任何物品——僅視為與NPC互動，顯示
@@ -409,15 +459,34 @@ export class InteractionSystem {
     }
 
     if (this.playerData.state === 'holding-item') {
+      // Single shared raycast for this whole branch (spec二: "沿用唯一準心
+      // raycast系統，不能新增第二套") — this state otherwise skips
+      // raycasting entirely (see the pallet/lost-found proximity-only
+      // checks below), so every holding-item target check below (bulletin
+      // board, mail-bag envelope insertion, multi-carry pickup) reuses this
+      // ONE result rather than each calling raycastCurrentHit() again.
+      const hit = this.raycastCurrentHit();
+
+      // Bulletin board while holding anything (spec二: "需空手才能查看升
+      // 級") — highest priority in this branch since it must show
+      // regardless of what's currently held.
+      if (hit && hit.id === BULLETIN_BOARD_INTERACTABLE_ID) {
+        if (this.currentTarget !== hit) {
+          if (this.currentTarget) this.clearHighlight(this.currentTarget);
+          this.applyHighlight(hit);
+          this.currentTarget = hit;
+          this.playerData.targetedObjectId = hit.id;
+        }
+        this.hud.showInteractionPrompt('物流中心公告欄', '需空手才能查看升級');
+        this.hud.setCrosshairActive(false);
+        return;
+      }
+
       // Holding a stamped/unstamped envelope and aiming at an OPEN mail bag
-      // (spec二/三: "E 放入信件") — a live raycast via the SAME shared
-      // raycastCurrentHit() every other target resolution uses, evaluated
-      // here too since this whole state otherwise skips raycasting entirely
-      // (see the pallet/lost-found proximity-only checks below).
+      // (spec二/三: "E 放入信件").
       const heldIdForBagPrompt = this.playerData.heldObjectId;
       const heldEnvelopeForBagPrompt = heldIdForBagPrompt ? this.mailSystem.getEnvelope(heldIdForBagPrompt) : undefined;
       if (heldEnvelopeForBagPrompt) {
-        const hit = this.raycastCurrentHit();
         const hitBag = hit && this.mailBagSystem.isBag(hit.id) ? this.mailBagSystem.getBag(hit.id) : null;
         if (hit && hitBag && hitBag.state === 'open') {
           if (this.currentTarget !== hit) {
@@ -430,6 +499,25 @@ export class InteractionSystem {
           this.hud.setCrosshairActive(true);
           return;
         }
+      }
+
+      // Multi-carry: aiming at a NEW plain pickupable item with spare
+      // capacity (spec五A) — same exclusions as onKeyDown's own multi-carry
+      // branch (never offered for the board/pallet/bags/rack, each already
+      // handled above or below).
+      if (
+        hit && hit.id !== this.palletSystem.palletId && hit.id !== MAIL_RACK_INTERACTABLE_ID &&
+        !this.mailBagSystem.isBag(hit.id) && this.pickupSystem.canAddToHeld(hit)
+      ) {
+        if (this.currentTarget !== hit) {
+          if (this.currentTarget) this.clearHighlight(this.currentTarget);
+          this.applyHighlight(hit);
+          this.currentTarget = hit;
+          this.playerData.targetedObjectId = hit.id;
+          this.hud.showInteractionPrompt(hit.displayName, `E 拿起（持有 ${this.pickupSystem.heldCount}/${this.pickupSystem.maxCarryCapacity}）`);
+        }
+        this.hud.setCrosshairActive(true);
+        return;
       }
 
       if (this.currentTarget) {
@@ -513,6 +601,11 @@ export class InteractionSystem {
             newTarget.displayName,
             `圖樣：${patternText}\n狀態：${stateText}\n信件數：${bag.envelopeIds.length}／${bag.capacity}\n${actionHint}`
           );
+        } else if (newTarget.id === BULLETIN_BOARD_INTERACTABLE_ID) {
+          // Empty-handed here (this whole raycast branch only runs once
+          // state !== 'holding-item' has already been routed elsewhere
+          // above) — spec二's own "E 查看升級" prompt.
+          this.hud.showInteractionPrompt('物流中心公告欄', 'E 查看升級');
         } else if (newTarget.id === MAIL_RACK_INTERACTABLE_ID) {
           // World prompt only while the crosshair directly hits the rack
           // (spec三: "只在準心命中供應架時顯示...準心移開後立即隱藏") — this

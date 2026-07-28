@@ -13,9 +13,18 @@ import { DepartureSettlement, LostFoundSettlementInput, MailSettlementInput } fr
  */
 export class ScoringSystem {
   private settingsManager: SettingsManager;
+  /** Fired once, right before returning, with the exact settlement snapshot
+   * this call produced ("Add bulletin board upgrade system" round spec四) —
+   * UpgradeSystem's own hook into "how did today's shipping actually go",
+   * without duplicating any of the scanning/penalty math above (spec: "不得
+   * 自行掃描場景，只讀取Cargo/Vehicle/Scoring System提供的狀態"). Optional so
+   * every pre-existing construction site (none pass it) keeps compiling
+   * unchanged. */
+  private onSettlement?: (settlement: DepartureSettlement) => void;
 
-  constructor(settingsManager: SettingsManager) {
+  constructor(settingsManager: SettingsManager, onSettlement?: (settlement: DepartureSettlement) => void) {
     this.settingsManager = settingsManager;
+    this.onSettlement = onSettlement;
   }
 
   /** Applies the unshipped penalty, the missed-lost-found-NPC penalty, and
@@ -38,7 +47,7 @@ export class ScoringSystem {
     const mailPenalty = mail.unshipped * UNSHIPPED_PENALTY_PER_ITEM;
     const totalPenalty = penalty + lostFoundPenalty + lostItemPenalty + mailPenalty;
     if (totalPenalty > 0) this.settingsManager.addScore(-totalPenalty);
-    return {
+    const settlement: DepartureSettlement = {
       total,
       shipped: shippedCorrect,
       unshipped,
@@ -56,5 +65,7 @@ export class ScoringSystem {
       mailPenalty,
       finalScore: this.settingsManager.progress.score,
     };
+    this.onSettlement?.(settlement);
+    return settlement;
   }
 }

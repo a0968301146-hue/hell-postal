@@ -7,8 +7,21 @@ import { DOLLY_PUSH_SPEED_MULTIPLIER } from '../../game/dolly-data';
 import { PlayerInteractionData } from '../../core/game-state';
 import { HUD } from '../hud';
 import { SettingsManager } from '../settings';
+import { InteractableObject } from '../../shared/types/interactable';
 
 const HALF_PI = Math.PI / 2;
+
+/** Baseline movement multiplier while carrying `large`-category cargo
+ * ("Add bulletin board upgrade system" round spec五B) — no such slowdown
+ * existed anywhere in the codebase before this round (verified: neither
+ * this file nor anywhere else read shapeType/'large' for a speed penalty),
+ * so this constant IS the Lv.0 baseline the spec's own upgrade-B premise
+ * ("Lv.0：使用現有大型貨物移動減速") assumes already exists — introduced
+ * here specifically so upgrade B (重物適應) has a real baseline to reduce.
+ * Only ever applied while the CURRENT top-of-stack held item's own
+ * mesh.userData.shapeType is exactly 'large' (never 'cage'/live, medium,
+ * or normal cargo — see PlayerController.isHoldingLargeCargo). */
+const BASE_LARGE_CARGO_SLOWDOWN_FACTOR = 0.7;
 
 export class PlayerController {
   private controls: PointerLockControls;
@@ -28,9 +41,20 @@ export class PlayerController {
   private verticalSpeed = 0;
   private grounded = true;
 
+  /** Upgrade C (移動速度) — fraction ADDED to the ORIGINAL base speed each
+   * frame (0, 0.05, 0.10, 0.15), never compounded: always multiplies
+   * SCENE_CONFIG.playerSpeed directly, never a previously-boosted value, so
+   * repeated UI-opens or save-loads can never stack it (spec五C). */
+  private moveSpeedBonusFraction = 0;
+  /** Upgrade B (重物適應) level — 0/1/2, recomputed into a slowdown factor
+   * fresh every frame from this level (never stored pre-multiplied), so it
+   * can't stack across save-loads either (spec五B). */
+  private heavyHandlingLevel: 0 | 1 | 2 = 0;
+
   constructor(
     camera: THREE.PerspectiveCamera, domElement: HTMLElement, private hud: HUD, physics: PhysicsSystem,
-    private playerData: PlayerInteractionData, settingsManager: SettingsManager
+    private playerData: PlayerInteractionData, settingsManager: SettingsManager,
+    private interactables: Map<string, InteractableObject>
   ) {
     this.camera = camera;
     this.physics = physics;
@@ -80,6 +104,41 @@ export class PlayerController {
    * lock() call), but exposed anyway for completeness/consistency. */
   requestLock(): void {
     if (!this._isLocked) this.controls.lock();
+  }
+
+  /** UpgradeSystem's ONLY hook for 移動速度 (spec三/七) — `fraction` is
+   * always the CURRENT level's own bonus (level * 0.05), never incremented
+   * on top of whatever was already set. */
+  setMoveSpeedBonus(fraction: number): void {
+    this.moveSpeedBonusFraction = fraction;
+  }
+
+  /** UpgradeSystem's ONLY hook for 重物適應 (spec三/七). */
+  setHeavyHandlingLevel(level: 0 | 1 | 2): void {
+    this.heavyHandlingLevel = level;
+  }
+
+  /** True only while the CURRENT top-of-stack held item is `large`-category
+   * cargo (mesh.userData.shapeType === 'large', set only by
+   * cargo-system.ts's spawnDailyBox/spawnDailyRoller for large presets) —
+   * deliberately excludes 'cage' (live animals), 'box'/'roller' (normal or
+   * medium cargo), matching spec五B's "只影響大型貨物，不影響活體、中型貨
+   * 物" exactly. */
+  private isHoldingLargeCargo(): boolean {
+    if (!this.playerData.heldObjectId) return false;
+    const obj = this.interactables.get(this.playerData.heldObjectId);
+    return !!obj && obj.mesh.userData.shapeType === 'large';
+  }
+
+  /** Recomputed fresh from `heavyHandlingLevel` every call — Lv.0 keeps the
+   * full baseline slowdown, Lv.1 halves the PENALTY (not the speed), Lv.2
+   * removes it entirely (spec五B). */
+  private heavySlowdownFactor(): number {
+    switch (this.heavyHandlingLevel) {
+      case 1: return 1 - (1 - BASE_LARGE_CARGO_SLOWDOWN_FACTOR) * 0.5;
+      case 2: return 1;
+      default: return BASE_LARGE_CARGO_SLOWDOWN_FACTOR;
+    }
   }
 
   private onMouseMoveCustom(event: MouseEvent): void {
@@ -152,7 +211,16 @@ export class PlayerController {
     const speedMult = this.playerData.state === 'pushing-dolly'
       ? DOLLY_PUSH_SPEED_MULTIPLIER
       : (this.isSprinting ? SCENE_CONFIG.sprintMultiplier : 1);
-    const speed = SCENE_CONFIG.playerSpeed * speedMult * deltaTime;
+    // Upgrade C: always computed from the ORIGINAL SCENE_CONFIG.playerSpeed
+    // constant, never a previously-boosted value (spec五C). Upgrade B's
+    // large-cargo slowdown applies ON TOP of this post-upgrade base speed
+    // (spec五C: "重物適應的減速效果需疊加在升級後的基礎速度之上"), only
+    // while actually holding large cargo — sprint multiplier and jump/
+    // gravity (SCENE_CONFIG.sprintMultiplier/jumpHeight/gravity) are never
+    // touched by either upgrade.
+    const upgradedBaseSpeed = SCENE_CONFIG.playerSpeed * (1 + this.moveSpeedBonusFraction);
+    const heavyFactor = this.isHoldingLargeCargo() ? this.heavySlowdownFactor() : 1;
+    const speed = upgradedBaseSpeed * speedMult * heavyFactor * deltaTime;
 
     // Get forward/right on XZ
     const forward = new THREE.Vector3();

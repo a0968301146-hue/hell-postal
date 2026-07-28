@@ -27,8 +27,37 @@ export class PickupSystem implements PickupPort {
   // ViewModel
   viewModelScene: THREE.Scene;
   viewModelCamera: THREE.PerspectiveCamera;
-  private heldViewMesh: THREE.Mesh | null = null;
-  private heldViewBasePos = new THREE.Vector3();
+  /** One viewmodel clone + base offset per currently-held item, in pickup
+   * order (index 0 = held longest, last index = most recently picked up /
+   * "top of stack" — see the class doc comment on multi-carry below). Both
+   * arrays are always kept the same length as `heldStack`. */
+  private heldViewMeshes: THREE.Mesh[] = [];
+  private heldViewBasePositions: THREE.Vector3[] = [];
+  /** Per-slot lateral offset applied on top of an item's own natural
+   * held-position calculation, so up to 3 simultaneously-held items don't
+   * visually overlap/jitter against each other ("Add bulletin board upgrade
+   * system" round spec五A: "手持物品之間不能互相碰撞或抖動") — a fixed,
+   * simple layout rather than a collision-aware one, adequate since
+   * multi-carry-eligible items are always small/medium (large/live cargo
+   * is exclusive — see isExclusiveItem). */
+  private readonly HELD_SLOT_OFFSETS: THREE.Vector3[] = [
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0.34, -0.06, 0.2),
+    new THREE.Vector3(-0.34, -0.06, 0.2),
+  ];
+
+  /** Ids of currently-held items, oldest-first — `heldStack[length-1]` is
+   * always the "top" (most recently picked up) item, mirrored 1:1 by
+   * `playerData.heldObjectId` so every EXISTING external reader of that
+   * field (mail-bag-system, lost-found-system, interaction-system, ...)
+   * keeps working completely unchanged, always seeing "the current primary
+   * held item" — exactly matching this round's own LIFO requirement (spec
+   * 五A: "放置/丟出時，最後拿起的物品優先處理", i.e. the same item
+   * `heldObjectId` already points to). Multi-carry only ever ADDS the
+   * ability to hold MORE than one at once; every single-item place/throw/
+   * force-drop code path below is otherwise unchanged. */
+  private heldStack: string[] = [];
+  private maxCarryCapacity_ = 1;
 
   // Placement preview
   private previewMesh: THREE.Mesh | null = null;
@@ -94,6 +123,54 @@ export class PickupSystem implements PickupPort {
     return this.playerData.state === 'placement-preview';
   }
 
+  /** How many items are currently held — spec二's exact "must read the
+   * actual held COUNT, not just the old single heldItem field" contract
+   * (used by InteractionSystem's bulletin-board empty-handed gate) and
+   * spec五A's "持有 X/Y" HUD display both read this directly. */
+  get heldCount(): number {
+    return this.heldStack.length;
+  }
+
+  get maxCarryCapacity(): number {
+    return this.maxCarryCapacity_;
+  }
+
+  /** UpgradeSystem's ONLY hook into multi-carry capacity (spec三/七: never
+   * called by anything except UpgradeSystem.applyEffect, never reached into
+   * directly). `n` is always >= 1 (Lv.0 baseline). */
+  setMaxCarryCapacity(n: number): void {
+    this.maxCarryCapacity_ = Math.max(1, n);
+  }
+
+  /** shapeType is only ever 'large' or 'cage' for daily cargo (see
+   * cargo-system.ts spawnDailyBox/spawnDailyRoller) — both occupy the FULL
+   * carry capacity exclusively (spec五A: "大型貨物與活體鐵籠佔滿容量，不可
+   * 與其他物品同時持有"), never combinable with anything else in either
+   * direction. */
+  private isExclusiveItem(obj: InteractableObject): boolean {
+    const shapeType = obj.mesh.userData.shapeType;
+    return shapeType === 'large' || shapeType === 'cage';
+  }
+
+  private isCurrentHoldExclusive(): boolean {
+    if (this.heldStack.length === 0) return false;
+    const obj = this.interactables.get(this.heldStack[0]);
+    return !!obj && this.isExclusiveItem(obj);
+  }
+
+  /** Shared "may this specific object be added to the held set right now"
+   * check — used by both pickUp() itself and InteractionSystem's own
+   * multi-carry pickup-targeting (aiming at a new item while already
+   * holding something, spec五A), so the two can never diverge. */
+  canAddToHeld(obj: InteractableObject | null | undefined): boolean {
+    if (!obj || !obj.mesh || !obj.canPickUp || obj.isHeld) return false;
+    if (this.playerData.state !== 'empty-handed' && this.playerData.state !== 'holding-item') return false;
+    if (this.heldStack.length === 0) return true;
+    if (this.isCurrentHoldExclusive()) return false;
+    if (this.isExclusiveItem(obj)) return false;
+    return this.heldStack.length < this.maxCarryCapacity_;
+  }
+
   addPlacementSurface(surface: THREE.Object3D): void {
     this.additionalSurfaces.push(surface);
   }
@@ -111,9 +188,7 @@ export class PickupSystem implements PickupPort {
 
   // --- PICK UP ---
   pickUp(obj: InteractableObject): void {
-    if (!obj || !obj.mesh) return;
-    if (this.playerData.state !== 'empty-handed') return;
-    if (!obj.canPickUp || obj.isHeld) return;
+    if (!this.canAddToHeld(obj)) return;
 
     if (!this.hasFiredFirstPickup) {
       this.hasFiredFirstPickup = true;
@@ -155,15 +230,26 @@ export class PickupSystem implements PickupPort {
       this.physics.setBodyEnabled(obj.rigidBody, false);
     }
 
-    // Create view model mesh
-    this.createHeldViewMesh(obj);
+    // Create view model mesh (additive — keeps every already-held item's
+    // own viewmodel clone in place, see addHeldViewMesh).
+    this.addHeldViewMesh(obj);
 
-    // Update state
+    // Update state — pushed onto the stack; heldObjectId always mirrors the
+    // new top (spec五A LIFO — see the heldStack field's own doc comment).
     obj.isHeld = true;
+    this.heldStack.push(obj.id);
     this.playerData.state = 'holding-item';
     this.playerData.heldObjectId = obj.id;
 
-    this.hud.showInteractionPrompt(obj.displayName, '按 E 選擇放置位置\n按住 Q 蓄力丟出');
+    this.hud.showInteractionPrompt(obj.displayName, this.holdActionHintText());
+  }
+
+  /** "按住 Q 蓄力丟出" plus a "持有 X/Y" line once multi-carry actually
+   * matters (Lv.0's max of 1 never shows it — spec五A: "HUD顯示『持有
+   * 2/3』", only meaningful once more than one slot exists). */
+  private holdActionHintText(): string {
+    const countLine = this.maxCarryCapacity_ > 1 ? `\n持有 ${this.heldStack.length}/${this.maxCarryCapacity_}` : '';
+    return `按 E 選擇放置位置\n按住 Q 蓄力丟出${countLine}`;
   }
 
   /** Find and capture all envelopes inside a container before picking it up */
@@ -314,9 +400,10 @@ export class PickupSystem implements PickupPort {
     this.carriedEnvelopes = [];
   }
 
-  private createHeldViewMesh(obj: InteractableObject): void {
-    this.removeHeldViewMesh();
-
+  /** Adds ONE more viewmodel clone for `obj` on top of whatever's already
+   * held (never removes existing ones — see removeTopHeldViewMesh/
+   * removeAllHeldViewMeshes below for how each one is later cleared). */
+  private addHeldViewMesh(obj: InteractableObject): void {
     // Clone the entire mesh tree (including children like walls, labels for containers)
     const cloned = obj.mesh.clone(true);
     cloned.frustumCulled = false;
@@ -333,7 +420,7 @@ export class PickupSystem implements PickupPort {
 
     // Object3D.clone() does NOT deep-clone geometry/material — the cloned
     // meshes still reference the exact same geometry/material instances as
-    // the world mesh. Give the viewmodel its own copies so removeHeldViewMesh()
+    // the world mesh. Give the viewmodel its own copies so disposeViewMesh()
     // can safely dispose them without freeing resources the world mesh needs.
     cloned.traverse((child) => {
       if (child instanceof THREE.Mesh) {
@@ -347,7 +434,7 @@ export class PickupSystem implements PickupPort {
       }
     });
 
-    this.heldViewMesh = cloned as THREE.Mesh;
+    const viewMesh = cloned as THREE.Mesh;
 
     // Calculate position based on size
     const maxDim = Math.max(obj.width, obj.height, obj.depth);
@@ -368,48 +455,82 @@ export class PickupSystem implements PickupPort {
       holdY = -0.55 - (obj.height > 0.5 ? (obj.height - 0.5) * 0.2 : 0);
     }
 
-    this.heldViewBasePos.set(0, holdY, holdZ);
-    this.heldViewMesh.position.copy(this.heldViewBasePos);
+    // Slot offset (spec五A) — index 0 for the first item held, further
+    // slots for each additional one on top of it (never more than
+    // maxCarryCapacity_ - 1, capped defensively at the offset table's own
+    // length since capacity is currently at most 3).
+    const slotIndex = Math.min(this.heldViewMeshes.length, this.HELD_SLOT_OFFSETS.length - 1);
+    const offset = this.HELD_SLOT_OFFSETS[slotIndex];
+    const basePos = new THREE.Vector3(offset.x, holdY + offset.y, holdZ + offset.z);
+    viewMesh.position.copy(basePos);
 
     // Large cargo (up to 1.35m on an axis) would otherwise fill most of the
     // screen at viewmodel distance — shrink the CLONE only (world size /
     // collider are untouched) once it's clearly bigger than the biggest
     // normal-cargo preset (0.6m, see cargo-data.ts CARGO_SIZE_LIMITS).
     if (maxDim > 0.9) {
-      this.heldViewMesh.scale.setScalar(Math.max(0.5, 0.9 / maxDim));
+      viewMesh.scale.setScalar(Math.max(0.5, 0.9 / maxDim));
     }
 
-    this.viewModelScene.add(this.heldViewMesh);
+    this.heldViewMeshes.push(viewMesh);
+    this.heldViewBasePositions.push(basePos);
+    this.viewModelScene.add(viewMesh);
   }
 
-  private removeHeldViewMesh(): void {
-    if (this.heldViewMesh) {
-      this.viewModelScene.remove(this.heldViewMesh);
-      // Dispose geometries and materials in the tree
-      this.heldViewMesh.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          child.geometry?.dispose();
-          if (child.material) {
-            if (Array.isArray(child.material)) {
-              child.material.forEach(m => m.dispose());
-            } else {
-              child.material.dispose();
-            }
+  private disposeViewMesh(mesh: THREE.Mesh): void {
+    this.viewModelScene.remove(mesh);
+    mesh.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.geometry?.dispose();
+        if (child.material) {
+          if (Array.isArray(child.material)) {
+            child.material.forEach(m => m.dispose());
+          } else {
+            child.material.dispose();
           }
         }
-      });
-      this.heldViewMesh = null;
+      }
+    });
+  }
+
+  /** Removes just the TOP (most-recently-added) viewmodel clone — used
+   * whenever the top-of-stack held item is placed/thrown/force-dropped,
+   * leaving every other still-held item's own viewmodel untouched. */
+  private removeTopHeldViewMesh(): void {
+    const mesh = this.heldViewMeshes.pop();
+    this.heldViewBasePositions.pop();
+    if (mesh) this.disposeViewMesh(mesh);
+  }
+
+  /** Pops the current top-of-stack held item and updates player state to
+   * whatever remains (LIFO — spec五A: "放置/丟出時最後拿起的物品優先處
+   * 理"). Deliberately does NOT touch obj.isHeld/mesh/physics — identical
+   * contract to the pre-multi-carry forceDropHeld() (see PickupPort's own
+   * doc comment: "the object stays wherever it was left...it's the
+   * caller's job to dispose or restore it") — every caller below already
+   * handles that itself for exactly the one item being released. */
+  private releaseTopHeldItem(): void {
+    this.heldStack.pop();
+    this.removeTopHeldViewMesh();
+    if (this.heldStack.length > 0) {
+      this.playerData.heldObjectId = this.heldStack[this.heldStack.length - 1];
+      this.playerData.state = 'holding-item';
+      const obj = this.interactables.get(this.playerData.heldObjectId);
+      if (obj) this.hud.showInteractionPrompt(obj.displayName, this.holdActionHintText());
+    } else {
+      this.playerData.heldObjectId = null;
+      this.playerData.state = 'empty-handed';
+      this.hud.hideInteractionPrompt();
     }
   }
 
-  /** Force release held item without placing (used for bag sorting) */
+  /** Force release the CURRENT (top-of-stack) held item without placing it
+   * (used for bag sorting) — any OTHER items still held underneath stay
+   * held, untouched. */
   forceDropHeld(): void {
     if (!this.playerData.heldObjectId) return;
-    this.removeHeldViewMesh();
     this.cancelCharge();
-    this.playerData.state = 'empty-handed';
-    this.playerData.heldObjectId = null;
-    this.hud.hideInteractionPrompt();
+    this.releaseTopHeldItem();
     this.hud.hideChargeBar();
   }
 
@@ -428,8 +549,8 @@ export class PickupSystem implements PickupPort {
     const placeY = bottomY + (obj.height > 0.01 ? obj.height / 2 : 0.02) + 0.03;
     const placePos = new THREE.Vector3(hitPoint.x, placeY, hitPoint.z);
 
-    // Remove held view
-    this.removeHeldViewMesh();
+    // Cancel any active charge (the top-item's viewmodel it was shaking is
+    // removed below by releaseTopHeldItem itself).
     this.cancelCharge();
 
     // Re-enable world mesh
@@ -448,9 +569,7 @@ export class PickupSystem implements PickupPort {
 
     obj.isHeld = false;
     obj.canPickUp = true;
-    this.playerData.state = 'empty-handed';
-    this.playerData.heldObjectId = null;
-    this.hud.hideInteractionPrompt();
+    this.releaseTopHeldItem();
     this.hud.hideChargeBar();
   }
 
@@ -483,7 +602,7 @@ export class PickupSystem implements PickupPort {
 
     this.removePreview();
     this.playerData.state = 'holding-item';
-    this.hud.showInteractionPrompt(obj.displayName, '按 E 選擇放置位置\n按住 Q 蓄力丟出');
+    this.hud.showInteractionPrompt(obj.displayName, this.holdActionHintText());
   }
 
   confirmPlacement(): void {
@@ -522,7 +641,6 @@ export class PickupSystem implements PickupPort {
       obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
     }
 
-    this.removeHeldViewMesh();
     this.removePreview();
 
     // Restore carried envelopes if this is a container
@@ -535,9 +653,7 @@ export class PickupSystem implements PickupPort {
 
     obj.isHeld = false;
     obj.canPickUp = true;
-    this.playerData.state = 'empty-handed';
-    this.playerData.heldObjectId = null;
-    this.hud.hideInteractionPrompt();
+    this.releaseTopHeldItem();
   }
 
   // --- THROW ---
@@ -560,10 +676,15 @@ export class PickupSystem implements PickupPort {
   private cancelCharge(): void {
     this.isCharging = false;
     this.chargeTime = 0;
-    // Reset view mesh position
-    if (this.heldViewMesh) {
-      this.heldViewMesh.position.copy(this.heldViewBasePos);
-      this.heldViewMesh.rotation.set(0, 0, 0);
+    // Reset ONLY the top-of-stack viewmodel's position — that's the only
+    // one charging/shaking ever touches (see updateChargeShake below);
+    // every other held item's viewmodel stays exactly where its own slot
+    // offset put it.
+    const topMesh = this.heldViewMeshes[this.heldViewMeshes.length - 1];
+    const topBase = this.heldViewBasePositions[this.heldViewBasePositions.length - 1];
+    if (topMesh && topBase) {
+      topMesh.position.copy(topBase);
+      topMesh.rotation.set(0, 0, 0);
     }
   }
 
@@ -631,11 +752,8 @@ export class PickupSystem implements PickupPort {
       this.restoreContainerContentsWithVelocity(obj, dir, ratio);
     }
 
-    this.removeHeldViewMesh();
     obj.isHeld = false;
-    this.playerData.state = 'empty-handed';
-    this.playerData.heldObjectId = null;
-    this.hud.hideInteractionPrompt();
+    this.releaseTopHeldItem();
     this.hud.hideChargeBar();
   }
 
@@ -645,7 +763,7 @@ export class PickupSystem implements PickupPort {
     this.viewModelCamera.aspect = this.camera.aspect;
     this.viewModelCamera.fov = this.camera.fov;
     this.viewModelCamera.updateProjectionMatrix();
-    // viewModelCamera stays at origin, heldViewMesh positioned relative to it
+    // viewModelCamera stays at origin, each heldViewMeshes entry positioned relative to it
 
     // Charge update
     if (this.isCharging && this.playerData.state === 'holding-item') {
@@ -814,8 +932,13 @@ export class PickupSystem implements PickupPort {
     return true;
   }
 
+  /** Only the TOP-of-stack held item's viewmodel shakes while charging a
+   * throw — every other simultaneously-held item's clone stays static in
+   * its own slot (spec五A: no jitter between held items). */
   private updateChargeShake(): void {
-    if (!this.heldViewMesh) return;
+    const topMesh = this.heldViewMeshes[this.heldViewMeshes.length - 1];
+    const topBase = this.heldViewBasePositions[this.heldViewBasePositions.length - 1];
+    if (!topMesh || !topBase) return;
     const ratio = this.chargeRatio;
     const t = performance.now() * 0.001;
 
@@ -826,12 +949,12 @@ export class PickupSystem implements PickupPort {
     const rotY = Math.cos(t * 11) * ratio * 0.04;
     const rotZ = Math.sin(t * 9) * ratio * 0.03;
 
-    this.heldViewMesh.position.set(
-      this.heldViewBasePos.x + shakeX,
-      this.heldViewBasePos.y + shakeY,
-      this.heldViewBasePos.z + shakeZ
+    topMesh.position.set(
+      topBase.x + shakeX,
+      topBase.y + shakeY,
+      topBase.z + shakeZ
     );
-    this.heldViewMesh.rotation.set(rotX, rotY, rotZ);
+    topMesh.rotation.set(rotX, rotY, rotZ);
   }
 
   private removePreview(): void {

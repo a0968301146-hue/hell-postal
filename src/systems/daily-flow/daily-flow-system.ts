@@ -50,13 +50,20 @@ export class DailyFlowSystem {
   private cargoSystem: CargoSystem;
   private hud: HUD;
   private resetTools: () => void;
-  private onDayCompleted?: () => void;
+  /** Fired once the day is fully reset and ready, with the day number that
+   * JUST finished ("Add bulletin board upgrade system" round spec四 — the
+   * one hook UpgradeSystem needs to convert that day's settlement into
+   * points exactly once). currentDay has already been incremented by the
+   * time this fires (see pressEndDayButton below), so this parameter is the
+   * ONLY reliable way to know which day just completed — reading
+   * `this.currentDay` from inside the callback would be off by one. */
+  private onDayCompleted?: (finishedDay: number) => void;
   private onAllVehiclesDeparted?: () => void;
   private buttonLabel!: THREE.Sprite;
 
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, cargoSystem: CargoSystem, hud: HUD,
-    resetTools: () => void, onDayCompleted?: () => void, onAllVehiclesDeparted?: () => void
+    resetTools: () => void, onDayCompleted?: (finishedDay: number) => void, onAllVehiclesDeparted?: () => void
   ) {
     this.cargoSystem = cargoSystem;
     this.hud = hud;
@@ -230,6 +237,6 @@ export class DailyFlowSystem {
     this.resetTools();
 
     this.state = 'ready';
-    this.onDayCompleted?.();
+    this.onDayCompleted?.(finishedDay);
   }
 }

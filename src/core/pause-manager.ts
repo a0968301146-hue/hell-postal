@@ -5,7 +5,7 @@
 // others. A Set of independent reasons means closing one UI only clears its
 // own reason; the game only actually resumes once the set is empty.
 
-export type PauseReason = 'manual' | 'settlement' | 'stampMinigame';
+export type PauseReason = 'manual' | 'settlement' | 'stampMinigame' | 'upgradeMenu';
 
 export class PauseManager {
   private reasons: Set<PauseReason> = new Set();

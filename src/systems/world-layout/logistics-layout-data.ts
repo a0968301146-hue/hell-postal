@@ -183,6 +183,56 @@ export const WEST_WALL_SHELVES: WestWallShelfConfig[] = [0, 1, 2].map((i) => ({
   depth: SHELF_DEPTH,
 }));
 
+/** Wall-mounted bulletin board ("公告欄升級系統" round spec一) — a thin
+ * wood-frame+corkboard panel on BACK_AREA's own west wall, facing east into
+ * the room (mirrors PickupSystem.validatePlacement's own verified axis
+ * mapping: an object's `width` occupies world X, `depth` occupies world Z —
+ * so this board's thin dimension, thickness, sits along world X, flush
+ * against the wall, and its wide dimension, width, runs along world Z,
+ * along the wall).
+ *
+ * Positioned south of the LAST west-wall shelf group's own south edge
+ * (computed from WEST_WALL_SHELVES directly, never a hardcoded coordinate,
+ * so this can't silently drift out of sync if the shelf layout ever changes
+ * again — spec一: "不要硬編座標，需與貨架保持安全距離") with real clearance
+ * (BULLETIN_BOARD_SHELF_CLEARANCE) beyond that edge. Every other structure
+ * near the west wall (the lost-found door, its NPC gate, the lost-found
+ * cabinet) sits well NORTH of the shelf groups — the shelf groups
+ * themselves were already verified clear of all of those (see
+ * WEST_WALL_SHELVES's own doc comment above) — so placing this board even
+ * further south than the shelves guarantees it stays clear of all of them
+ * too, without needing to re-derive their exact footprints again here. */
+const BULLETIN_BOARD_WIDTH = 2.2; // along the wall, world Z
+const BULLETIN_BOARD_HEIGHT = 1.3;
+const BULLETIN_BOARD_THICKNESS = 0.1; // wall -> room, world X
+const BULLETIN_BOARD_CENTER_HEIGHT = 1.6; // above the floor, spec: "中心高度約1.6m"
+const BULLETIN_BOARD_SHELF_CLEARANCE = 0.6; // spec: "與最近貨架保持至少0.6m淨距"
+/** Small standoff from the wall's own inner face so the board's thin body
+ * never z-fights/embeds into the wall collider — not the same thing as the
+ * shelves' own SHELF_WALL_CLEARANCE (a much deeper free-standing fixture),
+ * but the same general idea. */
+const BULLETIN_BOARD_WALL_STANDOFF = 0.02;
+/** Open floor space the player needs standing directly in front of the
+ * board to read/interact with it (spec一: "板面前方至少保留1.2m可站立空
+ * 間") — exported so a future round could validate against it without
+ * re-deriving the number; nothing in this round computes a second position
+ * from it (the board's own east-facing thickness plus the shelves'
+ * existing spacing already leaves the whole open floor east of the west
+ * wall clear here, far more than 1.2m). */
+export const BULLETIN_BOARD_STANDING_CLEARANCE = 1.2;
+
+const lastWestShelf = WEST_WALL_SHELVES[WEST_WALL_SHELVES.length - 1];
+const lastShelfSouthEdgeZ = lastWestShelf.centerZ + lastWestShelf.width / 2;
+
+export const BULLETIN_BOARD = {
+  centerX: westWallInnerFaceX + BULLETIN_BOARD_WALL_STANDOFF + BULLETIN_BOARD_THICKNESS / 2,
+  centerY: BACK_AREA.floorY + BULLETIN_BOARD_CENTER_HEIGHT,
+  centerZ: lastShelfSouthEdgeZ + BULLETIN_BOARD_SHELF_CLEARANCE + BULLETIN_BOARD_WIDTH / 2,
+  width: BULLETIN_BOARD_WIDTH,
+  height: BULLETIN_BOARD_HEIGHT,
+  thickness: BULLETIN_BOARD_THICKNESS,
+};
+
 /** Reserved (white-box only, no function yet) cargo-type zones — space is
  * claimed now so future systems have somewhere to go; purely floor decals +
  * floating labels (world-layout-system.ts buildCargoZones), no physics

@@ -12,7 +12,9 @@ import { PhysicsWorldPort } from '../../shared/types/physics-world-port';
 import {
   WALL_THICKNESS, BACK_AREA, CARGO_ZONES, LAND_DOCKS, LAND_GATE, PIER, SEA_GATE, SEA_DOCKS, NORTH_GATES,
   WEST_WALL_SHELVES, SHELF_LEVEL_Y_OFFSETS, SHELF_BOARD_THICKNESS, SHELF_POST_THICKNESS, SHELF_FRAME_TOP_MARGIN,
+  BULLETIN_BOARD,
 } from './logistics-layout-data';
+import { createInteractableObject } from '../../shared/types/interactable';
 // Reads the room/gate coordinates from the neutral data layer (Phase 6:
 // "模組邊界修正" — moved out of systems/lost-found so world-layout and
 // lost-found never import each other's internals; both read the same
@@ -57,6 +59,17 @@ export interface SceneData {
   shelfSurfaces: THREE.Mesh[];
 }
 
+/** The bulletin board's own raycast-target id ("Add bulletin board upgrade
+ * system" round spec二) — registered directly into the SAME shared
+ * `interactables` map every other pickupable prop uses, so
+ * InteractionSystem's existing single crosshair raycast resolves it for
+ * free, exactly mirroring the empty-bag supply rack's own pattern
+ * (MAIL_RACK_INTERACTABLE_ID, mail-bag-system.ts). `canPickUp: true` only
+ * so it passes that raycast's own generic filter — it's never actually
+ * handed to PickupSystem.pickUp(); InteractionSystem intercepts E specially
+ * before the generic pickup/multi-carry path runs. */
+export const BULLETIN_BOARD_INTERACTABLE_ID = 'bulletin-board';
+
 function stdMat(color: number, opts: Partial<THREE.MeshStandardMaterialParameters> = {}): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color, ...opts });
 }
@@ -88,7 +101,89 @@ export function createLogisticsScene(scene: THREE.Scene, physics: PhysicsWorldPo
   const shelfSurfaces = buildWestWallShelves(scene, physics);
 
   const interactables = new Map<string, InteractableObject>();
+  buildBulletinBoard(scene, physics, interactables);
   return { interactables, floor, pierFloor, lostFoundFloor, shelfSurfaces };
+}
+
+/** Wall-mounted bulletin board ("Add bulletin board upgrade system" round
+ * spec一) — a thin wood-frame + corkboard panel, facing EAST into the room
+ * (local +X, since local Z spans its `width` along the wall — see
+ * BULLETIN_BOARD's own doc comment in logistics-layout-data.ts for the axis
+ * reasoning). Purely decorative geometry beyond the frame itself (paper
+ * scraps + pins + small skill-icon squares, spec一: "裝飾用紙張/圖釘/技能圖
+ * 示", explicitly "不需要複雜動畫") — no moving parts, no per-frame update.
+ * A single static collider wraps ONLY the board's own thin body (spec二:
+ * "互動Collider只包住板面"), never an enlarged detection volume. Registered
+ * into the shared `interactables` map as a raycast target the same way the
+ * empty-bag supply rack already is — see BULLETIN_BOARD_INTERACTABLE_ID. */
+function buildBulletinBoard(scene: THREE.Scene, physics: PhysicsWorldPort, interactables: Map<string, InteractableObject>): void {
+  const { centerX, centerY, centerZ, width, height, thickness } = BULLETIN_BOARD;
+
+  const group = new THREE.Group();
+  group.position.set(centerX, centerY, centerZ);
+  scene.add(group);
+
+  // Wood frame — the full board volume; this IS the raycast/collider mesh.
+  const frameMat = stdMat(0x6b4a2a);
+  const frameGeo = new THREE.BoxGeometry(thickness, height, width);
+  const frameMesh = new THREE.Mesh(frameGeo, frameMat);
+  group.add(frameMesh);
+
+  // Corkboard inset — slightly proud of the frame's east (room-facing) face.
+  const corkMat = stdMat(0xc9a06a);
+  const corkGeo = new THREE.BoxGeometry(thickness * 0.3, height * 0.82, width * 0.9);
+  const corkMesh = new THREE.Mesh(corkGeo, corkMat);
+  corkMesh.position.set(thickness / 2 + thickness * 0.15, 0, 0);
+  group.add(corkMesh);
+
+  // Decorative paper scraps — flat planes pinned at varied offsets.
+  const paperColors = [0xe8e0c8, 0xd8ceb0, 0xece4d0];
+  const paperPositions = [
+    { y: height * 0.22, z: -width * 0.28, rz: 0.06 },
+    { y: height * 0.05, z: -width * 0.05, rz: -0.04 },
+    { y: -height * 0.12, z: width * 0.22, rz: 0.05 },
+    { y: height * 0.18, z: width * 0.32, rz: -0.03 },
+  ];
+  const paperFaceX = thickness / 2 + thickness * 0.3 + 0.005;
+  for (let i = 0; i < paperPositions.length; i++) {
+    const p = paperPositions[i];
+    const paperGeo = new THREE.PlaneGeometry(0.26, 0.34);
+    const paperMesh = new THREE.Mesh(paperGeo, new THREE.MeshStandardMaterial({ color: paperColors[i % paperColors.length], side: THREE.DoubleSide }));
+    paperMesh.position.set(paperFaceX, p.y, p.z);
+    paperMesh.rotation.set(0, Math.PI / 2, p.rz);
+    group.add(paperMesh);
+
+    // Pin — a tiny sphere at the paper's top edge.
+    const pinGeo = new THREE.SphereGeometry(0.02, 8, 8);
+    const pinMesh = new THREE.Mesh(pinGeo, new THREE.MeshStandardMaterial({ color: 0xc03a3a }));
+    pinMesh.position.set(paperFaceX + 0.01, p.y + 0.15, p.z);
+    group.add(pinMesh);
+  }
+
+  // Small skill-icon squares along the bottom edge — a purely decorative
+  // hint of "this board is about upgrades", not a functional icon set.
+  const iconColors = [0x4a90b8, 0x8a6a3a, 0x4a9a4a, 0xb8a04a];
+  for (let i = 0; i < iconColors.length; i++) {
+    const iconGeo = new THREE.PlaneGeometry(0.14, 0.14);
+    const iconMesh = new THREE.Mesh(iconGeo, new THREE.MeshStandardMaterial({ color: iconColors[i], side: THREE.DoubleSide }));
+    const z = (i - (iconColors.length - 1) / 2) * 0.34;
+    iconMesh.position.set(paperFaceX, -height * 0.34, z);
+    iconMesh.rotation.y = Math.PI / 2;
+    group.add(iconMesh);
+  }
+
+  const label = createFloatingLabel('物流中心公告欄', { width: 1.1, bg: 'rgba(30,25,15,0.75)' });
+  label.position.set(thickness / 2 + 0.3, height / 2 + 0.3, 0);
+  group.add(label);
+
+  group.updateMatrixWorld(true);
+
+  // Collider wraps only the board's own thin body — matches frameMesh
+  // exactly, no enlarged detection volume (spec二).
+  physics.createStaticCuboid(centerX, centerY, centerZ, thickness / 2, height / 2, width / 2);
+
+  const obj = createInteractableObject(BULLETIN_BOARD_INTERACTABLE_ID, '物流中心公告欄', frameMesh, thickness, height, width);
+  interactables.set(BULLETIN_BOARD_INTERACTABLE_ID, obj);
 }
 
 function buildBackArea(scene: THREE.Scene, physics: PhysicsWorldPort): THREE.Mesh {

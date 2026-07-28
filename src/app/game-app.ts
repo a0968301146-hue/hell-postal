@@ -265,6 +265,7 @@ export class GameApp {
         loaded: s.dailyFlowSystem.completedCargoCount,
         bannerText,
       });
+      hud.updateHeldCount(s.pickupSystem.heldCount, s.pickupSystem.maxCarryCapacity);
     }
 
     s.compassUI.update(camera);
@@ -276,6 +277,9 @@ export class GameApp {
     // before pause.
     s.cargoInspectionSystem.update();
     const inspectedCargo = s.cargoInspectionSystem.currentCargo;
+    // "同類感知" upgrade (spec五D) — reuses this SAME cargoInspectionSystem
+    // raycast result, never a second raycast of its own.
+    s.similarCargoHighlight.update(s.upgradeSystem.isSimilarCargoSenseUnlocked(), inspectedCargo, s.cargoSystem);
     if (inspectedCargo?.category && inspectedCargo.region) {
       // "Organize and expand cargo shape presets" round: the crosshair line
       // also shows the exact shape preset's own displayName + sizeClass

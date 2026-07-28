@@ -13,6 +13,7 @@ export class HUD {
   private toastTimer: number | null = null;
   private dayTransitionEl: HTMLElement;
   private dayTransitionTimer: number | null = null;
+  private heldCountEl: HTMLElement;
 
   constructor() {
     const hud = document.createElement('div');
@@ -78,6 +79,14 @@ export class HUD {
     this.dayTransitionEl = document.createElement('div');
     this.dayTransitionEl.id = 'day-transition';
     hud.appendChild(this.dayTransitionEl);
+
+    // "多件搬運" held-count indicator ("Add bulletin board upgrade system"
+    // round spec五A: "HUD顯示『持有 2/3』") — persistent, not just folded
+    // into the transient interaction prompt, so it stays visible while the
+    // player looks around without aiming at anything in particular.
+    this.heldCountEl = document.createElement('div');
+    this.heldCountEl.id = 'held-count-panel';
+    hud.appendChild(this.heldCountEl);
   }
 
   /** Daily flow status panel — updated every frame from game.ts's loop
@@ -137,6 +146,17 @@ export class HUD {
 
   showInstructions(): void { this.instructionsEl.classList.remove('hidden'); }
   hideInstructions(): void { this.instructionsEl.classList.add('hidden'); }
+
+  /** Only shown once `max` > 1 (i.e. 多件搬運 has actually been purchased)
+   * — Lv.0's own max of 1 stays visually identical to before this round. */
+  updateHeldCount(count: number, max: number): void {
+    if (max <= 1) {
+      this.heldCountEl.classList.remove('visible');
+      return;
+    }
+    this.heldCountEl.textContent = `持有 ${count}/${max}`;
+    this.heldCountEl.classList.add('visible');
+  }
 
   showInteractionPrompt(name: string, action: string): void {
     this.promptEl.textContent = `${name}\n${action}`;

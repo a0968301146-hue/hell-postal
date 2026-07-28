@@ -958,3 +958,172 @@ body.text-size-large #interaction-prompt { font-size: 17px; }
   pointer-events: none;
 }
 
+/* "多件搬運" held-count indicator ("Add bulletin board upgrade system"
+ * round spec五A) — persistent, top-right under the daily-flow panel. */
+#held-count-panel {
+  position: fixed;
+  top: 96px;
+  right: 16px;
+  z-index: 101;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-family: sans-serif;
+  font-size: 13px;
+  color: #eef0e6;
+  text-align: center;
+  user-select: none;
+  display: none;
+}
+
+#held-count-panel.visible {
+  display: block;
+}
+
+/* Bulletin board upgrade UI ("Add bulletin board upgrade system" round
+ * spec三) — full-screen overlay covering the whole HUD, same
+ * position:fixed/inset:0 convention as #manual-overlay, deliberately NOT
+ * the browser Fullscreen API. */
+#upgrade-menu-overlay {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+#upgrade-menu-overlay.open {
+  opacity: 1;
+  pointer-events: all;
+}
+
+.upgrade-menu-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 8, 6, 0.75);
+}
+
+.upgrade-menu-panel {
+  position: relative;
+  width: min(720px, 92vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  background: #f3ead6;
+  border: 3px solid #6b4a2a;
+  border-radius: 10px;
+  padding: 28px 32px;
+  font-family: sans-serif;
+  color: #3a2c18;
+}
+
+#upgrade-menu-close-btn {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid #a8763f;
+  background: #e6d6b0;
+  color: #3a2c18;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+#upgrade-menu-close-btn:hover {
+  background: #d8c090;
+}
+
+.upgrade-menu-title {
+  margin: 0 0 6px;
+  font-size: 24px;
+  color: #4a3418;
+}
+
+.upgrade-menu-points {
+  margin: 0 0 18px;
+  font-size: 15px;
+  color: #6a4e28;
+}
+
+.upgrade-menu-points span {
+  font-weight: bold;
+  color: #a8763f;
+}
+
+.upgrade-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.upgrade-row {
+  border: 1px solid #cbb98c;
+  border-radius: 8px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.upgrade-row-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+
+.upgrade-row-name {
+  font-size: 17px;
+  font-weight: bold;
+}
+
+.upgrade-row-level {
+  font-size: 13px;
+  color: #6a4e28;
+}
+
+.upgrade-row-desc {
+  margin: 2px 0;
+  font-size: 13px;
+  color: #5a4526;
+}
+
+.upgrade-row-current, .upgrade-row-next {
+  margin: 2px 0;
+  font-size: 13px;
+}
+
+.upgrade-row-maxed {
+  margin: 6px 0 0;
+  font-size: 13px;
+  font-weight: bold;
+  color: #a8763f;
+}
+
+.upgrade-buy-btn {
+  margin-top: 8px;
+  padding: 6px 14px;
+  border: 1px solid #a8763f;
+  border-radius: 4px;
+  background: #e6d6b0;
+  color: #3a2c18;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.upgrade-buy-btn:hover:not(:disabled) {
+  background: #a8763f;
+  color: #fff;
+}
+
+.upgrade-buy-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
