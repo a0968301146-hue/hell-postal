@@ -235,6 +235,31 @@ export class PhysicsSystem implements PhysicsWorldPort {
     return hit !== null;
   }
 
+  /** Same purpose as castShape() above, but with CORRECTLY packed Rapier
+   * interaction groups — (membership << 16) | filter, the same convention
+   * castShapeMove() below already documents ("a bare bitmask...silently
+   * matches nothing"). castShape()'s own bare `(GROUP_STATIC | GROUP_BOX)`
+   * argument leaves the query's membership half at 0, which — verified
+   * empirically while building "Enlarge west wall shelves for medium cargo"
+   * round spec三's placement-preview fix — reliably FAILS to detect overlap
+   * with certain static colliders (e.g. a held item's preview box genuinely
+   * overlapping a wall). Added as a NEW method rather than fixing
+   * castShape() itself, since that method has other existing callers
+   * (PickupSystem's throw-spot-blocked check, UnloadingSystem's spawn-
+   * clearance check) outside this round's scope — this one is used ONLY by
+   * PickupSystem.validatePlacement's new static-geometry check. */
+  castShapeAgainstStaticAndBox(position: THREE.Vector3, halfExtents: THREE.Vector3): boolean {
+    if (!this.initialized) return false;
+    const shape = new RAPIER.Cuboid(halfExtents.x - 0.01, halfExtents.y - 0.01, halfExtents.z - 0.01);
+    const shapePos = { x: position.x, y: position.y, z: position.z };
+    const shapeRot = { x: 0, y: 0, z: 0, w: 1 };
+    const hit = this.world.intersectionWithShape(
+      shapePos, shapeRot, shape, undefined,
+      (GROUP_BOX << 16) | (GROUP_STATIC | GROUP_BOX)
+    );
+    return hit !== null;
+  }
+
   /** Swept shape cast against FIXED scene geometry only (walls/glass/counter/
    * furniture — GROUP_STATIC), used to clamp a kinematic body's intended
    * per-frame movement so it can't be teleported straight through solid

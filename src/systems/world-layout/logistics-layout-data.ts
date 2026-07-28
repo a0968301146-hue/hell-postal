@@ -9,6 +9,7 @@
 // for why (Phase 6: world-layout and lost-found both read this file rather
 // than importing each other).
 import { LOST_FOUND_ROOM, LOST_FOUND_DOOR } from '../../data/world/lost-found-layout-data';
+import { CARGO_SHAPE_PRESETS } from '../cargo/cargo-shape-presets';
 
 export const WALL_THICKNESS = 0.2;
 
@@ -70,39 +71,100 @@ export const PACKAGE_WORK_ZONE = {
 /** Work furniture cluster (stamp tables, crate, sorting boxes) — back area, west side. */
 export const WORK_FURNITURE_X = -8;
 
-/** West-wall storage shelves ("Add storage shelves along west wall" round) —
- * free-standing open wooden shelving hugging BACK_AREA's own west wall
- * (never the lost-found room, spec一: "不要放進失物招領前台房間"), south of
- * the lost-found door (LOST_FOUND_DOOR) with a real walking buffer clear of
- * it, and far enough south of the lost-found cabinet
- * (lost-found-cabinet-system.ts's own computed footprint, roughly Z
- * 10.3-13.7) that the two structures never come close. Purely a free
- * staging/organizing surface (spec四: "只作為自由暫存與整理工具，不強制區分
- * 國內／海外或貨物種類，不新增計分／容量／整理判定") — WorldLayoutSystem
- * builds the Mesh/Collider/placement-surface geometry straight from this
- * data (spec五), no separate ShelfSystem. */
-const SHELF_WALL_CLEARANCE = 0.08; // spec一: "保留約0.05~0.1m" from the wall's own inner face
-const SHELF_DEPTH = 0.5; // spec二: deep enough to fully support a medium box (0.40m deep, cargo-shape-presets.ts medium-box)
-const SHELF_WIDTH = 1.1; // spec二: several small/medium items per level
-const SHELF_GROUP_GAP = 0.5; // spec一: "彼此保留約0.4~0.6m間距"
-/** Top-surface Y offsets above the floor for each of the 3 levels (spec二:
- * "3層"). Comfortably clears a medium box's own height (0.38m) with
- * headroom, and keeps the top level (floor + 1.35m) well below player eye
- * height (floor + 1.6m, SCENE_CONFIG.playerEyeHeight) so every level stays
- * easy to see/reach (spec二: "高度讓玩家能正常看見、拾取與放置"). */
-export const SHELF_LEVEL_Y_OFFSETS = [0.45, 0.9, 1.35];
+/** West-wall storage shelves ("Add storage shelves along west wall" /
+ * "Enlarge west wall shelves for medium cargo" rounds) — free-standing open
+ * wooden shelving hugging BACK_AREA's own west wall (never the lost-found
+ * room, spec一: "不要放進失物招領前台房間"), south of the lost-found door
+ * (LOST_FOUND_DOOR) with a real walking buffer clear of it, and far enough
+ * south of the lost-found cabinet (lost-found-cabinet-system.ts's own
+ * computed footprint, roughly Z 10.3-13.7) that the two structures never
+ * come close. Purely a free staging/organizing surface (spec四: "只作為自由
+ * 暫存與整理工具，不強制區分國內／海外或貨物種類，不新增計分／容量／整理判
+ * 定") — WorldLayoutSystem builds the Mesh/Collider/placement-surface
+ * geometry straight from this data (spec五), no separate ShelfSystem.
+ *
+ * "Enlarge west wall shelves for medium cargo" round spec一: sized off the
+ * LARGEST sizeClass==='medium' CargoShapePreset on EACH axis independently
+ * (not just medium-box — mirrors lost-found-cabinet-system.ts's own
+ * computeCellInteriorSize() pattern for "read every real preset, take the
+ * per-axis max" rather than a hand-picked constant), so the shelf never
+ * needs re-tuning by hand if a new medium preset is ever added. */
+function computeMaxMediumCargoDimensions(): { width: number; height: number; depth: number } {
+  let maxWidth = 0, maxHeight = 0, maxDepth = 0;
+  for (const preset of CARGO_SHAPE_PRESETS) {
+    if (preset.sizeClass !== 'medium') continue;
+    maxWidth = Math.max(maxWidth, preset.dimensions.width);
+    maxHeight = Math.max(maxHeight, preset.dimensions.height);
+    maxDepth = Math.max(maxDepth, preset.dimensions.depth);
+  }
+  return { width: maxWidth, height: maxHeight, depth: maxDepth };
+}
+/** The largest sizeClass='medium' preset's own width/height/depth,
+ * independently per axis — currently width from 寬型活物鐵籠(wide-cage,
+ * 0.60), height from 高型活物鐵籠(tall-cage, 0.62), depth from 冷凍魚貨木箱
+ * (frozen-fish-crate, 0.52). */
+export const MAX_MEDIUM_CARGO_DIMENSIONS = computeMaxMediumCargoDimensions();
+
+/** spec一: each level's usable interior must be at least
+ * max-medium-dimension × 1.3 on every axis.
+ *
+ * Axis mapping (verified directly against PickupSystem.validatePlacement's
+ * own bounds check, `position.x ± obj.width/2` / `position.z ± obj.depth/2`
+ * — NOT a naming assumption): a cargo item's own `width` occupies WORLD X,
+ * and its own `depth` occupies WORLD Z. This shelf's own `depth` field
+ * (WestWallShelfConfig) is the wall→room axis, i.e. WORLD X — so it must be
+ * sized from the largest medium preset's own WIDTH, not depth. Symmetrically
+ * this shelf's own `width` field (along the wall, WORLD Z) must be sized
+ * from the largest medium preset's own DEPTH. Getting this backwards would
+ * silently under-size whichever axis actually needs the bigger margin. */
+const SHELF_ITEM_MARGIN = 1.3;
+const REQUIRED_SHELF_DEPTH_INTERIOR = MAX_MEDIUM_CARGO_DIMENSIONS.width * SHELF_ITEM_MARGIN; // world X
+const REQUIRED_SHELF_WIDTH_INTERIOR = MAX_MEDIUM_CARGO_DIMENSIONS.depth * SHELF_ITEM_MARGIN; // world Z
+const REQUIRED_LEVEL_CLEAR_HEIGHT = MAX_MEDIUM_CARGO_DIMENSIONS.height * SHELF_ITEM_MARGIN;
+
+export const SHELF_WALL_CLEARANCE = 0.08; // spec: "保留約0.05~0.1m" from the wall's own inner face
 export const SHELF_BOARD_THICKNESS = 0.04;
 export const SHELF_POST_THICKNESS = 0.06;
 /** Extra frame height above the top level's own board (a finished-looking
- * open top, not a full roof — spec二: "不需要門板、抽屜或吸附格位"). */
+ * open top, not a full roof — spec: "不需要門板、抽屜或吸附格位"). */
 export const SHELF_FRAME_TOP_MARGIN = 0.15;
+
+// Depth (X axis, wall -> room): back panel eats into it on one end, one
+// corner post on the other (spec二: "支柱位置/背架位置同步調整") — a small
+// extra buffer on top of the bare 1.3x requirement so a centered item never
+// sits flush against either.
+const SHELF_DEPTH_BUFFER = 0.05;
+export const SHELF_DEPTH = REQUIRED_SHELF_DEPTH_INTERIOR + SHELF_DEPTH_BUFFER + SHELF_BOARD_THICKNESS + SHELF_POST_THICKNESS;
+
+// Width (Z axis, along the wall): the bare 1.3x single-item requirement plus
+// real extra room so several SMALL items can still sit alongside one medium
+// item on the same level (spec一: "有空間時可讓同層並排放置多件小型貨物"),
+// with a post eating into each end.
+const SHELF_WIDTH_EXTRA_FOR_SMALL_ITEMS = 0.9;
+export const SHELF_WIDTH = REQUIRED_SHELF_WIDTH_INTERIOR + SHELF_WIDTH_EXTRA_FOR_SMALL_ITEMS + 2 * SHELF_POST_THICKNESS;
+
+export const SHELF_GROUP_GAP = 0.5; // spec: "彼此保留約0.4~0.6m間距"
+
+/** Top-surface Y offsets above the floor for each of the 3 levels (spec:
+ * "3層", "每層有效空間至少為...層高：最大中型貨物高度×1.3"). Level spacing
+ * is REQUIRED_LEVEL_CLEAR_HEIGHT (plus a small buffer) + one board's own
+ * thickness, so the item resting on a lower level always has that much
+ * genuine clear headroom below the board above it — never just "looks
+ * clear" while a naive fixed spacing would have silently clipped a taller
+ * medium item (e.g. 高型活物鐵籠, 0.62m tall) against the level above. */
+const SHELF_LEVEL_CLEAR_HEIGHT_BUFFER = 0.02;
+const SHELF_LEVEL_SPACING = REQUIRED_LEVEL_CLEAR_HEIGHT + SHELF_LEVEL_CLEAR_HEIGHT_BUFFER + SHELF_BOARD_THICKNESS;
+const SHELF_BOTTOM_LEVEL_Y = 0.5;
+export const SHELF_LEVEL_Y_OFFSETS = [0, 1, 2].map((i) => SHELF_BOTTOM_LEVEL_Y + i * SHELF_LEVEL_SPACING);
 
 const westWallInnerFaceX = BACK_AREA.minX + WALL_THICKNESS / 2;
 const shelfCenterX = westWallInnerFaceX + SHELF_WALL_CLEARANCE + SHELF_DEPTH / 2;
-// Starts comfortably south of the lost-found door's own south edge (spec一:
+// Starts comfortably south of the lost-found door's own south edge (spec:
 // "不得擋住...玩家通道") — the open floor south of the door runs all the way
 // to the vehicle-control cluster (z=25.5) and beyond, so there's no need to
-// crowd the narrow gap between the cabinet and the door further north.
+// crowd the narrow gap between the cabinet and the door further north. Still
+// 3 groups (spec: "數量維持3組、每組維持3層"), re-spaced along the SAME wall
+// stretch to fit the now-wider footprint (spec二: "三組貨架間距同步調整").
 const shelfGroupStartZ = LOST_FOUND_DOOR.centerZ + LOST_FOUND_DOOR.halfWidth + 0.8;
 
 export interface WestWallShelfConfig {

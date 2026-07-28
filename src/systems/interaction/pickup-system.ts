@@ -793,6 +793,24 @@ export class PickupSystem implements PickupPort {
       if (placementBox.intersectsBox(otherBox)) return false;
     }
 
+    // Full held-item collider-bounds check against STATIC scene geometry —
+    // walls, and (the case this was added for) a storage shelf's own
+    // corner posts / back panel / the board of the level above ("Enlarge
+    // west wall shelves for medium cargo" round spec三: "放置預覽必須使用
+    // 手持物品完整Collider bounds檢查...不要等confirmPlacement後才靠物理碰
+    // 撞彈開" — a large item aimed at a shelf level used to show a valid
+    // green preview and only get physically shoved out once its rigidbody
+    // resumed on confirm; this catches it BEFORE that, at preview time).
+    // Uses PhysicsSystem.castShapeAgainstStaticAndBox — a correctly-group-
+    // packed sibling of the existing castShape() (see that new method's own
+    // doc comment for why the older one couldn't be reused as-is here).
+    // Every legitimate placement already positions the preview flush
+    // (zero-gap) against its own support surface, and the 0.01 shrink
+    // margin both methods share keeps that "resting exactly on top of X"
+    // case from ever being misread as overlap — this only ever catches a
+    // genuine collision with solid geometry.
+    if (this.physics.castShapeAgainstStaticAndBox(position, new THREE.Vector3(halfW, halfH, halfD))) return false;
+
     return true;
   }
 
