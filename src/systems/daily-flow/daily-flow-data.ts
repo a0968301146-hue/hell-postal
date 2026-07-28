@@ -12,25 +12,35 @@
 // (all positions below are now BACK_AREA-relative). PALLET_CONFIG stays
 // unchanged (still back-area furniture, untouched by this round).
 import { BACK_AREA, NORTH_GATES } from '../world-layout';
-export { DAILY_CARGO_CATEGORY_POOL } from '../../data/world/daily-cargo-category-pool';
 
 /** How many cargo items spawn each day, fixed (spec "貨品外型與比例有更多
  * 變化" round section二: no infinite spawn, no per-day variation of the
- * total or the box/roller/large ratio). This is the ONE place the daily
- * total is defined — UnloadingSystem builds its spawn plan from these
- * counts (split evenly across UNLOAD_PORTS, see buildSpawnPlan), and
- * DailyFlowSystem/HUD/vehicle-shipment counting/departure-time scoring/
- * next-day cleanup all read the ACTUAL number of ids UnloadingSystem
- * registers (registerDailyCargo), never this constant directly, so nothing
- * else needed to change when this round halved the total (spec "Reduce
- * daily cargo and add lost found desk" round 一: "每日總貨量減少一半" —
- * 180→90, same 6:2:1 box:roller:large ratio, now 60:20:10 — 不要在多個系統
- * 中分別寫死90). */
+ * total). This is the ONE place the daily total is defined —
+ * UnloadingSystem builds its spawn plan from these counts (split evenly
+ * across UNLOAD_PORTS, see buildSpawnPlan), and DailyFlowSystem/HUD/
+ * vehicle-shipment counting/departure-time scoring/next-day cleanup all read
+ * the ACTUAL number of ids UnloadingSystem registers (registerDailyCargo),
+ * never this constant directly, so nothing else needed to change here.
+ *
+ * "Organize and expand cargo shape presets" round: re-keyed from the old
+ * box/roller/large SHAPE-FAMILY split (60/20/10) to a per-CATEGORY split
+ * (spec五: "先決定 CargoCategory，再從該種類的 confirmed presets 中選擇外
+ * 型") — every daily cargo shape now belongs to exactly one CargoCategory
+ * (cargo-category-data.ts), so the daily quota has to be expressed in those
+ * same terms for UnloadingSystem's buildSpawnPlan to fill each category from
+ * its own confirmed preset pool. The total stays 90 (spec: "不可因新增外型
+ * 而增加總量") — large keeps its exact old count (10); the remaining 80 are
+ * redistributed across normal/fragile/frozen/live so every category has a
+ * comfortably nonzero daily presence (spec十三: "第一天仍必須包含五種" is
+ * satisfied for every day, not just day 1, since every count here is fixed
+ * and nonzero — no separate day-1 override needed). */
 export const DAILY_CARGO_CONFIG = {
   total: 90,
-  boxCount: 60,
-  rollerCount: 20,
+  normalCount: 44,
+  fragileCount: 24,
   largeCount: 10,
+  frozenCount: 6,
+  liveCount: 6,
 };
 
 /** How far below the ceiling an elevated port's cargo spawn point sits —

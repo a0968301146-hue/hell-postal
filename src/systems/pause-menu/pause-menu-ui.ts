@@ -5,13 +5,13 @@ import { PauseManager } from '../../core/pause-manager';
 import { SettingsManager, DisplayMode, ResolutionPreset, QualityPreset, SubtitleSize, TextSpeed } from '../settings';
 import { HUD } from '../hud';
 import { TUTORIAL_ENTRIES, TutorialEntry } from '../../game/tutorial-data';
-import { buildVehicleCodexEntries, SPECIES_CODEX_ENTRIES } from '../../game/codex-data';
+import { buildVehicleCodexEntries, SPECIES_CODEX_ENTRIES, buildCargoCodexGroups, MAIL_ENVELOPE_CODEX_ENTRIES } from '../../game/codex-data';
 import {
   ACTION_ORDER, ACTION_LABELS, InputAction, UNWIRED_ACTIONS,
 } from '../../adapters/browser-input/input-binding-manager';
 
 type Bookmark = 'tutorial' | 'controls' | 'display' | 'audio' | 'text' | 'data' | 'codex';
-type CodexTab = 'vehicle' | 'species';
+type CodexTab = 'vehicle' | 'species' | 'cargo';
 
 const BOOKMARKS: { id: Bookmark; label: string }[] = [
   { id: 'tutorial', label: '教學' },
@@ -40,6 +40,7 @@ export class ManualUI {
   private codexTab: CodexTab = 'vehicle';
   private selectedVehicleId: string | null = null;
   private selectedSpeciesId: string | null = null;
+  private selectedCargoId: string | null = null;
   private capturingFor: InputAction | null = null;
   private captureConflictMsg: string | null = null;
   private noticeMsg: string | null = null;
@@ -60,6 +61,7 @@ export class ManualUI {
         <div class="manual-codex-tabs hidden">
           <button data-codex-tab="vehicle">載具</button>
           <button data-codex-tab="species">種族</button>
+          <button data-codex-tab="cargo">貨物</button>
         </div>
         <div class="manual-pages">
           <div class="manual-page manual-page-left"></div>
@@ -154,10 +156,11 @@ export class ManualUI {
     // "在子頁面時返回上一層" — a selected detail (tutorial/codex entry)
     // counts as a sub-page; clear the selection before falling back to
     // closing the whole book from the main bookmark view.
-    if (this.selectedTutorialId || this.selectedVehicleId || this.selectedSpeciesId) {
+    if (this.selectedTutorialId || this.selectedVehicleId || this.selectedSpeciesId || this.selectedCargoId) {
       this.selectedTutorialId = null;
       this.selectedVehicleId = null;
       this.selectedSpeciesId = null;
+      this.selectedCargoId = null;
       this.render();
       return;
     }
@@ -195,6 +198,7 @@ export class ManualUI {
       this.selectedTutorialId = null;
       this.selectedVehicleId = null;
       this.selectedSpeciesId = null;
+      this.selectedCargoId = null;
       this.captureConflictMsg = null;
       this.noticeMsg = null;
       this.render();
@@ -225,6 +229,13 @@ export class ManualUI {
     const speciesRow = target.closest<HTMLElement>('[data-species-id]');
     if (speciesRow) {
       this.selectedSpeciesId = speciesRow.dataset.speciesId!;
+      this.render();
+      return;
+    }
+
+    const cargoRow = target.closest<HTMLElement>('[data-cargo-id]');
+    if (cargoRow) {
+      this.selectedCargoId = cargoRow.dataset.cargoId!;
       this.render();
       return;
     }
@@ -516,6 +527,7 @@ export class ManualUI {
 
   private renderCodex(): void {
     if (this.codexTab === 'vehicle') { this.renderVehicleCodex(); return; }
+    if (this.codexTab === 'cargo') { this.renderCargoCodex(); return; }
     this.renderSpeciesCodex();
   }
 
@@ -570,5 +582,67 @@ export class ManualUI {
     }).join('');
     this.leftPageEl.innerHTML = `<h2 class="manual-page-title">顧客種族</h2><div class="manual-list">${rows}</div>`;
     this.rightPageEl.innerHTML = `<div class="manual-placeholder"><div class="manual-placeholder-icon">❔</div><p>尚未發現</p><p class="manual-hint">顧客種族系統尚未實作</p></div>`;
+  }
+
+  /** Cargo codex ("Organize and expand cargo shape presets" round spec八:
+   * "貨物圖鑑按種類整理：一般/易碎/大型貨物/冷凍/活物/信件"). Rebuilt fresh on
+   * every render, same reasoning as renderVehicleCodex — CargoShapePreset
+   * data is immutable static data, so re-reading it costs nothing and can
+   * never go stale. No unlock/discovery gating (unlike the vehicle codex) —
+   * every confirmed preset is always listed, since there's no in-game
+   * "discover a cargo shape" event to gate on. */
+  private renderCargoCodex(): void {
+    const groups = buildCargoCodexGroups();
+    const groupRows = groups.map((g) => {
+      const items = g.entries.map((e) => {
+        const active = e.id === this.selectedCargoId ? 'active' : '';
+        return `
+          <div class="manual-list-row ${active}" data-cargo-id="${e.id}">
+            <span class="manual-list-icon" style="color:${e.colorHex}">■</span>
+            <span>${e.displayName}</span>
+          </div>`;
+      }).join('');
+      return `<h3 class="manual-subheading">${g.label}</h3>${items}`;
+    }).join('');
+    const mailItems = MAIL_ENVELOPE_CODEX_ENTRIES.map((m) => {
+      const id = `mail-${m.id}`;
+      const active = id === this.selectedCargoId ? 'active' : '';
+      return `
+        <div class="manual-list-row ${active}" data-cargo-id="${id}">
+          <span class="manual-list-icon">✉️</span>
+          <span>${m.displayName}</span>
+        </div>`;
+    }).join('');
+    this.leftPageEl.innerHTML = `
+      <h2 class="manual-page-title">貨物圖鑑</h2>
+      <div class="manual-list">${groupRows}<h3 class="manual-subheading">信件</h3>${mailItems}</div>
+    `;
+
+    if (this.selectedCargoId?.startsWith('mail-')) {
+      const mailEntry = MAIL_ENVELOPE_CODEX_ENTRIES.find((m) => `mail-${m.id}` === this.selectedCargoId);
+      if (mailEntry) {
+        this.rightPageEl.innerHTML = `
+          <h2 class="manual-page-title">${mailEntry.displayName}</h2>
+          <div class="manual-vehicle-preview">✉️</div>
+          <div class="manual-data-row"><span>說明</span><span>${mailEntry.note}</span></div>
+        `;
+        return;
+      }
+    }
+
+    const allEntries = groups.flatMap((g) => g.entries);
+    const selected = allEntries.find((e) => e.id === this.selectedCargoId) ?? allEntries[0];
+    if (!selected) {
+      this.rightPageEl.innerHTML = `<div class="manual-placeholder"><div class="manual-placeholder-icon">📦</div><p>尚無資料</p></div>`;
+      return;
+    }
+    this.rightPageEl.innerHTML = `
+      <h2 class="manual-page-title">${selected.displayName}</h2>
+      <div class="manual-vehicle-preview" style="color:${selected.colorHex}">■</div>
+      <div class="manual-data-row"><span>種類</span><span>${selected.categoryLabel}</span></div>
+      <div class="manual-data-row"><span>尺寸</span><span>${selected.sizeLabel}</span></div>
+      <div class="manual-data-row"><span>搬運特性</span><span>${selected.carryTraits}</span></div>
+      <div class="manual-data-row"><span>是否可放托盤</span><span>${selected.palletLabel}</span></div>
+    `;
   }
 }

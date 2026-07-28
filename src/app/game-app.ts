@@ -9,6 +9,7 @@ import { StampMinigame, MinigameResult } from '../game/stamp-minigame';
 import { ENABLE_LEGACY_COUNTER, ENABLE_LEGACY_MAIL_FLOW, ENABLE_VEHICLE_LOADING_FLOW } from '../game/feature-flags';
 import { DailyState } from '../systems/daily-flow';
 import { StampTableUi, StampUiResult } from '../systems/mail/stamp-table-ui';
+import { getCargoShapePreset } from '../systems/cargo';
 
 /**
  * The app's top-level composition root (formerly `Game` in game/game.ts) —
@@ -276,7 +277,14 @@ export class GameApp {
     s.cargoInspectionSystem.update();
     const inspectedCargo = s.cargoInspectionSystem.currentCargo;
     if (inspectedCargo?.category && inspectedCargo.region) {
-      s.cargoInspectionUI.show(inspectedCargo.category, inspectedCargo.region);
+      // "Organize and expand cargo shape presets" round: the crosshair line
+      // also shows the exact shape preset's own displayName + sizeClass
+      // (spec七: "外型／種類／地區／尺寸") — looked up from
+      // shapePresetId via getCargoShapePreset(), never re-derived from the
+      // mesh (spec: "外型名稱從 CargoShapePreset.displayName 取得...不要從
+      // 模型名稱猜測").
+      const preset = inspectedCargo.shapePresetId ? getCargoShapePreset(inspectedCargo.shapePresetId) : undefined;
+      s.cargoInspectionUI.show(inspectedCargo.category, inspectedCargo.region, preset?.displayName ?? null, inspectedCargo.sizeClass);
     } else {
       s.cargoInspectionUI.hide();
     }

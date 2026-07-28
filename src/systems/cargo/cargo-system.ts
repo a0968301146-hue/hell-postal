@@ -2,12 +2,13 @@ import * as THREE from 'three';
 import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { InteractableObject, createInteractableObject } from '../../shared/types/interactable';
 import {
-  CargoData, CargoLabelPreset, CargoSize, CargoSubtypePreset, ShippingStatus,
+  CargoData, CargoLabelPreset, CargoSize, ShippingStatus,
   CARGO_LABEL_PRESETS, createCargoData, pickCargoSize, pickLargeCargoSize,
   createDailyCargoData,
 } from './cargo-data';
+import { CargoShapePreset } from './cargo-shape-presets';
 import { attachCargoLabels } from './cargo-label-visuals';
-import { decorateCargoMesh, attachCargoSubtypeLabel } from './cargo-visuals';
+import { buildCargoShapeMesh, attachCargoPresetLabel } from './cargo-visuals';
 import { FRONT_OFFICE, BACK_AREA, CARGO_SPAWN_CONFIG, LARGE_CARGO_SPAWN_POSITIONS, LABELED_CARGO_SPAWN_POSITIONS } from '../world-layout';
 
 const CARGO_COLORS = [0x8b5a2b, 0xa0703a, 0x7a4e24, 0x966032, 0x8b6f47, 0x9a7040];
@@ -145,37 +146,45 @@ export class CargoSystem {
     return this.interactables.get(id);
   }
 
-  /** Daily-flow box/large cargo (spec "貨品外型與比例有更多變化" round) —
-   * takes a full CargoSubtypePreset (shape/size/color/label all bound
-   * together, see cargo-data.ts) rather than a raw size, so every daily box
-   * item is fully described by picking a preset. Adds subtype-specific
-   * decoration + the visible category label (spec section七/九/十), both as
-   * mesh children — zero extra dynamic bodies. Registered into the SAME
-   * cargoDataMap/interactables map as every other cargo item so DollySystem's
-   * findCargoOnPlatform (which checks cargoSystem.getCargoData membership)
-   * picks it up automatically, with zero changes needed there. */
-  spawnDailyBox(preset: CargoSubtypePreset, x: number, y: number, z: number, rotY: number): string {
+  /** Daily-flow box/large/cage cargo ("Organize and expand cargo shape
+   * presets" round) — takes a full CargoShapePreset (category/size/
+   * dimensions/mesh+collider recipe all bound together, see
+   * cargo-shape-presets.ts) rather than a raw size, so every daily box-class
+   * item is fully described by picking a preset. buildCargoShapeMesh builds
+   * the preset's own distinct silhouette + attachCargoPresetLabel adds the
+   * visible category-label badge, both entirely as mesh children — zero
+   * extra dynamic bodies. Registered into the SAME cargoDataMap/interactables
+   * map as every other cargo item so DollySystem's findCargoOnPlatform
+   * (which checks cargoSystem.getCargoData membership) picks it up
+   * automatically, with zero changes needed there. `preset.uprightRequired`
+   * (live cages) locks X/Z rotation on the body so the unload burst's random
+   * tumble can never land one upside down (spec E: "生成與放置時保持正
+   * 向") — this only restricts ROTATION, translation/gravity/throwing are
+   * untouched. `preset.throwable === false` sets the same `noThrow` mesh
+   * flag pickup-system.ts's charge-throw guard already uses for the sorting
+   * pallet, so large/fragile/live items simply can't be thrown (spec六). */
+  spawnDailyBox(preset: CargoShapePreset, x: number, y: number, z: number, rotY: number): string {
     const id = `daily-box-${this.nextDailyBoxId++}`;
     const { width, height, depth } = preset.dimensions;
-    const geo = new THREE.BoxGeometry(width, height, depth);
-    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: preset.color }));
+    const mesh = buildCargoShapeMesh(preset);
     mesh.position.set(x, y, z);
     mesh.rotation.y = rotY;
-    mesh.userData.shapeType = preset.shapeType;
+    mesh.userData.shapeType = preset.visualKind === 'cage' ? 'cage' : (preset.category === 'large' ? 'large' : 'box');
     // Root-mesh cargo id — every decoration/label child added below is a
     // plain mesh.add() child with no id of its own, so resolveCargoFromObject()
     // walks the parent chain up to THIS mesh to find it (spec 五).
     mesh.userData.cargoId = id;
-    decorateCargoMesh(mesh, preset.subtype, preset.color, preset.dimensions);
+    if (!preset.throwable) mesh.userData.noThrow = true;
     this.scene.add(mesh);
 
     const data = createDailyCargoData(id, preset);
-    attachCargoSubtypeLabel(mesh, preset.shapeType, preset.label, preset.dimensions);
+    attachCargoPresetLabel(mesh, preset);
 
     const obj = createInteractableObject(id, data.displayName, mesh, width, height, depth);
     const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotY, 0));
     const { body, collider } = this.physics.createBoxBody(x, y, z, width / 2, height / 2, depth / 2, 250);
     body.setRotation({ x: quat.x, y: quat.y, z: quat.z, w: quat.w }, true);
+    if (preset.uprightRequired) body.setEnabledRotations(false, true, false, true);
     obj.rigidBody = body;
     obj.collider = collider;
 
@@ -184,17 +193,18 @@ export class CargoSystem {
     return id;
   }
 
-  /** Daily-flow roller cargo — CylinderGeometry tipped 90° about Z so it
-   * rests lying on its side (barrel axis along world X) and can roll (spec
-   * 十一). `dimensions` on CargoData store the TIPPED world-space AABB
-   * (width=length, height=depth=diameter) — see physics-system.ts
-   * createCylinderBody doc comment for why the collider needs the same tip. */
-  spawnDailyRoller(preset: CargoSubtypePreset, x: number, y: number, z: number, yawVariance: number): string {
+  /** Daily-flow roller cargo (normal-category barrel/spool only — the only
+   * two confirmed presets with colliderKind:'cylinder') — CylinderGeometry
+   * tipped 90° about Z so it rests lying on its side (barrel axis along
+   * world X) and can roll. `dimensions` on CargoData store the TIPPED
+   * world-space AABB (width=length, height=depth=diameter) — see
+   * physics-system.ts createCylinderBody doc comment for why the collider
+   * needs the same tip. */
+  spawnDailyRoller(preset: CargoShapePreset, x: number, y: number, z: number, yawVariance: number): string {
     const id = `daily-roller-${this.nextDailyRollerId++}`;
     const length = preset.dimensions.width;
     const radius = preset.dimensions.height / 2;
-    const geo = new THREE.CylinderGeometry(radius, radius, length, 16);
-    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: preset.color }));
+    const mesh = buildCargoShapeMesh(preset);
     mesh.position.set(x, y, z);
     const tip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
     const yaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yawVariance);
@@ -202,11 +212,11 @@ export class CargoSystem {
     mesh.quaternion.copy(rot);
     mesh.userData.shapeType = 'roller';
     mesh.userData.cargoId = id;
-    decorateCargoMesh(mesh, preset.subtype, preset.color, preset.dimensions);
+    if (!preset.throwable) mesh.userData.noThrow = true;
     this.scene.add(mesh);
 
     const data = createDailyCargoData(id, preset);
-    attachCargoSubtypeLabel(mesh, preset.shapeType, preset.label, preset.dimensions);
+    attachCargoPresetLabel(mesh, preset);
 
     const obj = createInteractableObject(id, data.displayName, mesh, length, radius * 2, radius * 2);
     const { body, collider } = this.physics.createCylinderBody(

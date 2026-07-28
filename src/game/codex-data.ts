@@ -5,7 +5,10 @@
 // system exists yet, every entry is unlocked-only-by-future-work.
 
 import { LAND_VEHICLE_CONFIGS, SEA_VEHICLE_CONFIGS, VehicleConfig } from '../systems/vehicle';
-import { CargoType, CARGO_REGION_DISPLAY } from '../systems/cargo';
+import {
+  CargoType, CARGO_REGION_DISPLAY, CargoShapePreset, CargoCategory,
+  CARGO_CATEGORY_DISPLAY, CARGO_SIZE_CLASS_DISPLAY, getCargoShapePresetsByCategory,
+} from '../systems/cargo';
 
 /** Codex-specific display wording for CargoType ("Fix vehicle codex
  * compatibility display" round) — deliberately a SEPARATE mapping from
@@ -96,4 +99,82 @@ export const SPECIES_CODEX_ENTRIES: SpeciesCodexEntry[] = [
   { id: 'goblin', displayName: '哥布林' },
   { id: 'skeleton', displayName: '骷髏' },
   { id: 'cyclops', displayName: '獨眼人' },
+];
+
+// --- Cargo codex ("Organize and expand cargo shape presets" round) --------
+//
+// Reads CARGO_SHAPE_PRESETS (via getCargoShapePresetsByCategory) directly —
+// the SAME data cargo-system.ts spawns daily cargo from — so this page can
+// never drift into a second, hand-written description of what a given
+// preset looks like (spec十: "圖鑑與生成池讀同一份 CargoShapePreset，不要另外
+// 手寫一張會過期的清單").
+
+export interface CargoCodexEntry {
+  id: string;
+  displayName: string;
+  categoryLabel: string;
+  sizeLabel: string;
+  /** "搬運特性" (spec八) — a short human-readable summary of
+   * stackable/throwable/uprightRequired, not a re-statement of raw booleans. */
+  carryTraits: string;
+  palletLabel: string;
+  /** CSS hex string derived from the preset's own mesh base color — doubles
+   * as the codex's "簡易圖示" (spec八: "外觀預覽或簡易圖示") without needing
+   * an actual rendered thumbnail. */
+  colorHex: string;
+}
+
+function toCargoCodexEntry(preset: CargoShapePreset): CargoCodexEntry {
+  const traits: string[] = [preset.stackable ? '可堆疊' : '不可堆疊'];
+  traits.push(preset.throwable ? '可投擲' : '不可投擲');
+  if (preset.uprightRequired) traits.push('需保持正向');
+  return {
+    id: preset.id,
+    displayName: preset.displayName,
+    categoryLabel: CARGO_CATEGORY_DISPLAY[preset.category],
+    sizeLabel: CARGO_SIZE_CLASS_DISPLAY[preset.sizeClass],
+    carryTraits: traits.join('、'),
+    palletLabel: preset.palletAllowed ? '可放托盤' : '不可放托盤',
+    colorHex: '#' + preset.color.toString(16).padStart(6, '0'),
+  };
+}
+
+const CARGO_CODEX_CATEGORY_ORDER: CargoCategory[] = ['normal', 'fragile', 'large', 'frozen', 'live'];
+
+export interface CargoCodexGroup {
+  category: CargoCategory;
+  label: string;
+  entries: CargoCodexEntry[];
+}
+
+/** Grouped by category, in the same fixed order as spec八's own list
+ * (一般/易碎/大型貨物/冷凍/活物) — cargo-shape-presets.ts's own per-category
+ * arrays already keep every preset within a category in a stable order, so
+ * nothing here needs its own sort. */
+export function buildCargoCodexGroups(): CargoCodexGroup[] {
+  return CARGO_CODEX_CATEGORY_ORDER.map((category) => ({
+    category,
+    label: CARGO_CATEGORY_DISPLAY[category],
+    entries: getCargoShapePresetsByCategory(category).map(toCargoCodexEntry),
+  }));
+}
+
+// --- Mail envelope codex (spec三/八: 信件外型整理，不重做 MailSystem) -------
+//
+// A presentation-only list — MailSystem's own envelope generation/stamping/
+// bagging logic is completely untouched by this round (spec三: "不要重做
+// MailSystem"); this exists purely so the codex's "信件" section (spec八) has
+// something to show, naming the four envelope styles the spec describes.
+
+export interface MailEnvelopeCodexEntry {
+  id: string;
+  displayName: string;
+  note: string;
+}
+
+export const MAIL_ENVELOPE_CODEX_ENTRIES: MailEnvelopeCodexEntry[] = [
+  { id: 'standard', displayName: '標準信封', note: '極小扁平信件，可直接投入分類袋' },
+  { id: 'kraft', displayName: '牛皮紙信封', note: '極小扁平信件，可直接投入分類袋' },
+  { id: 'wax-seal', displayName: '蠟封信封', note: '極小扁平信件，可直接投入分類袋' },
+  { id: 'document', displayName: '文件信封', note: '平面較大但厚度仍薄，仍可放入放大後的信件袋' },
 ];

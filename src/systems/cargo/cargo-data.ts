@@ -2,8 +2,9 @@
 // Intentionally does NOT reuse PackageData — normal cargo has no address,
 // stamp, weight or destination concept yet.
 
-import { CargoCategory, pickCargoCategory } from './cargo-category-data';
+import { CargoCategory } from './cargo-category-data';
 import { CargoRegion, pickCargoRegion } from './cargo-region-data';
+import { CargoShapePreset, CargoSizeClass, CargoDimensions, getCargoShapePreset } from './cargo-shape-presets';
 
 export type CargoType = 'normal' | 'large' | 'fragile' | 'frozen' | 'live';
 export type RouteType = 'domestic' | 'overseas';
@@ -15,35 +16,23 @@ export type CargoLabel = 'domestic' | 'overseas' | 'fragile' | 'large' | 'frozen
 
 export const ALL_CARGO_LABELS: CargoLabel[] = ['domestic', 'overseas', 'fragile', 'large', 'frozen', 'live'];
 
-export interface CargoDimensions {
-  width: number;
-  height: number;
-  depth: number;
-}
+// CargoDimensions/CargoSizeClass now live in cargo-shape-presets.ts (imported
+// above) — NOT re-exported from here too, since the barrel (index.ts) already
+// re-exports cargo-shape-presets.ts and a duplicate `export *` of the same
+// name from two files is a compile error.
 
-/** Which physical shape this cargo item is — added for the "每日貨品清空
- * 核心流程" round (daily-flow-data.ts / cargo-system.ts spawnDailyBox/
- * spawnDailyRoller). 'box' and 'large' are both cuboid (built + collided
- * identically, see cargo-system.ts spawnDailyBox — 'large' is just a
- * bigger/heavier size class of the same shape), 'roller' is cylinder cargo
- * (see physics-system.ts createCylinderBody). */
-export type CargoShapeType = 'box' | 'roller' | 'large';
-
-/** Coarse size grouping, independent of shapeType — a 'box' can be small/
- * medium/large, while every 'large' shapeType item is itself large/
- * extraLarge (spec "貨品外型與比例有更多變化" round section 八). Used only
- * for display/reporting; nothing this round branches game logic on it. */
-export type CargoSizeClass = 'small' | 'medium' | 'large' | 'extraLarge';
-
-/** Every daily-cargo silhouette this round generates (spec section 六/七/
- * 八 — the exact identifiers double as the visible category-label text via
- * CARGO_SUBTYPE_PRESETS below, so "不要依 Mesh 名稱反向判定種類": the
- * subtype IS the source of truth, the mesh is just built to match it). */
-export type CargoSubtype =
-  | 'small-box' | 'medium-box' | 'reinforced-box' | 'long-crate' | 'tall-crate'
-  | 'flat-case' | 'wide-box' | 'handled-box'
-  | 'wooden-barrel' | 'metal-drum' | 'fabric-roll' | 'spool'
-  | 'large-crate' | 'large-long-crate' | 'large-tall-crate';
+/** Which physical shape/collider this cargo item uses — 'box' and 'large'
+ * are both cuboid (built + collided identically, see cargo-system.ts
+ * spawnDailyBox — 'large' only differs in the vehicle-compatibility
+ * derivation, see vehicle-control-system.ts's effectiveCargoKind, and the
+ * category-badge color), 'roller' is a true rolling cylinder (see
+ * physics-system.ts createCylinderBody). 'cage' ("Organize and expand cargo
+ * shape presets" round) is ALSO a plain cuboid collider (spec四: "鐵籠: 外部
+ * Cuboid") but deliberately its own value so pallet-system.ts's existing
+ * `shapeType !== 'box' && shapeType !== 'large'` organize-scan filter
+ * naturally excludes live cages with zero changes to that file (spec E: "不
+ * 可放普通托盤"). */
+export type CargoShapeType = 'box' | 'roller' | 'large' | 'cage';
 
 export interface CargoData {
   id: string;
@@ -97,21 +86,27 @@ export interface CargoData {
    * never sets this; it stays false and unused for anything not spawned
    * via createDailyCargoData. */
   organized: boolean;
-  /** Daily-flow round only: which exact silhouette this item is (null for
-   * pre-existing non-daily cargo). Drives both the decorative mesh built at
-   * spawn (cargo-visuals.ts decorateCargoMesh) and the visible category
-   * label text (cargo-visuals.ts attachCargoSubtypeLabel) — see
-   * CARGO_SUBTYPE_PRESETS. */
-  subtype: CargoSubtype | null;
-  /** Coarse size grouping for `subtype` — null for pre-existing cargo. */
+  /** "Organize and expand cargo shape presets" round: which exact
+   * CargoShapePreset.id this item was spawned from (null for pre-existing
+   * non-daily cargo) — replaces the old free-floating `subtype` field.
+   * Drives both the mesh built at spawn (cargo-visuals.ts
+   * buildCargoShapeMesh) and the visible category-label badge
+   * (attachCargoPresetLabel), and lets the crosshair inspection UI /codex
+   * look the FULL preset back up via getCargoShapePreset() rather than
+   * duplicating its displayName/dimensions here. */
+  shapePresetId: string | null;
+  /** Coarse size grouping, copied from the spawning preset — null for
+   * pre-existing cargo. */
   sizeClass: CargoSizeClass | null;
-  /** "貨物種類準心檢視 UI" round only: fixed at spawn (see
-   * cargo-category-data.ts pickCargoCategory()), read by
-   * cargo-inspection-system.ts/cargo-inspection-ui.ts to show a floating
-   * "種類：一般/易碎品" label when the crosshair targets this item. Null for
-   * pre-existing non-daily cargo (createCargoData below never sets it) —
-   * unrelated to `cargoType`/`labels` above (the older domestic/overseas/
-   * fragile label system), which daily cargo never populates. */
+  /** Fixed at spawn, copied directly from the spawning preset's own
+   * `category` (cargo-shape-presets.ts) — every daily item has EXACTLY one
+   * category, never independently re-rolled after its shape is picked (spec
+   * 一: "每件貨物只能有一個主要種類"). Read by cargo-inspection-ui.ts for the
+   * crosshair "種類：..." line and by vehicle-control-system.ts's
+   * effectiveCargoKind for the departure-acceptance judgment (unchanged
+   * derivation there — see cargo-data.ts's CargoShapeType doc comment).
+   * Null for pre-existing non-daily cargo (createCargoData below never sets
+   * it). */
   category: CargoCategory | null;
   /** "Fix land vehicle routes and add cargo region UI" round only: fixed at
    * spawn (see cargo-region-data.ts pickCargoRegion()), read by the same
@@ -182,113 +177,65 @@ export function createCargoData(id: string, preset: CargoLabelPreset, dimensions
     correctlyShipped: false,
     shapeType: 'box',
     organized: false,
-    subtype: null,
+    shapePresetId: null,
     sizeClass: null,
     category: null,
     region: null,
   };
 }
 
-/** A named daily-flow cargo silhouette — the ONE place shape/size/label/
- * color are bound together for a given subtype (spec "貨品外型與比例有更多
- * 變化" round section八: "資料必須集中，不要依 Mesh 名稱反向判定種類").
- * cargo-system.ts's spawnDailyBox/spawnDailyRoller take one of these
- * directly rather than a raw size, so every daily cargo item is fully
- * described by picking a preset, never by hand-assembling dimensions. */
-export interface CargoSubtypePreset {
-  subtype: CargoSubtype;
-  shapeType: CargoShapeType;
-  sizeClass: CargoSizeClass;
-  /** Visible category-label text (spec section九/十) — e.g. "小型方箱". */
-  label: string;
-  /** Base material color for the main mesh. Decoration accent colors are
-   * derived from this in cargo-visuals.ts, not hand-picked per subtype. */
-  color: number;
-  /** Box/large: width/height/depth. Roller: width=depth=diameter,
-   * height=length (same "tipped AABB" convention cargo-system.ts already
-   * uses for roller cargo). */
-  dimensions: CargoDimensions;
-}
-
-/** Box-class silhouettes (spec section六: "方箱類至少加入7種"；section七
- * gives the visual-style names folded in here rather than as separate
- * subtypes — e.g. reinforced-box IS the "木條加固箱" style at a
- * medium-large size). */
-export const CARGO_BOX_PRESETS: Record<string, CargoSubtypePreset> = {
-  smallBox: { subtype: 'small-box', shapeType: 'box', sizeClass: 'small', label: '小型方箱', color: 0x9a7a4a, dimensions: { width: 0.28, height: 0.26, depth: 0.28 } },
-  mediumBox: { subtype: 'medium-box', shapeType: 'box', sizeClass: 'medium', label: '中型方箱', color: 0xa8824f, dimensions: { width: 0.42, height: 0.38, depth: 0.40 } },
-  reinforcedBox: { subtype: 'reinforced-box', shapeType: 'box', sizeClass: 'medium', label: '加固木箱', color: 0x8a6a3a, dimensions: { width: 0.48, height: 0.46, depth: 0.46 } },
-  longCrate: { subtype: 'long-crate', shapeType: 'box', sizeClass: 'medium', label: '長型貨箱', color: 0x93733f, dimensions: { width: 0.35, height: 0.32, depth: 0.78 } },
-  tallCrate: { subtype: 'tall-crate', shapeType: 'box', sizeClass: 'medium', label: '高型貨箱', color: 0x8f7248, dimensions: { width: 0.36, height: 0.74, depth: 0.36 } },
-  flatCase: { subtype: 'flat-case', shapeType: 'box', sizeClass: 'small', label: '扁平貨箱', color: 0x6b6b6b, dimensions: { width: 0.56, height: 0.18, depth: 0.38 } },
-  wideBox: { subtype: 'wide-box', shapeType: 'box', sizeClass: 'medium', label: '寬型貨箱', color: 0xa07f4a, dimensions: { width: 0.64, height: 0.34, depth: 0.42 } },
-  handledBox: { subtype: 'handled-box', shapeType: 'box', sizeClass: 'small', label: '提把貨箱', color: 0x9c7c48, dimensions: { width: 0.32, height: 0.30, depth: 0.34 } },
-};
-
-/** Roller-class silhouettes (spec section六: 至少4種). */
-export const CARGO_ROLLER_PRESETS: Record<string, CargoSubtypePreset> = {
-  woodenBarrel: { subtype: 'wooden-barrel', shapeType: 'roller', sizeClass: 'small', label: '木桶', color: 0x7a5730, dimensions: { width: 0.52, height: 0.40, depth: 0.40 } },
-  metalDrum: { subtype: 'metal-drum', shapeType: 'roller', sizeClass: 'medium', label: '金屬桶', color: 0x6b7278, dimensions: { width: 0.50, height: 0.54, depth: 0.54 } },
-  fabricRoll: { subtype: 'fabric-roll', shapeType: 'roller', sizeClass: 'medium', label: '布料捲', color: 0x8a5a6a, dimensions: { width: 0.88, height: 0.34, depth: 0.34 } },
-  spool: { subtype: 'spool', shapeType: 'roller', sizeClass: 'small', label: '線軸貨物', color: 0x5a6a4a, dimensions: { width: 0.36, height: 0.50, depth: 0.50 } },
-};
-
-/** Large-class silhouettes (spec section六: 至少3種，最大約寬1.2-1.7／高
- * 1.0-1.6／深1.0-1.8m — kept toward the smaller end of that range so at
- * least the bigger land/sea vehicles can still take one, spec: "仍有機會放
- * 入目前載具貨艙"). */
-export const CARGO_LARGE_PRESETS: Record<string, CargoSubtypePreset> = {
-  largeCrate: { subtype: 'large-crate', shapeType: 'large', sizeClass: 'large', label: '大型木箱', color: 0x4a6fa5, dimensions: { width: 1.2, height: 1.0, depth: 1.2 } },
-  largeLongCrate: { subtype: 'large-long-crate', shapeType: 'large', sizeClass: 'large', label: '大型長箱', color: 0x3f6193, dimensions: { width: 1.3, height: 1.05, depth: 1.7 } },
-  largeTallCrate: { subtype: 'large-tall-crate', shapeType: 'large', sizeClass: 'extraLarge', label: '大型高箱', color: 0x5a4a8f, dimensions: { width: 1.15, height: 1.55, depth: 1.15 } },
-};
-
-export const CARGO_SUBTYPE_PRESETS: Record<string, CargoSubtypePreset> = {
-  ...CARGO_BOX_PRESETS, ...CARGO_ROLLER_PRESETS, ...CARGO_LARGE_PRESETS,
-};
-
-/** Category label background color (spec section十: "顏色必須集中設定，不
- * 要散落在生成函式") — read by cargo-visuals.ts's label-badge builder. */
-export const CARGO_CATEGORY_LABEL_BG: Record<CargoShapeType, string> = {
-  box: 'rgba(120, 90, 45, 0.92)',
-  roller: 'rgba(50, 88, 108, 0.92)',
-  large: 'rgba(70, 55, 130, 0.92)',
+/** Back-compat for mail-layout-data.ts, which reads
+ * CARGO_BOX_PRESETS.mediumBox.dimensions as the mail bag's own base exterior
+ * size ("Organize and expand cargo shape presets" round spec十: "若為了相容
+ * 舊存取仍需保留 shapeType：只能作為 CargoShapePreset.id 的相容別名") — a thin
+ * derived view, not a second data source. The real definition of "中型紙箱"
+ * lives in cargo-shape-presets.ts's 'medium-box' preset; this alias exists
+ * ONLY so mail-layout-data.ts (out of this round's scope — mail bags are
+ * explicitly untouched) keeps compiling and reading the exact same number. */
+export const CARGO_BOX_PRESETS = {
+  mediumBox: { dimensions: getCargoShapePreset('medium-box')!.dimensions },
 };
 
 /** Daily-flow round cargo (spec "每日貨品清空核心流程") — deliberately
- * bypasses CARGO_LABEL_PRESETS entirely: this round's boxes/rollers/large
- * items spawn with no domestic/overseas/fragile labels, no route/cargo-type
- * distinction the player needs to read (spec "不需要...載具相容性").
- * cargoType/routeType are still populated with harmless defaults so
- * CargoData stays a single consistent shape, but nothing this round reads
- * them for daily cargo — the real identity is `subtype`/`sizeClass`. */
-export function createDailyCargoData(id: string, preset: CargoSubtypePreset): CargoData {
-  // "貨物種類準心檢視 UI" round: category decided once, at spawn, and never
-  // re-derived from the mesh/subtype/size/color afterward — see
-  // cargo-category-data.ts pickCargoCategory().
-  const category = pickCargoCategory();
-  // Same "decided once, at spawn" rule as `category` above — see
-  // cargo-region-data.ts pickCargoRegion(). "Update vehicle cargo
-  // compatibility and capacity" round: 'live' cargo has no accepting
-  // vehicle for region:'international' this round (spec: "海外活體沒有對應
-  // 載具...暫時禁止生成「海外＋活物」") — force 'domestic' rather than ever
-  // spawning an unshippable combination, instead of a plain independent
-  // pickCargoRegion() call.
-  const region = category === 'live' ? 'domestic' : pickCargoRegion();
+ * bypasses CARGO_LABEL_PRESETS entirely: daily items spawn with no
+ * domestic/overseas/fragile labels, no route/cargo-type distinction the
+ * player needs to read there. cargoType/routeType stay harmless defaults so
+ * CargoData stays a single consistent shape, but nothing reads them for
+ * daily cargo — the real identity is `shapePresetId`/`sizeClass`/`category`,
+ * all copied directly from the CargoShapePreset that was picked ("Organize
+ * and expand cargo shape presets" round: category/sizeClass are no longer
+ * independently re-rolled after the shape is chosen — every preset now
+ * carries its own fixed category, see cargo-shape-presets.ts). */
+export function createDailyCargoData(id: string, preset: CargoShapePreset): CargoData {
+  // Shape/collider family for the fields every OTHER system (pallet-system.ts,
+  // vehicle-control-system.ts, physics collider choice in cargo-system.ts)
+  // still reads — see CargoShapeType's own doc comment above for why each
+  // branch matters.
+  const shapeType: CargoShapeType =
+    preset.colliderKind === 'cylinder' ? 'roller' :
+    preset.category === 'large' ? 'large' :
+    preset.visualKind === 'cage' ? 'cage' : 'box';
+  // Same "decided once, at spawn" rule cargo-region-data.ts's pickCargoRegion
+  // has always followed. "Update vehicle cargo compatibility and capacity"
+  // round: 'live' cargo has no accepting vehicle for region:'international'
+  // (spec: "海外活體沒有對應載具...暫時禁止生成「海外＋活物」", reconfirmed by
+  // this round's spec section九: "海外活物目前仍不生成") — force 'domestic'
+  // rather than ever spawning an unshippable combination.
+  const region = preset.category === 'live' ? 'domestic' : pickCargoRegion();
   return {
     id,
     cargoType: 'normal',
     routeType: 'domestic',
     labels: [],
-    displayName: preset.label,
+    displayName: preset.displayName,
     dimensions: preset.dimensions,
     loadedVehicleId: null,
     correctlyShipped: false,
-    shapeType: preset.shapeType,
+    shapeType,
     organized: false,
-    subtype: preset.subtype,
+    shapePresetId: preset.id,
     sizeClass: preset.sizeClass,
-    category,
+    category: preset.category,
     region,
   };
 }
