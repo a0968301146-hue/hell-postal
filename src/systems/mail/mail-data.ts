@@ -84,31 +84,31 @@ export const MAIL_ENVELOPE_VISUAL_PRESETS: MailEnvelopeVisualPreset[] = [
     id: 'standard-envelope', displayName: '標準信封',
     dimensions: { width: ENVELOPE_SIZE.width, height: ENVELOPE_SIZE.height, depth: ENVELOPE_SIZE.depth },
     paperColor: 0xfffff0, borderColor: null, hasWaxSeal: false, spawnWeight: 1,
-    note: '極小扁平信件，一般白色紙質，可直接投入分類袋',
+    note: '極小扁平信件，一般白色紙質，可直接投入信封箱',
   },
   {
     id: 'kraft-envelope', displayName: '牛皮紙信封',
     dimensions: { width: ENVELOPE_SIZE.width, height: ENVELOPE_SIZE.height, depth: ENVELOPE_SIZE.depth },
     paperColor: 0xc8a165, borderColor: 0x6b4a26, hasWaxSeal: false, spawnWeight: 1,
-    note: '極小扁平信件，牛皮紙色澤與較厚紙邊，可直接投入分類袋',
+    note: '極小扁平信件，牛皮紙色澤與較厚紙邊，可直接投入信封箱',
   },
   {
     id: 'wax-seal-envelope', displayName: '蠟封信封',
     dimensions: { width: ENVELOPE_SIZE.width, height: ENVELOPE_SIZE.height, depth: ENVELOPE_SIZE.depth },
     paperColor: 0xf2ece0, borderColor: null, hasWaxSeal: true, spawnWeight: 1,
-    note: '極小扁平信件，背面有明顯彩色蠟印，可直接投入分類袋',
+    note: '極小扁平信件，背面有明顯彩色蠟印，可直接投入信封箱',
   },
   {
     id: 'document-envelope', displayName: '文件信封',
     // Wider flat footprint (spec: "平面尺寸較大"), but the SAME thin height
     // as every other preset (spec: "厚度仍保持很薄") — comfortably clears
-    // both the stamp table (1.6x1.0m) and the enlarged mail bag's own
+    // both the stamp table (1.6x1.0m) and the enlarged mail box's own
     // interior footprint (0.54x0.51m, mail-layout-data.ts MAIL_BAG_INTERIOR)
     // with wide margin on every side, so it can never jam on either (spec:
-    // "不得因尺寸較大而卡在工作桌或信封袋").
+    // "不得因尺寸較大而卡在工作桌或信封箱").
     dimensions: { width: 0.34, height: ENVELOPE_SIZE.height, depth: 0.24 },
     paperColor: 0xf5f5f0, borderColor: null, hasWaxSeal: false, spawnWeight: 1,
-    note: '平面尺寸較大、厚度仍很薄的信件，可完整通過信封袋袋口',
+    note: '平面尺寸較大、厚度仍很薄的信件，可完整通過信封箱箱口',
   },
 ];
 
@@ -241,12 +241,12 @@ export function buildEnvelopeGeometry(dimensions: { width: number; height: numbe
   return new THREE.BoxGeometry(dimensions.width, dimensions.height, dimensions.depth);
 }
 
-/** Bag exterior texture — destination pattern icon + region label (spec八:
- * "袋子外側顯示：台北／台中／日本／美國圖樣、國內／海外"). Envelope COUNT is
- * intentionally NOT baked in here — mail-bag-system.ts keeps that on a
- * separate floating label it can cheaply re-render every time the count
- * changes, without rebuilding this texture. */
-function drawBagCanvas(pattern: MailDestinationInfo | null): HTMLCanvasElement {
+/** Box front-panel texture — destination pattern icon + region label (spec
+ * 二: "圖樣顯示在信封箱外側正面"). Envelope COUNT is intentionally NOT baked
+ * in here — mail-bag-system.ts keeps that on a separate floating label it
+ * can cheaply re-render every time the count changes, without rebuilding
+ * this texture. */
+function drawBoxFrontCanvas(pattern: MailDestinationInfo | null): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = 160;
   canvas.height = 200;
@@ -276,111 +276,111 @@ function drawBagCanvas(pattern: MailDestinationInfo | null): HTMLCanvasElement {
   return canvas;
 }
 
-/** Plain interior lining material — no pattern/destination texture (spec二:
- * "內側不顯示目的地郵票"), just a dull fabric-lining color. Built fresh each
- * time purely for symmetry with buildBagExteriorMaterial (both get disposed
- * together whenever the pattern changes); it never actually needs to change
- * with the pattern itself, but keeping ownership/lifecycle identical for
- * both materials avoids any "which one do I dispose" bookkeeping split. */
-function buildBagInteriorMaterial(): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({ color: 0x3a2f22, roughness: 0.95 });
+/** Plain wood/cardboard material — every box surface except the front
+ * wall's own destination texture below (spec二: "箱內側不顯示目的地圖
+ * 樣" — this also naturally covers the bottom/left/right/back walls'
+ * exteriors AND every wall's interior-facing surface, since a thin solid
+ * box piece shares one material across all its faces). */
+function buildBoxPlainMaterial(): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({ color: 0x8a6a42, roughness: 0.9 });
 }
 
-/** Exterior material — destination pattern/region texture (spec二: "外側顯
- * 示目前用F切換的目的地郵票／袋子圖樣"). Single-sided (default THREE.FrontSide)
- * — this round replaces the previous DoubleSide-on-one-shell approach (spec:
- * "不要只使用DoubleSide假裝完成內外UV") with a genuine second, independently
- * wound inner shell (see buildBagGeometry) carrying its own separate
- * material index/UV region instead. */
-function buildBagExteriorMaterial(pattern: MailDestinationInfo | null): THREE.MeshStandardMaterial {
-  const canvas = drawBagCanvas(pattern);
+/** Front-wall material carrying the destination pattern texture (spec二:
+ * "圖樣顯示在信封箱外側正面...按F後立即更新"). */
+function buildBoxFrontMaterial(pattern: MailDestinationInfo | null): THREE.MeshStandardMaterial {
+  const canvas = drawBoxFrontCanvas(pattern);
   return new THREE.MeshStandardMaterial({ map: new THREE.CanvasTexture(canvas) });
 }
 
-/** Builds the bag's exterior+interior material PAIR together (spec二: 外側/
- * 內側各自獨立材質) — index 0 matches buildBagGeometry's outer-shell
- * material group, index 1 its inner-shell group. Callers (mail-bag-
- * system.ts) assign this directly as `mesh.material`. */
+/** Builds the box's material PAIR together — index 0 matches
+ * buildBoxGeometry's own front-wall material group, index 1 every other
+ * piece's group (bottom/left/right/back, spec二: "箱內側不顯示目的地圖
+ * 樣"). Callers (mail-bag-system.ts) assign this directly as `mesh.material`. */
 export function buildBagMaterials(pattern: MailDestinationInfo | null): THREE.Material[] {
-  return [buildBagExteriorMaterial(pattern), buildBagInteriorMaterial()];
+  return [buildBoxFrontMaterial(pattern), buildBoxPlainMaterial()];
 }
 
-/** Reverses a BufferGeometry's face winding (and re-derives normals to
- * match) in place — used to build the inner shell below so its visible face
- * points INTO the cavity instead of outward. Manual index-swap rather than
- * a scale(-1,..) trick, so it stays correct regardless of the source
- * profile's shape. */
-function flipWinding(geo: THREE.BufferGeometry): void {
-  const index = geo.getIndex();
-  if (!index) return;
-  const arr = index.array as Uint16Array | Uint32Array;
-  for (let i = 0; i < arr.length; i += 3) {
-    const tmp = arr[i + 1];
-    arr[i + 1] = arr[i + 2];
-    arr[i + 2] = tmp;
-  }
-  index.needsUpdate = true;
-}
+/** Open rectangular mail box ("Replace mail bags with open mail boxes"
+ * round一: "上方完全開放、有底板與四面箱壁、不可有箱蓋Collider、不要改回實
+ * 心方塊") — 5 separate thin BoxGeometry pieces (bottom + left/right/back/
+ * front walls) merged into ONE indexed BufferGeometry with 2 material
+ * groups (mergeGeometries's own useGroups=true assigns one group per INPUT
+ * geometry in order — grouped here as [frontGeo, restGeo] so index 0 is
+ * exactly the front wall, index 1 everything else, matching
+ * buildBagMaterials' own [front, plain] pair). Every piece's local position
+ * is computed with the EXACT same formulas mail-bag-system.ts's own
+ * Rigidbody/Collider placement already uses (wallLocalY / bottomLocalY /
+ * interior-plus-wallThickness offsets), so the visible mesh and the real
+ * collision shape always line up pixel-for-pixel — no separate
+ * "interiorBounds" needs to change here at all, since MAIL_BAG_INTERIOR's
+ * own numbers (mail-layout-data.ts) are untouched by this round. The whole
+ * visual stays exactly one THREE.Mesh (matching InteractableObject.mesh's
+ * own single-Mesh contract). No top piece is ever created — the mouth stays
+ * genuinely open, and nothing here can ever become "a filled-in solid
+ * collider" since this function only ever produces a cosmetic mesh; the
+ * REAL 5-collider compound body is built separately in mail-bag-system.ts
+ * from these same interior/wallThickness numbers. */
+export function buildBoxGeometry(interiorWidth: number, interiorDepth: number, interiorHeight: number, wallThickness: number): THREE.BufferGeometry {
+  const wt = wallThickness;
+  const totalWidth = interiorWidth + 2 * wt;
+  const totalDepth = interiorDepth + 2 * wt;
+  const totalHeight = interiorHeight + wt; // bottom wall only — top stays open
+  const wallLocalY = -totalHeight / 2 + wt + interiorHeight / 2;
+  const bottomLocalY = -totalHeight / 2 + wt / 2;
 
-/** Low-poly, irregular open-top sack silhouette ("Improve mail table
- * placement and open mail bags" round二: "袋口略寬/中間鼓起/底部略窄"), now
- * built from TWO separately-wound LatheGeometry shells merged into one
- * indexed BufferGeometry with material groups ("Resize mail bags and fix
- * supply rack interaction" round二: "外側與內側使用不同material index／UV
- * 區域，方便未來替換貼圖" — not DoubleSide on a single shell): an OUTER
- * shell (default winding, visible from outside, material group 0) and an
- * INNER shell — the same profile inset by `wallThickness` in radius, with
- * its winding flipped (flipWinding) so it's visible from the INSIDE instead
- * (material group 1). Both profiles deliberately never return to radius 0
- * at the top, so the mouth stays genuinely open on both shells (no cap ever
- * generated there, spec: "袋口與內部必須保持鏤空"); both DO start at radius
- * 0 at the bottom, so the base pinches closed with no separate cap mesh.
- * The whole visual stays exactly one THREE.Mesh (matching InteractableObject
- * .mesh's own single-Mesh contract) with a 2-element material array. Purely
- * cosmetic either way: the REAL collision shape is the separate flat-walled
- * box collider mail-bag-system.ts builds from the same interior/
- * wallThickness numbers (spec: "Collider只能放在：底部/左側/右側/前側/
- * 後側"), never this shape. */
-export function buildBagGeometry(interiorWidth: number, interiorDepth: number, interiorHeight: number, wallThickness: number): THREE.BufferGeometry {
-  const totalHeight = interiorHeight + wallThickness; // bottom wall only — top stays open
-  const bottomY = -totalHeight / 2;
-  const topY = totalHeight / 2; // mouth plane = interior top, no wall there
-  const avgHalf = (interiorWidth / 2 + interiorDepth / 2) / 2 + wallThickness;
-  const bottomRadius = avgHalf * 0.5;
-  const bulgeRadius = avgHalf * 1.4; // 中間鼓起 — the widest point
-  const mouthRadius = avgHalf * 1.3; // 袋口略寬 — slightly narrower than the bulge
+  const bottomGeo = new THREE.BoxGeometry(totalWidth, wt, totalDepth);
+  bottomGeo.translate(0, bottomLocalY, 0);
 
-  const outerPoints = [
-    new THREE.Vector2(0, bottomY),
-    new THREE.Vector2(bottomRadius, bottomY + totalHeight * 0.12),
-    new THREE.Vector2(bulgeRadius, (bottomY + topY) / 2),
-    new THREE.Vector2(mouthRadius, topY),
-  ];
-  const outerGeo = new THREE.LatheGeometry(outerPoints, 8);
+  const leftGeo = new THREE.BoxGeometry(wt, interiorHeight, totalDepth);
+  leftGeo.translate(-(interiorWidth / 2 + wt / 2), wallLocalY, 0);
 
-  const innerPoints = outerPoints.map((p) => new THREE.Vector2(Math.max(0.001, p.x - wallThickness), p.y));
-  const innerGeo = new THREE.LatheGeometry(innerPoints, 8);
-  flipWinding(innerGeo);
+  const rightGeo = new THREE.BoxGeometry(wt, interiorHeight, totalDepth);
+  rightGeo.translate(interiorWidth / 2 + wt / 2, wallLocalY, 0);
 
-  const merged = mergeGeometries([outerGeo, innerGeo], true);
-  outerGeo.dispose();
-  innerGeo.dispose();
-  if (!merged) throw new Error('mail bag geometry merge failed');
+  const backGeo = new THREE.BoxGeometry(totalWidth, interiorHeight, wt);
+  backGeo.translate(0, wallLocalY, -(interiorDepth / 2 + wt / 2));
+
+  const frontGeo = new THREE.BoxGeometry(totalWidth, interiorHeight, wt);
+  frontGeo.translate(0, wallLocalY, interiorDepth / 2 + wt / 2);
+
+  const restGeo = mergeGeometries([bottomGeo, leftGeo, rightGeo, backGeo], false);
+  bottomGeo.dispose();
+  leftGeo.dispose();
+  rightGeo.dispose();
+  backGeo.dispose();
+  if (!restGeo) throw new Error('mail box geometry merge failed (rest pieces)');
+
+  const merged = mergeGeometries([frontGeo, restGeo], true);
+  frontGeo.dispose();
+  restGeo.dispose();
+  if (!merged) throw new Error('mail box geometry merge failed');
   merged.computeVertexNormals();
   return merged;
 }
 
-/** Sealed-bag cinch ring ("Improve mail table placement and open mail bags"
- * round五: sealed需"新增收束袋口或綁繩視覺") — a thin torus sitting just
- * below the mouth, toggled visible only while `state === 'sealed'`
- * (mail-bag-system.ts adds this once at spawn and flips `.visible`, rather
- * than rebuilding geometry on every seal/unseal). */
-export function buildBagCinchRing(mouthRadius: number, y: number): THREE.Mesh {
-  const geo = new THREE.TorusGeometry(mouthRadius * 0.75, mouthRadius * 0.12, 6, 10);
-  const mat = new THREE.MeshStandardMaterial({ color: 0x3a2a1a });
-  const ring = new THREE.Mesh(geo, mat);
-  ring.rotation.x = Math.PI / 2;
-  ring.position.y = y;
-  ring.visible = false;
-  return ring;
+/** Sealed-state visual ("Replace mail bags with open mail boxes" round七:
+ * "不必真的生成可開關箱蓋；可使用繩索、封條或簡化上蓋視覺表示已封箱") — two
+ * crossing strap strips laid just above the box's own open mouth, toggled
+ * visible only while `state === 'sealed'` (mail-bag-system.ts adds this
+ * once at spawn and flips `.visible`, same pattern the old cinch ring
+ * used). No Collider — purely decorative, and the box's own investment
+ * judgment (interiorBounds) is entirely independent of this visual. */
+export function buildBoxSealVisual(interiorWidth: number, interiorDepth: number, y: number): THREE.Group {
+  const group = new THREE.Group();
+  const diag = Math.hypot(interiorWidth, interiorDepth);
+  const angle = Math.atan2(interiorDepth, interiorWidth);
+  const strapGeo = new THREE.BoxGeometry(diag * 0.92, 0.02, 0.05);
+
+  const strap1 = new THREE.Mesh(strapGeo, new THREE.MeshStandardMaterial({ color: 0x3a2a1a }));
+  strap1.rotation.y = angle;
+  strap1.position.y = y;
+  group.add(strap1);
+
+  const strap2 = new THREE.Mesh(strapGeo.clone(), new THREE.MeshStandardMaterial({ color: 0x3a2a1a }));
+  strap2.rotation.y = -angle;
+  strap2.position.y = y;
+  group.add(strap2);
+
+  group.visible = false;
+  return group;
 }

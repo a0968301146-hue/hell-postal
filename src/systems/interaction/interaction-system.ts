@@ -595,8 +595,8 @@ export class InteractionSystem {
           const actionHint = bag.state === 'sealed'
             ? '按 E 拿起'
             : this.mailBagSystem.canSeal(newTarget.id)
-              ? 'E：封閉分類袋　F：更改圖樣\n右鍵：取出信封'
-              : '分類袋內沒有信件\nF：設定圖樣　按 E 拿起';
+              ? 'E：封箱　F：更改圖樣\n右鍵：取出信封'
+              : '信封箱內沒有信件\nF：設定圖樣　按 E 拿起';
           this.hud.showInteractionPrompt(
             newTarget.displayName,
             `圖樣：${patternText}\n狀態：${stateText}\n信件數：${bag.envelopeIds.length}／${bag.capacity}\n${actionHint}`
@@ -615,7 +615,7 @@ export class InteractionSystem {
           // no longer hits this mesh.
           this.hud.showInteractionPrompt(
             newTarget.displayName,
-            this.mailBagSystem.canSpawnBag ? '按 E 取得新袋' : '空袋數量已達上限'
+            this.mailBagSystem.canSpawnBag ? '按 E 取得新箱' : '空箱數量已達上限'
           );
         } else {
           this.hud.showInteractionPrompt(newTarget.displayName, '按 E 拿起');

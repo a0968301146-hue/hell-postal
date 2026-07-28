@@ -7,7 +7,7 @@ import { BACK_AREA } from '../world-layout';
 import { BAG_RACK, MAIL_BAG_INTERIOR, MAIL_BAG_WALL_THICKNESS, ENVELOPE_SIZE } from '../../data/world/mail-layout-data';
 import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/world-label-system';
 import { MailBagRecord, EnvelopeRecord } from './mail-types';
-import { MAIL_DESTINATIONS, MAX_OPEN_BAGS, MAIL_BAG_CAPACITY, getMailDestination, buildBagMaterials, buildBagGeometry, buildBagCinchRing } from './mail-data';
+import { MAIL_DESTINATIONS, MAX_OPEN_BAGS, MAIL_BAG_CAPACITY, getMailDestination, buildBagMaterials, buildBoxGeometry, buildBoxSealVisual } from './mail-data';
 import { MailSystem } from './mail-system';
 
 const BAG_ID_PREFIX = 'mailbag-';
@@ -26,6 +26,12 @@ function disposeMaterial(mat: THREE.Material | THREE.Material[]): void {
   if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
   else mat.dispose();
 }
+
+/** How long a candidate envelope must sit continuously inside a box's
+ * interiorBounds before it's judged at all ("Replace mail bags with open
+ * mail boxes" round五: "正確信封進入interiorBounds並穩定約0.3～0.5秒後才設
+ * 為boxed"). */
+const INSERT_STABILITY_SECONDS = 0.4;
 
 /** Overall bag footprint — interior cavity (mail-layout-data.ts) plus wall
  * thickness on X/Z (both sides) and Y (bottom only — the top stays open,
@@ -49,27 +55,40 @@ const LOCAL_INTERIOR_BOUNDS = {
 
 interface BagRuntime {
   label: THREE.Sprite;
-  cinchRing: THREE.Mesh;
-  /** Reset once the last insertion attempt's envelope leaves the interior
-   * bounds, so a failed attempt's toast doesn't spam every frame while it
-   * just sits there (spec: 失敗時顯示原因一次即可). */
+  /** Sealed-state strap visual ("Replace mail bags with open mail boxes"
+   * round七) — toggled visible only while sealed, same lifecycle the old
+   * cinch ring used. */
+  sealVisual: THREE.Group;
+  /** Which envelope id is currently being timed for the spec五 stability
+   * check, and how long it's been continuously inside bounds so far — see
+   * updateInsertion's own doc comment. */
+  stableCandidateId: string | null;
+  stableElapsed: number;
+  /** Reset once the last JUDGED envelope leaves the interior bounds, so a
+   * stationary already-judged envelope doesn't get re-evaluated (or spam a
+   * failure toast) every frame while it just sits there (spec: 失敗時顯示
+   * 原因一次即可). */
   lastAttemptedEnvelopeId: string | null;
 }
 
 /**
- * Owns the empty-bag supply rack and every MailBag's own lifecycle — spawn
+ * Owns the empty-box supply rack and every mail box's own lifecycle — spawn
  * (spec六), pattern selection (spec六), physical envelope insertion (spec
- * 七), and sealing (spec八). "Improve mail table placement and open mail
- * bags" round: bags are now genuine open-top containers — a low-poly Lathe
- * shell (mail-data.ts's buildBagGeometry, purely visual) over a COMPOUND
- * physics body of 5 separate box colliders (bottom + left/right/front/back
- * walls, attached to one dynamic RigidBody via PhysicsSystem.
- * addColliderToBody) — never a single solid box, and never anything at the
- * open mouth, so the interior is genuinely hollow both visually and
- * physically. Calls back into MailSystem to keep an envelope's own state
- * (bagged/unbagged) as the single source of truth there (spec: envelope
- * state lives in ONE place) — this class only owns bag records and the
- * bag's own InteractableObject.
+ * 七), and sealing (spec八). Player-visible as "信封箱" throughout (spec
+ * "Replace mail bags with open mail boxes" round) — the class/field names
+ * here (MailBagSystem, MailBagRecord, bagId, ...) are deliberately kept
+ * as-is (spec: "內部程式類別若大幅更名會增加風險，可以暫時保留
+ * MailBagSystem名稱"), a naming-only difference from what the player sees.
+ * Boxes are genuine open-top containers — an open rectangular box shell
+ * (mail-data.ts's buildBoxGeometry, purely visual: bottom + 4 walls, no
+ * top) over a COMPOUND physics body of 5 separate box colliders (bottom +
+ * left/right/front/back walls, attached to one dynamic RigidBody via
+ * PhysicsSystem.addColliderToBody) — never a single solid box, and never
+ * anything at the open mouth, so the interior is genuinely hollow both
+ * visually and physically. Calls back into MailSystem to keep an envelope's
+ * own state (bagged/unbagged) as the single source of truth there (spec:
+ * envelope state lives in ONE place) — this class only owns box records and
+ * the box's own InteractableObject.
  */
 export class MailBagSystem {
   private scene: THREE.Scene;
@@ -125,25 +144,25 @@ export class MailBagSystem {
     // path runs, exactly mirroring how it already special-cases the
     // sorting pallet. Bounds exactly match the rack's own body (width x
     // height x depth = 0.7 x 1.1 x 0.5), not an enlarged detection volume.
-    const rackObj = createInteractableObject(MAIL_RACK_INTERACTABLE_ID, '空封袋供應架', mesh, BAG_RACK.width, BAG_RACK.height, BAG_RACK.depth);
+    const rackObj = createInteractableObject(MAIL_RACK_INTERACTABLE_ID, '空封箱供應架', mesh, BAG_RACK.width, BAG_RACK.height, BAG_RACK.depth);
     this.interactables.set(MAIL_RACK_INTERACTABLE_ID, rackObj);
   }
 
   private rackLabelText(): string {
-    return `空封袋供應架 (${this.bags.size}/${MAX_OPEN_BAGS})`;
+    return `空封箱供應架 (${this.bags.size}/${MAX_OPEN_BAGS})`;
   }
 
   get canSpawnBag(): boolean {
     return this.bags.size < MAX_OPEN_BAGS;
   }
 
-  /** Spawns one new open, pattern-unset MailBag near the rack (spec六: "場上
-   * 空袋上限8個，不可無限生成"). No-op past the cap. Builds the open-top
+  /** Spawns one new open, pattern-unset mail box near the rack (spec六: "場
+   * 上空袋上限8個，不可無限生成"). No-op past the cap. Builds the open-top
    * shell + compound (bottom/left/right/front/back, no top) collider —
    * see the class doc comment above. */
   trySpawnBag(): void {
     if (!this.canSpawnBag) {
-      this.hud.showToast('空袋數量已達上限');
+      this.hud.showToast('空箱數量已達上限');
       return;
     }
 
@@ -152,13 +171,13 @@ export class MailBagSystem {
     const z = BAG_RACK.posZ + BAG_RACK.depth / 2 + 0.5 + Math.random() * 0.4;
     const y = BACK_AREA.floorY + TOTAL_HEIGHT / 2 + 0.05;
 
-    const geo = buildBagGeometry(MAIL_BAG_INTERIOR.width, MAIL_BAG_INTERIOR.depth, MAIL_BAG_INTERIOR.height, MAIL_BAG_WALL_THICKNESS);
+    const geo = buildBoxGeometry(MAIL_BAG_INTERIOR.width, MAIL_BAG_INTERIOR.depth, MAIL_BAG_INTERIOR.height, MAIL_BAG_WALL_THICKNESS);
     const mats = buildBagMaterials(null);
     const mesh = new THREE.Mesh(geo, mats);
     mesh.position.set(x, y, z);
     this.scene.add(mesh);
 
-    const obj = createInteractableObject(id, '空分類袋', mesh, TOTAL_WIDTH, TOTAL_HEIGHT, TOTAL_DEPTH);
+    const obj = createInteractableObject(id, '空信封箱', mesh, TOTAL_WIDTH, TOTAL_HEIGHT, TOTAL_DEPTH);
 
     const bodyDesc = this.physics.createDynamicBodyDesc(x, y, z, 8);
     const body = this.physics.createDynamicBody(bodyDesc);
@@ -177,15 +196,15 @@ export class MailBagSystem {
     label.position.set(0, TOTAL_HEIGHT / 2 + 0.35, 0);
     mesh.add(label);
 
-    // Sealed-state cinch ring — built once, toggled visible only while
-    // sealed (spec五) rather than rebuilt on every seal/unseal.
-    const cinchRing = buildBagCinchRing(MAIL_BAG_INTERIOR.width / 2 + wt, TOTAL_HEIGHT / 2 - 0.02);
-    mesh.add(cinchRing);
+    // Sealed-state strap visual — built once, toggled visible only while
+    // sealed (spec七) rather than rebuilt on every seal/unseal.
+    const sealVisual = buildBoxSealVisual(MAIL_BAG_INTERIOR.width, MAIL_BAG_INTERIOR.depth, TOTAL_HEIGHT / 2 - 0.02);
+    mesh.add(sealVisual);
 
     this.bags.set(id, {
       bagId: id, destinationPattern: null, region: null, state: 'open', envelopeIds: [], capacity: MAIL_BAG_CAPACITY,
     });
-    this.bagRuntime.set(id, { label, cinchRing, lastAttemptedEnvelopeId: null });
+    this.bagRuntime.set(id, { label, sealVisual, stableCandidateId: null, stableElapsed: 0, lastAttemptedEnvelopeId: null });
     updateFloatingLabel(this.rackLabel, this.rackLabelText());
   }
 
@@ -226,7 +245,7 @@ export class MailBagSystem {
     obj.mesh.material = buildBagMaterials(pattern);
     disposeMaterial(oldMats);
     if (runtime) {
-      runtime.cinchRing.visible = bag.state === 'sealed';
+      runtime.sealVisual.visible = bag.state === 'sealed';
       const regionText = bag.region ? (bag.region === 'domestic' ? '國內' : '海外') : '';
       const patternText = pattern ? `${pattern.icon}${pattern.displayName}` : '未設定';
       const sealedText = bag.state === 'sealed' ? '（已封閉）' : '';
@@ -335,9 +354,19 @@ export class MailBagSystem {
    * through the genuinely open top (every other side is a real wall
    * collider), an envelope merely resting against an outer wall face never
    * satisfies this check — it has to have actually gone in through the
-   * mouth. One attempt per approach (guarded by lastAttemptedEnvelopeId) so
-   * a stationary failed envelope doesn't spam the failure toast. */
-  private updateInsertion(_deltaTime: number): void {
+   * mouth.
+   *
+   * "Replace mail bags with open mail boxes" round五: a candidate must stay
+   * the SAME envelope, continuously inside bounds, for INSERT_STABILITY_
+   * SECONDS (~0.3-0.5s) before it's judged at all — a bouncing/still-falling
+   * envelope (thrown via Q, or the E-drop's own natural fall) is never
+   * evaluated mid-flight. The timer resets the instant the candidate
+   * changes or leaves the bounds. Once judged (success -> `attemptInsert`
+   * flips its state to 'bagged', removing it from trackedUnbaggedEnvelopeIds
+   * on the very next scan; failure -> lastAttemptedEnvelopeId) it's not
+   * re-judged again until it actually leaves and re-enters the bounds, so a
+   * stationary failed envelope doesn't spam the failure toast every frame. */
+  private updateInsertion(deltaTime: number): void {
     for (const bag of this.bags.values()) {
       if (bag.state !== 'open') continue;
       const bagObj = this.interactables.get(bag.bagId);
@@ -361,10 +390,22 @@ export class MailBagSystem {
 
       if (!insideId) {
         runtime.lastAttemptedEnvelopeId = null;
+        runtime.stableCandidateId = null;
+        runtime.stableElapsed = 0;
         continue;
       }
-      if (runtime.lastAttemptedEnvelopeId === insideId) continue; // already attempted this approach
+      if (insideId === runtime.lastAttemptedEnvelopeId) continue; // already judged this approach
+
+      if (runtime.stableCandidateId !== insideId) {
+        runtime.stableCandidateId = insideId;
+        runtime.stableElapsed = 0;
+      }
+      runtime.stableElapsed += deltaTime;
+      if (runtime.stableElapsed < INSERT_STABILITY_SECONDS) continue; // spec五: not stable yet
+
       runtime.lastAttemptedEnvelopeId = insideId;
+      runtime.stableCandidateId = null;
+      runtime.stableElapsed = 0;
       this.attemptInsert(insideId, bag.bagId);
     }
   }
@@ -427,9 +468,9 @@ export class MailBagSystem {
    * attemptInsert's passive-sensor path and tryInsertHeldEnvelope's explicit
    * E-key path below. */
   private checkInsertEligibility(rec: EnvelopeRecord, bag: MailBagRecord): string | null {
-    if (bag.state !== 'open') return '分類袋已封閉';
-    if (!bag.destinationPattern) return '袋子尚未設定圖樣';
-    if (bag.envelopeIds.length >= bag.capacity) return '袋子已滿';
+    if (bag.state !== 'open') return '信封箱已封閉';
+    if (!bag.destinationPattern) return '信封箱尚未設定圖樣';
+    if (bag.envelopeIds.length >= bag.capacity) return '信封箱已滿';
     if (rec.state !== 'stamped') return '尚未貼郵票';
     if (rec.destination !== bag.destinationPattern) return '郵票或目的地不符';
     return null;
