@@ -21,6 +21,15 @@ export interface EnvelopeRecord {
   /** Which MailBag currently holds this envelope, if any — set the moment
    * state becomes 'bagged', cleared if taken back out of an unsealed bag. */
   bagId: string | null;
+  /** "Add playable envelope visual presets" round: which
+   * MailEnvelopeVisualPreset.id (mail-data.ts) this specific envelope was
+   * spawned with — picked independently of `destination`/`region`/
+   * `requiredStamp` (spec: "目的地、國內／海外、requiredStamp 與外型彼此獨
+   * 立...不可把外型當成目的地判斷依據"), fixed at spawn and never re-picked.
+   * Drives the actual mesh/materials built at spawn and rebuilt on stamping
+   * (mail-data.ts buildEnvelopeGeometry/buildEnvelopeMaterials) — nothing
+   * else (region/stamp/bag judgment) ever reads this field. */
+  visualPresetId: string;
 }
 
 export type MailBagState = 'open' | 'sealed';

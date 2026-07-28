@@ -9,6 +9,7 @@ import {
   CargoType, CARGO_REGION_DISPLAY, CargoShapePreset, CargoCategory,
   CARGO_CATEGORY_DISPLAY, CARGO_SIZE_CLASS_DISPLAY, getCargoShapePresetsByCategory,
 } from '../systems/cargo';
+import { MAIL_ENVELOPE_VISUAL_PRESETS } from '../systems/mail';
 
 /** Codex-specific display wording for CargoType ("Fix vehicle codex
  * compatibility display" round) — deliberately a SEPARATE mapping from
@@ -159,12 +160,12 @@ export function buildCargoCodexGroups(): CargoCodexGroup[] {
   }));
 }
 
-// --- Mail envelope codex (spec三/八: 信件外型整理，不重做 MailSystem) -------
+// --- Mail envelope codex ("Add playable envelope visual presets" round) ---
 //
-// A presentation-only list — MailSystem's own envelope generation/stamping/
-// bagging logic is completely untouched by this round (spec三: "不要重做
-// MailSystem"); this exists purely so the codex's "信件" section (spec八) has
-// something to show, naming the four envelope styles the spec describes.
+// Reads MAIL_ENVELOPE_VISUAL_PRESETS (mail-data.ts) directly — the SAME data
+// mail-system.ts now actually spawns daily envelopes from — rather than a
+// second, hand-written description (spec: "圖鑑改為讀取同一份
+// MailEnvelopeVisualPreset，不保留另一份手寫信件外型清單").
 
 export interface MailEnvelopeCodexEntry {
   id: string;
@@ -172,9 +173,6 @@ export interface MailEnvelopeCodexEntry {
   note: string;
 }
 
-export const MAIL_ENVELOPE_CODEX_ENTRIES: MailEnvelopeCodexEntry[] = [
-  { id: 'standard', displayName: '標準信封', note: '極小扁平信件，可直接投入分類袋' },
-  { id: 'kraft', displayName: '牛皮紙信封', note: '極小扁平信件，可直接投入分類袋' },
-  { id: 'wax-seal', displayName: '蠟封信封', note: '極小扁平信件，可直接投入分類袋' },
-  { id: 'document', displayName: '文件信封', note: '平面較大但厚度仍薄，仍可放入放大後的信件袋' },
-];
+export function buildMailEnvelopeCodexEntries(): MailEnvelopeCodexEntry[] {
+  return MAIL_ENVELOPE_VISUAL_PRESETS.map((p) => ({ id: p.id, displayName: p.displayName, note: p.note }));
+}

@@ -15,6 +15,33 @@ const ALREADY_TEXT = '今日貨品已經送達\n請先完成今日整理';
 
 type UnloadPhase = 'idle' | 'gateOpening' | 'chargingUp' | 'spawning' | 'waveGap' | 'settling' | 'gateClosing';
 
+/** "Add playable envelope presets and fix unloading spawn jams" round spec
+ * 一/四 — anti-jam tuning, kept together rather than scattered as magic
+ * numbers through spawnOne/updateStuckRecovery. */
+const CEILING_CLEARANCE_BUFFER = 0.15;
+/** How little an item may move over STUCK_TIME_THRESHOLD before it's
+ * considered genuinely wedged (spec四: "位移小於最低門檻"). */
+const STUCK_DISPLACEMENT_THRESHOLD = 0.05;
+const STUCK_TIME_THRESHOLD = 2.0;
+/** Elongated/large cargo keeps only a SMALL amount of spawn-time rotation
+ * variety (spec三: "保留少量隨機旋轉，但不可讓長型貨物一生成就橫卡在出
+ * 口") — normal-sized items keep the full range for visual tumbling variety. */
+const LARGE_ITEM_ROT_Y_RANGE = Math.PI / 6;
+const LARGE_ITEM_ANGULAR_SCALE = 0.3;
+
+/** Runtime bookkeeping for one spawned item's anti-stuck watch (spec四:
+ * "每件新生成物品記錄：spawnTime／lastPosition／stuckDuration"). Only cargo
+ * items UnloadingSystem itself spawns are tracked — this round's other
+ * (shared-config) changes reduce jam risk for MailSystem's own envelope
+ * spawns without needing to track them individually here, since this file
+ * has no reference to MailSystem/its own envelope ids (out of scope for
+ * this round — "只修改 UnloadingSystem 與卸貨口生成設定"). */
+interface StuckWatchEntry {
+  portIndex: number;
+  lastPosition: THREE.Vector3;
+  stuckDuration: number;
+}
+
 /** One spawn-plan entry: which preset, and which UNLOAD_PORTS index it
  * launches from (spec "Add dual elevated unloading ports and day-one
  * special cargo" round 三: "兩個到貨口可交錯生成"). */
@@ -94,6 +121,9 @@ export class UnloadingSystem {
    * (spec三: "奇數數量時，多出的1件輪流分配，避免固定偏向同一側") so the
    * leftover doesn't always land on the same port. */
   private oddLeftoverPortIndex = 0;
+
+  /** Anti-stuck watch state (spec四) — see StuckWatchEntry's own doc comment. */
+  private stuckWatch: Map<string, StuckWatchEntry> = new Map();
 
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, cargoSystem: CargoSystem, dailyFlowSystem: DailyFlowSystem,
@@ -231,6 +261,7 @@ export class UnloadingSystem {
     this.waveIndex = 0;
     this.itemIndexInWave = 0;
     this.spawnedIds = [];
+    this.stuckWatch.clear();
     this.chargeTimer = 0;
     updateFloatingLabel(this.buttonLabel, RUNNING_TEXT);
   }
@@ -291,30 +322,72 @@ export class UnloadingSystem {
     return waves;
   }
 
-  /** Launches one item with real burst velocity (spec三/四) from its planned
-   * port — a random spawnPoints entry from that port (plus small jitter) so
-   * consecutive items don't all fire from one exact point, forward/up/
-   * lateral speed ranges from UNLOAD_BURST_CONFIG, and a random angular
-   * velocity so it visibly tumbles in the air. Sets linear/angular velocity
-   * directly (not an impulse) so the launch speed is consistent regardless
-   * of the item's mass. */
+  /** Picks a safe spawn position for `preset` at `port` (spec一/二: dimension-
+   * aware clearance + lanes). Filters this port's lanes down to ones whose
+   * maxHalfWidth/maxHalfDepth can actually hold the item's own real
+   * footprint, orders them so large cargo tries its preferred wide/central
+   * lane first (spec二: "大型貨物優先使用較寬、較中央的lane") while
+   * everything else tries its own non-large lanes first, then verifies each
+   * candidate with a live castShape query (spec一: "生成位置不得位於任何
+   * Collider內部"; spec五: "生成前檢查預定位置是否已有貨物Collider") —
+   * catching the chute housing, gate side walls, ceiling, AND any
+   * already-spawned cargo sitting in that lane in one call. The Y coordinate
+   * is independently clamped against the item's OWN half-height so nothing
+   * can ever spawn poking into the ceiling regardless of which lane it lands
+   * in (spec一: "生成前以物品實際 Collider 尺寸計算 clearance"). Falls back
+   * to the last-tried candidate (best-effort, never blocks the whole day's
+   * unload) if every lane is genuinely occupied. */
+  private pickSpawnPosition(port: PortRuntime, preset: CargoShapePreset): { x: number; y: number; z: number } {
+    const halfW = preset.dimensions.width / 2;
+    const halfD = preset.dimensions.depth / 2;
+    const halfH = preset.dimensions.height / 2;
+    const ceilingLimitY = BACK_AREA.floorY + BACK_AREA.ceilingHeight - halfH - CEILING_CLEARANCE_BUFFER;
+
+    const fitting = port.config.lanes.filter((l) => halfW <= l.maxHalfWidth && halfD <= l.maxHalfDepth);
+    const candidates = fitting.length > 0 ? fitting : port.config.lanes;
+    const isLarge = preset.category === 'large';
+    const ordered = shuffle(candidates).sort((a, b) => {
+      const aFirst = a.preferLarge === isLarge ? 0 : 1;
+      const bFirst = b.preferLarge === isLarge ? 0 : 1;
+      return aFirst - bFirst;
+    });
+
+    let lastCandidate = { x: port.config.gate.centerX, y: Math.min(port.config.spawnY, ceilingLimitY), z: port.config.chute.topZ + 0.5 };
+    for (const lane of ordered) {
+      const jitterX = (Math.random() - 0.5) * Math.min(UNLOAD_SPAWN_JITTER_X, lane.maxHalfWidth * 0.3);
+      const jitterZ = (Math.random() - 0.5) * Math.min(UNLOAD_SPAWN_JITTER_Z, lane.maxHalfDepth * 0.3);
+      const x = lane.x + jitterX;
+      const z = lane.z + jitterZ;
+      const y = Math.min(port.config.spawnY + lane.yOffset, ceilingLimitY);
+      lastCandidate = { x, y, z };
+      const blocked = this.physics.castShape(new THREE.Vector3(x, y, z), new THREE.Vector3(halfW, halfH, halfD));
+      if (!blocked) return lastCandidate;
+    }
+    return lastCandidate;
+  }
+
+  /** Launches one item with real burst velocity (spec三/四) from a safe,
+   * dimension-aware spawn position (pickSpawnPosition) — forward/up/lateral
+   * speed ranges from UNLOAD_BURST_CONFIG (up is now a mild DOWNWARD range,
+   * see that constant's own doc comment), and a random angular velocity so
+   * it visibly tumbles in the air — reduced for large/elongated cargo (spec
+   * 三: "不可讓長型貨物一生成就橫卡在出口") so it can't immediately tumble
+   * broadside across the exit. Sets linear/angular velocity directly (not an
+   * impulse) so the launch speed is consistent regardless of the item's
+   * mass. Registers the spawned item into the anti-stuck watch (spec四). */
   private spawnOne(item: PlannedSpawn): string {
     const port = this.ports[item.portIndex];
     const preset = item.preset;
-    const points = port.config.spawnPoints;
-    const point = points[Math.floor(Math.random() * points.length)];
-    const jitterX = (Math.random() - 0.5) * 2 * UNLOAD_SPAWN_JITTER_X;
-    const jitterZ = (Math.random() - 0.5) * 2 * UNLOAD_SPAWN_JITTER_Z;
-    const x = point.x + jitterX;
-    const z = point.z + jitterZ;
-    const y = port.config.spawnY;
+    const { x, y, z } = this.pickSpawnPosition(port, preset);
+    const isLarge = preset.category === 'large';
 
     let id: string;
     if (preset.colliderKind === 'cylinder') {
       const yawVariance = (Math.random() - 0.5) * 1.4;
       id = this.cargoSystem.spawnDailyRoller(preset, x, y, z, yawVariance);
     } else {
-      const rotY = (Math.random() - 0.5) * Math.PI;
+      const rotYRange = isLarge ? LARGE_ITEM_ROT_Y_RANGE : Math.PI;
+      const rotY = (Math.random() - 0.5) * rotYRange;
       id = this.cargoSystem.spawnDailyBox(preset, x, y, z, rotY);
     }
 
@@ -325,7 +398,7 @@ export class UnloadingSystem {
       const lateral = randRange(UNLOAD_BURST_CONFIG.lateralSpeedMin, UNLOAD_BURST_CONFIG.lateralSpeedMax);
       obj.rigidBody.setLinvel({ x: lateral, y: up, z: forward }, true);
 
-      const amax = UNLOAD_BURST_CONFIG.angularSpeedMax;
+      const amax = UNLOAD_BURST_CONFIG.angularSpeedMax * (isLarge ? LARGE_ITEM_ANGULAR_SCALE : 1);
       obj.rigidBody.setAngvel({
         x: (Math.random() - 0.5) * 2 * amax,
         y: (Math.random() - 0.5) * 2 * amax,
@@ -333,12 +406,88 @@ export class UnloadingSystem {
       }, true);
     }
 
+    this.stuckWatch.set(id, { portIndex: item.portIndex, lastPosition: new THREE.Vector3(x, y, z), stuckDuration: 0 });
+
     port.deviceShakeTimer = 0.15;
     return id;
   }
 
+  /** Whether `pos` is still within the danger zone around `port`'s own gate/
+   * chute structure — elevated, and horizontally/depth-wise still close to
+   * the wall opening (spec四: "仍位於卸貨口上方／斜板區域"). Once an item's
+   * position falls outside this (landed on the open room floor, or picked up
+   * and carried away), it's permanently removed from the watch (spec四:
+   * "落到倉庫地面後不得再自動搬動玩家整理中的物品") — it can never be
+   * re-added, since spawnOne is the only place new entries are created. */
+  private isInUnloadDangerZone(port: UnloadPortConfig, pos: THREE.Vector3): boolean {
+    const withinX = pos.x > port.gate.centerX - port.gate.width / 2 - 0.5 && pos.x < port.gate.centerX + port.gate.width / 2 + 0.5;
+    const withinZ = pos.z > BACK_AREA.minZ - 0.5 && pos.z < port.chute.bottomZ + 0.8;
+    const elevated = pos.y > BACK_AREA.floorY + 0.4;
+    return withinX && withinZ && elevated;
+  }
+
+  /** Safe-recovery relocation (spec四) — moves the item to an open landing
+   * spot well past the chute, keeps its Rigidbody/Collider intact (just
+   * re-enables + repositions them), and gives it a light inward nudge rather
+   * than dropping it dead-still. Never marks it shipped/organized/otherwise
+   * "already processed" (spec: "不得直接刪除或計算為已處理") — from the
+   * physics engine's perspective this is indistinguishable from the item
+   * having simply landed there on its own. */
+  private recoverStuckItem(id: string, port: UnloadPortConfig): void {
+    const obj = this.cargoSystem.getInteractable(id);
+    if (!obj) return;
+    const safeX = port.gate.centerX;
+    const safeZ = port.chute.bottomZ + 1.3;
+    const safeY = BACK_AREA.floorY + obj.height / 2 + 0.05;
+    obj.mesh.position.set(safeX, safeY, safeZ);
+    obj.mesh.rotation.set(0, 0, 0);
+    if (obj.rigidBody) {
+      this.physics.setBodyEnabled(obj.rigidBody, true);
+      obj.rigidBody.setTranslation({ x: safeX, y: safeY, z: safeZ }, true);
+      obj.rigidBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+      obj.rigidBody.setLinvel({ x: 0, y: -0.2, z: 0.8 }, true);
+      obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    }
+  }
+
+  /** Per-frame anti-stuck scan (spec四) — only ever watches items THIS
+   * system spawned (registered in spawnOne), and each id is watched at most
+   * once for its whole lifetime: it's removed the instant it either leaves
+   * the danger zone naturally (landed) or gets recovered (recovery only
+   * fires once, then the entry is deleted immediately after) — it can never
+   * re-enter this Map afterward. A held item is dropped from the watch
+   * immediately too (the player is already handling it, not "stuck"). */
+  private updateStuckRecovery(deltaTime: number): void {
+    for (const [id, watch] of this.stuckWatch) {
+      const obj = this.cargoSystem.getInteractable(id);
+      if (!obj) { this.stuckWatch.delete(id); continue; }
+      if (obj.isHeld) { this.stuckWatch.delete(id); continue; }
+
+      const pos = obj.mesh.position;
+      const port = this.ports[watch.portIndex].config;
+      if (!this.isInUnloadDangerZone(port, pos)) {
+        this.stuckWatch.delete(id);
+        continue;
+      }
+
+      const displacement = pos.distanceTo(watch.lastPosition);
+      if (displacement < STUCK_DISPLACEMENT_THRESHOLD) {
+        watch.stuckDuration += deltaTime;
+      } else {
+        watch.stuckDuration = 0;
+        watch.lastPosition.copy(pos);
+      }
+
+      if (watch.stuckDuration >= STUCK_TIME_THRESHOLD) {
+        this.recoverStuckItem(id, port);
+        this.stuckWatch.delete(id);
+      }
+    }
+  }
+
   update(deltaTime: number): void {
     this.updateDeviceShake(deltaTime);
+    this.updateStuckRecovery(deltaTime);
 
     switch (this.phase) {
       case 'gateOpening': {

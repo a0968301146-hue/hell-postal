@@ -5,7 +5,7 @@ import { PauseManager } from '../../core/pause-manager';
 import { SettingsManager, DisplayMode, ResolutionPreset, QualityPreset, SubtitleSize, TextSpeed } from '../settings';
 import { HUD } from '../hud';
 import { TUTORIAL_ENTRIES, TutorialEntry } from '../../game/tutorial-data';
-import { buildVehicleCodexEntries, SPECIES_CODEX_ENTRIES, buildCargoCodexGroups, MAIL_ENVELOPE_CODEX_ENTRIES } from '../../game/codex-data';
+import { buildVehicleCodexEntries, SPECIES_CODEX_ENTRIES, buildCargoCodexGroups, buildMailEnvelopeCodexEntries } from '../../game/codex-data';
 import {
   ACTION_ORDER, ACTION_LABELS, InputAction, UNWIRED_ACTIONS,
 } from '../../adapters/browser-input/input-binding-manager';
@@ -604,7 +604,8 @@ export class ManualUI {
       }).join('');
       return `<h3 class="manual-subheading">${g.label}</h3>${items}`;
     }).join('');
-    const mailItems = MAIL_ENVELOPE_CODEX_ENTRIES.map((m) => {
+    const mailEnvelopeEntries = buildMailEnvelopeCodexEntries();
+    const mailItems = mailEnvelopeEntries.map((m) => {
       const id = `mail-${m.id}`;
       const active = id === this.selectedCargoId ? 'active' : '';
       return `
@@ -619,7 +620,7 @@ export class ManualUI {
     `;
 
     if (this.selectedCargoId?.startsWith('mail-')) {
-      const mailEntry = MAIL_ENVELOPE_CODEX_ENTRIES.find((m) => `mail-${m.id}` === this.selectedCargoId);
+      const mailEntry = mailEnvelopeEntries.find((m) => `mail-${m.id}` === this.selectedCargoId);
       if (mailEntry) {
         this.rightPageEl.innerHTML = `
           <h2 class="manual-page-title">${mailEntry.displayName}</h2>

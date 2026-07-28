@@ -50,8 +50,46 @@ export const DAILY_CARGO_CONFIG = {
  * 1.55m tall / 0.775 half) plus a clearance buffer, so a spawned item's own
  * top surface never pokes into the ceiling (BACK_AREA.ceilingHeight above
  * the floor). */
-export const UNLOAD_PORT_CEILING_SAFETY_MARGIN = 1.1;
+export const UNLOAD_PORT_CEILING_SAFETY_MARGIN = 1.3;
 const PORT_SPAWN_Y = BACK_AREA.floorY + BACK_AREA.ceilingHeight - UNLOAD_PORT_CEILING_SAFETY_MARGIN;
+
+/** One spawn lane ("Add playable envelope presets and fix unloading spawn
+ * jams" round spec二: "兩個北側卸貨口各自建立數個 spawn lane...lane之間保留
+ * 足夠間距...大型貨物優先使用較寬、較中央的lane...信封使用較高且靠前的
+ * lane"). `maxHalfWidth`/`maxHalfDepth` are the largest item footprint this
+ * lane can safely hold without its own collider approaching the neighboring
+ * lane, the chute housing, or the gate's own side walls —
+ * UnloadingSystem.pickSpawnPosition filters candidate lanes by these before
+ * ever trying one, on top of its own live castShape overlap check. */
+export interface UnloadSpawnLane {
+  id: string;
+  x: number;
+  z: number;
+  /** Added on top of the port's base spawnY. */
+  yOffset: number;
+  maxHalfWidth: number;
+  maxHalfDepth: number;
+  preferLarge: boolean;
+}
+
+function buildSpawnLanes(gate: { centerX: number; halfWidth: number }, chuteTopZ: number): UnloadSpawnLane[] {
+  const usableHalfWidth = gate.halfWidth - 0.5; // stay clear of the gate's own side edges
+  const sideOffset = usableHalfWidth * 0.55;
+  return [
+    // Wide/central — reserved first for large cargo (spec: "大型貨物優先使
+    // 用較寬、較中央的lane"), but still selectable by anything else if the
+    // narrower lanes are occupied.
+    { id: 'center-wide', x: gate.centerX, z: chuteTopZ + 0.5, yOffset: 0, maxHalfWidth: usableHalfWidth * 0.85, maxHalfDepth: 0.95, preferLarge: true },
+    // Two narrower lanes, spaced far enough apart (2x sideOffset) that their
+    // own maxHalfWidth allowances can never geometrically overlap each other.
+    { id: 'left-normal', x: gate.centerX - sideOffset, z: chuteTopZ + 0.3, yOffset: 0, maxHalfWidth: sideOffset * 0.7, maxHalfDepth: 0.4, preferLarge: false },
+    { id: 'right-normal', x: gate.centerX + sideOffset, z: chuteTopZ + 0.3, yOffset: 0, maxHalfWidth: sideOffset * 0.7, maxHalfDepth: 0.4, preferLarge: false },
+    // Higher and further into the room than the other lanes (spec: "信封使
+    // 用較高且靠前的lane，避免卡入縫隙") — clears the gap between the wall
+    // and the chute housing entirely rather than threading through it.
+    { id: 'envelope-high', x: gate.centerX, z: chuteTopZ + 0.9, yOffset: 0.4, maxHalfWidth: 0.3, maxHalfDepth: 0.3, preferLarge: false },
+  ];
+}
 
 export interface UnloadPortConfig {
   id: string;
@@ -73,11 +111,17 @@ export interface UnloadPortConfig {
   chute: { topX: number; topY: number; topZ: number; bottomX: number; bottomZ: number; width: number; thickness: number };
   /** Several distinct spawn points spread across this port's own gate width
    * (spec "貨品外型與比例有更多變化" round section四: "必要時使用數個不同噴
-   * 射生成點") — each comfortably inside the physical chute. */
+   * 射生成點") — each comfortably inside the physical chute. Kept alongside
+   * `lanes` below — mail-system.ts's own envelope spawn still reads this
+   * array directly and is out of scope for this round. */
   spawnPoints: { x: number; z: number }[];
   /** Cargo spawn height for this port — near the ceiling (PORT_SPAWN_Y),
    * same for every port since they share one north wall. */
   spawnY: number;
+  /** Dimension-aware spawn lanes ("Add playable envelope presets and fix
+   * unloading spawn jams" round spec二) — UnloadingSystem.pickSpawnPosition
+   * is the only reader. */
+  lanes: UnloadSpawnLane[];
 }
 
 function buildUnloadPort(gate: { id: string; centerX: number; halfWidth: number }): UnloadPortConfig {
@@ -109,6 +153,7 @@ function buildUnloadPort(gate: { id: string; centerX: number; halfWidth: number 
       { x: gate.centerX + 0.8, z: chuteTopZ + 0.2 },
     ],
     spawnY: PORT_SPAWN_Y,
+    lanes: buildSpawnLanes(gate, chuteTopZ),
   };
 }
 
@@ -144,9 +189,20 @@ export const UNLOAD_BURST_CONFIG = {
   itemIntervalMin: 0.08,
   itemIntervalMax: 0.18,
   /** Launch velocity ranges (spec四). Forward = +Z (into the room), up = +Y,
-   * lateral = world X. */
+   * lateral = world X. "Add playable envelope presets and fix unloading
+   * spawn jams" round spec三: "生成後加入朝倉庫內部且略微向下的初始速度...
+   * 不要只垂直落下或只向牆面方向推動" — upSpeed is now a mild DOWNWARD range
+   * (items already spawn right up near the ceiling specifically so they can
+   * "pour down" into the room, see UNLOAD_PORT_CEILING_SAFETY_MARGIN's own
+   * doc comment; launching them further UP first was the single biggest
+   * contributor to ceiling-clipping at spawn) — forward/lateral stay
+   * unchanged so the motion is still a genuine forward-and-down arc into the
+   * room, never a pure vertical drop or a push back toward the wall. Shared
+   * by both UnloadingSystem's cargo spawns AND mail-system.ts's own envelope
+   * spawns (both read this same constant), so this one change improves both
+   * without touching mail-system.ts at all. */
   forwardSpeedMin: 4, forwardSpeedMax: 7,
-  upSpeedMin: 0.5, upSpeedMax: 2,
+  upSpeedMin: -1.2, upSpeedMax: -0.3,
   lateralSpeedMin: -1.5, lateralSpeedMax: 1.5,
   /** Angular velocity range applied at launch (rad/s per axis) — spec: "貨
    * 物在空中帶有不同角度與旋轉". */

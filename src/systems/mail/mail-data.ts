@@ -42,10 +42,100 @@ export const MAX_OPEN_BAGS = 8;
 
 export const MAIL_BAG_CAPACITY = 12;
 
+/** "Add playable envelope visual presets" round — the ONE place an
+ * envelope's physical silhouette/paper color/distinguishing detail are
+ * bound together, exactly mirroring cargo-shape-presets.ts's own pattern
+ * for cargo. mail-system.ts spawns every daily envelope by picking one of
+ * these (independently of destination/region/requiredStamp — spec: "彼此
+ * 獨立...不可把外型當成目的地判斷依據"), and the codex (codex-data.ts) lists
+ * these same four presets rather than a second, hand-written description
+ * (spec: "不保留另一份手寫信件外型清單"). Every preset shares the EXACT
+ * SAME height as ENVELOPE_SIZE.height on purpose — mail-bag-system.ts's own
+ * stacking math (its own file, out of this round's scope) still reads the
+ * global ENVELOPE_SIZE.height for the per-slot vertical spacing, so keeping
+ * every preset's real height identical to it is what keeps that stacking
+ * math correct for every preset without touching that file at all. */
+export interface MailEnvelopeVisualPreset {
+  id: string;
+  displayName: string;
+  dimensions: { width: number; height: number; depth: number };
+  /** Base paper color — covers every face except the top (destination/stamp
+   * texture, unchanged across presets) and, for wax-seal-envelope, the back
+   * face (its own wax-seal texture). */
+  paperColor: number;
+  /** kraft-envelope's visibly thicker colored edge, drawn as an inset frame
+   * on the TOP face texture alongside the destination/stamp info (spec:
+   * "牛皮紙色與較厚紙邊"). Null for every other preset. */
+  borderColor: number | null;
+  /** wax-seal-envelope's distinguishing feature — a colored wax-seal blob
+   * drawn onto the BACK face texture (spec: "背面有明顯彩色蠟印"). */
+  hasWaxSeal: boolean;
+  /** Relative weight for the daily weighted-random pick (spec: "四種外型近
+   * 似平均或加權隨機"). Uniform across all four confirmed presets. */
+  spawnWeight: number;
+  /** Codex description (spec: "圖鑑改為讀取同一份 MailEnvelopeVisualPreset，
+   * 不保留另一份手寫信件外型清單") — the codex reads this field directly
+   * rather than a separate hand-written text table. */
+  note: string;
+}
+
+export const MAIL_ENVELOPE_VISUAL_PRESETS: MailEnvelopeVisualPreset[] = [
+  {
+    id: 'standard-envelope', displayName: '標準信封',
+    dimensions: { width: ENVELOPE_SIZE.width, height: ENVELOPE_SIZE.height, depth: ENVELOPE_SIZE.depth },
+    paperColor: 0xfffff0, borderColor: null, hasWaxSeal: false, spawnWeight: 1,
+    note: '極小扁平信件，一般白色紙質，可直接投入分類袋',
+  },
+  {
+    id: 'kraft-envelope', displayName: '牛皮紙信封',
+    dimensions: { width: ENVELOPE_SIZE.width, height: ENVELOPE_SIZE.height, depth: ENVELOPE_SIZE.depth },
+    paperColor: 0xc8a165, borderColor: 0x6b4a26, hasWaxSeal: false, spawnWeight: 1,
+    note: '極小扁平信件，牛皮紙色澤與較厚紙邊，可直接投入分類袋',
+  },
+  {
+    id: 'wax-seal-envelope', displayName: '蠟封信封',
+    dimensions: { width: ENVELOPE_SIZE.width, height: ENVELOPE_SIZE.height, depth: ENVELOPE_SIZE.depth },
+    paperColor: 0xf2ece0, borderColor: null, hasWaxSeal: true, spawnWeight: 1,
+    note: '極小扁平信件，背面有明顯彩色蠟印，可直接投入分類袋',
+  },
+  {
+    id: 'document-envelope', displayName: '文件信封',
+    // Wider flat footprint (spec: "平面尺寸較大"), but the SAME thin height
+    // as every other preset (spec: "厚度仍保持很薄") — comfortably clears
+    // both the stamp table (1.6x1.0m) and the enlarged mail bag's own
+    // interior footprint (0.54x0.51m, mail-layout-data.ts MAIL_BAG_INTERIOR)
+    // with wide margin on every side, so it can never jam on either (spec:
+    // "不得因尺寸較大而卡在工作桌或信封袋").
+    dimensions: { width: 0.34, height: ENVELOPE_SIZE.height, depth: 0.24 },
+    paperColor: 0xf5f5f0, borderColor: null, hasWaxSeal: false, spawnWeight: 1,
+    note: '平面尺寸較大、厚度仍很薄的信件，可完整通過信封袋袋口',
+  },
+];
+
+export function getMailEnvelopeVisualPreset(id: string): MailEnvelopeVisualPreset | undefined {
+  return MAIL_ENVELOPE_VISUAL_PRESETS.find((p) => p.id === id);
+}
+
+/** Weighted-random pick, entirely independent of destination/region/stamp
+ * (spec: "四種外型近似平均或加權隨機...彼此獨立") — mail-system.ts calls this
+ * separately from its own destination pick, never lets one influence the
+ * other. */
+export function pickWeightedMailEnvelopeVisualPreset(): MailEnvelopeVisualPreset {
+  const totalWeight = MAIL_ENVELOPE_VISUAL_PRESETS.reduce((sum, p) => sum + p.spawnWeight, 0);
+  let roll = Math.random() * totalWeight;
+  for (const p of MAIL_ENVELOPE_VISUAL_PRESETS) {
+    roll -= p.spawnWeight;
+    if (roll <= 0) return p;
+  }
+  return MAIL_ENVELOPE_VISUAL_PRESETS[MAIL_ENVELOPE_VISUAL_PRESETS.length - 1];
+}
+
 /** Draws an envelope's top-face texture — destination icon/name and a
  * dashed stamp-slot box in the corner, filled in with the attached stamp's
- * icon once stamped (spec三: "表面顯示：目的地圖樣/目的地文字/貼票區"). */
-function drawEnvelopeCanvas(dest: MailDestinationInfo, attachedStamp: MailDestination | null): HTMLCanvasElement {
+ * icon once stamped (spec三: "表面顯示：目的地圖樣/目的地文字/貼票區"), plus
+ * an optional inset border frame for kraft-envelope's own "較厚紙邊" detail
+ * (spec: "四種輪廓或細節能直接看出差異"). */
+function drawEnvelopeCanvas(dest: MailDestinationInfo, attachedStamp: MailDestination | null, borderColor: number | null): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = 256;
   canvas.height = 180;
@@ -56,6 +146,12 @@ function drawEnvelopeCanvas(dest: MailDestinationInfo, attachedStamp: MailDestin
   ctx.strokeStyle = '#666';
   ctx.lineWidth = 3;
   ctx.strokeRect(3, 3, 250, 174);
+
+  if (borderColor) {
+    ctx.strokeStyle = `#${borderColor.toString(16).padStart(6, '0')}`;
+    ctx.lineWidth = 10;
+    ctx.strokeRect(9, 9, 238, 162);
+  }
 
   ctx.textAlign = 'left';
   ctx.font = '40px sans-serif';
@@ -89,21 +185,60 @@ function drawEnvelopeCanvas(dest: MailDestinationInfo, attachedStamp: MailDestin
   return canvas;
 }
 
-/** Builds a fresh 6-material array for an envelope's BoxGeometry — only the
- * top face (+Y, index 2) carries the destination/stamp texture; the rest
- * stay a plain envelope-paper color, matching BoxGeometry's per-face
- * material-index convention ([+x,-x,+y,-y,+z,-z]). Called once at spawn and
- * again whenever a stamp is applied (regenerating the texture is cheap and
- * only ever happens on a deliberate state change, never per-frame). */
-export function buildEnvelopeMaterials(dest: MailDestinationInfo, attachedStamp: MailDestination | null): THREE.Material[] {
-  const paperMat = new THREE.MeshStandardMaterial({ color: 0xfffff0 });
-  const topCanvas = drawEnvelopeCanvas(dest, attachedStamp);
-  const topMat = new THREE.MeshStandardMaterial({ map: new THREE.CanvasTexture(topCanvas) });
-  return [paperMat, paperMat, topMat, paperMat, paperMat, paperMat];
+/** wax-seal-envelope's distinguishing back-face texture (spec: "背面有明顯
+ * 彩色蠟印") — a plain paper background (matching the preset's own
+ * paperColor) with a colored wax-seal blob stamped on it. */
+function drawWaxSealCanvas(paperColor: number): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 180;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.fillStyle = `#${paperColor.toString(16).padStart(6, '0')}`;
+  ctx.fillRect(0, 0, 256, 180);
+  ctx.strokeStyle = '#666';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(3, 3, 250, 174);
+
+  ctx.fillStyle = '#a5231e';
+  ctx.beginPath();
+  ctx.arc(128, 90, 34, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.font = '30px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('✦', 128, 92);
+
+  return canvas;
 }
 
-export function buildEnvelopeGeometry(): THREE.BoxGeometry {
-  return new THREE.BoxGeometry(ENVELOPE_SIZE.width, ENVELOPE_SIZE.height, ENVELOPE_SIZE.depth);
+/** Builds a fresh 6-material array for an envelope's BoxGeometry — only the
+ * top face (+Y, index 2) carries the destination/stamp texture; the base
+ * faces use the preset's own paper color, and wax-seal-envelope's back face
+ * (-Z, index 5) carries its own distinguishing wax-seal texture instead
+ * (spec: "四種輪廓或細節能直接看出差異"), matching BoxGeometry's per-face
+ * material-index convention ([+x,-x,+y,-y,+z,-z]). Called once at spawn and
+ * again whenever a stamp is applied (regenerating the texture is cheap and
+ * only ever happens on a deliberate state change, never per-frame) — the
+ * REBUILT materials always read the SAME preset the envelope was originally
+ * spawned with (spec: "貼郵票後，在原信封外型上顯示郵票"), never a different
+ * one. */
+export function buildEnvelopeMaterials(dest: MailDestinationInfo, attachedStamp: MailDestination | null, preset: MailEnvelopeVisualPreset): THREE.Material[] {
+  const paperMat = new THREE.MeshStandardMaterial({ color: preset.paperColor });
+  const topCanvas = drawEnvelopeCanvas(dest, attachedStamp, preset.borderColor);
+  const topMat = new THREE.MeshStandardMaterial({ map: new THREE.CanvasTexture(topCanvas) });
+  const backMat = preset.hasWaxSeal
+    ? new THREE.MeshStandardMaterial({ map: new THREE.CanvasTexture(drawWaxSealCanvas(preset.paperColor)) })
+    : paperMat;
+  return [paperMat, paperMat, topMat, paperMat, paperMat, backMat];
+}
+
+export function buildEnvelopeGeometry(dimensions: { width: number; height: number; depth: number }): THREE.BoxGeometry {
+  return new THREE.BoxGeometry(dimensions.width, dimensions.height, dimensions.depth);
 }
 
 /** Bag exterior texture — destination pattern icon + region label (spec八:

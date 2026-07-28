@@ -7,7 +7,10 @@ import { STAMP_TABLE, ENVELOPE_SIZE } from '../../data/world/mail-layout-data';
 import { UNLOAD_PORTS, UNLOAD_SPAWN_JITTER_X, UNLOAD_SPAWN_JITTER_Z, UNLOAD_BURST_CONFIG } from '../daily-flow';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
 import { MailDestination, EnvelopeRecord } from './mail-types';
-import { MAIL_DESTINATIONS, DAILY_ENVELOPE_COUNT, getMailDestination, buildEnvelopeGeometry, buildEnvelopeMaterials } from './mail-data';
+import {
+  MAIL_DESTINATIONS, DAILY_ENVELOPE_COUNT, getMailDestination, buildEnvelopeGeometry, buildEnvelopeMaterials,
+  MailEnvelopeVisualPreset, pickWeightedMailEnvelopeVisualPreset, getMailEnvelopeVisualPreset,
+} from './mail-data';
 
 const ENVELOPE_ID_PREFIX = 'envelope-';
 const STABLE_THRESHOLD = 0.3;
@@ -142,12 +145,20 @@ export class MailSystem {
     });
     const shuffled = shuffle(destPool);
     shuffled.forEach((dest) => {
-      const id = this.spawnEnvelope(dest);
+      // Picked separately from `dest` (spec: "四種外型近似平均或加權隨機...
+      // 彼此獨立") — never correlated with destination/region/stamp.
+      const preset = pickWeightedMailEnvelopeVisualPreset();
+      const id = this.spawnEnvelope(dest, preset);
       this.dailyEnvelopeIds.push(id);
     });
   }
 
-  private spawnEnvelope(dest: MailDestination): string {
+  /** "Add playable envelope visual presets" round: `preset` is picked by the
+   * caller via pickWeightedMailEnvelopeVisualPreset() — entirely independent
+   * of `dest` (spec: "目的地、國內／海外、requiredStamp 與外型彼此獨立"), so
+   * this method never lets one influence the other; it only ever consumes
+   * whichever preset it's handed. */
+  private spawnEnvelope(dest: MailDestination, preset: MailEnvelopeVisualPreset): string {
     const destInfo = getMailDestination(dest);
     const port = UNLOAD_PORTS[Math.floor(Math.random() * UNLOAD_PORTS.length)];
     const point = port.spawnPoints[Math.floor(Math.random() * port.spawnPoints.length)];
@@ -158,14 +169,14 @@ export class MailSystem {
     const z = point.z + jitterZ;
 
     const id = `${ENVELOPE_ID_PREFIX}${this.envelopeInstanceCounter++}`;
-    const geo = buildEnvelopeGeometry();
-    const mats = buildEnvelopeMaterials(destInfo, null);
+    const geo = buildEnvelopeGeometry(preset.dimensions);
+    const mats = buildEnvelopeMaterials(destInfo, null, preset);
     const mesh = new THREE.Mesh(geo, mats);
     mesh.position.set(x, y, z);
     this.scene.add(mesh);
 
-    const { width: w, height: h, depth: d } = ENVELOPE_SIZE;
-    const obj = createInteractableObject(id, `${destInfo.displayName}信`, mesh, w, h, d);
+    const { width: w, height: h, depth: d } = preset.dimensions;
+    const obj = createInteractableObject(id, `${destInfo.displayName}信（${preset.displayName}）`, mesh, w, h, d);
     const { body, collider } = this.physics.createBoxBody(x, y, z, w / 2, h / 2, d / 2, 12);
     obj.rigidBody = body;
     obj.collider = collider;
@@ -183,6 +194,7 @@ export class MailSystem {
     this.envelopes.set(id, {
       envelopeId: id, destination: dest, region: destInfo.region,
       requiredStamp: dest, attachedStamp: null, state: 'unstamped', bagId: null,
+      visualPresetId: preset.id,
     });
     return id;
   }
@@ -219,7 +231,10 @@ export class MailSystem {
     const obj = this.interactables.get(envelopeId);
     if (obj) {
       const oldMats = obj.mesh.material as THREE.Material[];
-      obj.mesh.material = buildEnvelopeMaterials(getMailDestination(rec.destination), stamp);
+      // Rebuilt on the SAME preset the envelope was originally spawned with
+      // (spec: "貼郵票後，在原信封外型上顯示郵票") — never a different one.
+      const preset = getMailEnvelopeVisualPreset(rec.visualPresetId)!;
+      obj.mesh.material = buildEnvelopeMaterials(getMailDestination(rec.destination), stamp, preset);
       for (const m of oldMats) m.dispose();
     }
     return true;
