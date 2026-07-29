@@ -293,27 +293,33 @@ export class MailBagSystem {
    * (spec六: 台北/台中/日本/美國) — a simple press-F-to-cycle rather than a
    * separate popup menu, reusing the existing E/F key surface with zero new
    * UI system. Region is auto-derived and re-locked alongside the pattern.
-   * No-op on a sealed bag (spec: "封袋後圖樣與地區鎖定"). "Allow unset mail
-   * boxes to accept first envelope" round四: ALSO a no-op once the box holds
-   * any envelope (that first envelope has already fixed the box's own
-   * destination — see attemptInsert's auto-set logic — so F must not be
-   * able to contradict it) — shows a toast explaining why rather than
-   * silently doing nothing. Once the box empties back out (its last
-   * envelope removed/taken out), this guard naturally passes again on its
-   * own; the pattern itself is deliberately left exactly as it was (spec:
-   * "保留目前圖樣即可，不必自動變回未設定"). */
+   * "Allow mail box pattern changes with contents" round: F now works
+   * regardless of how many envelopes the box already holds (sealing no
+   * longer exists, and the box's contents are never blocked/locked by its
+   * own pattern — see validEnvelopeIds' own doc comment for how already-
+   * boxed envelopes that stop matching are handled). */
   cyclePattern(bagId: string): void {
     const bag = this.bags.get(bagId);
     if (!bag) return;
-    if (bag.envelopeIds.length > 0) {
-      this.hud.showToast('箱內已有信件，無法更改圖樣');
-      return;
-    }
     const idx = bag.destinationPattern ? MAIL_DESTINATIONS.findIndex((d) => d.id === bag.destinationPattern) : -1;
     const next = MAIL_DESTINATIONS[(idx + 1) % MAIL_DESTINATIONS.length];
     bag.destinationPattern = next.id;
     bag.region = next.region;
     this.refreshBagVisual(bagId);
+  }
+
+  /** Envelope ids among `bag.envelopeIds` whose OWN destination still
+   * matches the bag's CURRENT destinationPattern ("Allow mail box pattern
+   * changes with contents" round — cycling the pattern via F no longer
+   * touches any envelope record at all, so validity is always computed
+   * fresh here rather than cached/stored anywhere; the moment the pattern
+   * cycles back to match a previously-mismatched envelope, it's valid again
+   * automatically, no re-insertion needed). Used by both the world label's
+   * own valid/total count below and MailSystem's departure-time scoring
+   * gate (via the lookup hook wired in create-game-systems.ts). */
+  private validEnvelopeIds(bag: MailBagRecord): string[] {
+    if (!bag.destinationPattern) return [];
+    return bag.envelopeIds.filter((id) => this.mailSystem.getEnvelope(id)?.destination === bag.destinationPattern);
   }
 
   private refreshBagVisual(bagId: string): void {
@@ -332,7 +338,8 @@ export class MailBagSystem {
     if (runtime) {
       const regionText = bag.region ? (bag.region === 'domestic' ? '國內' : '海外') : '';
       const patternText = pattern ? `${pattern.icon}${pattern.displayName}` : '未設定';
-      updateFloatingLabel(runtime.label, `${patternText} ${regionText}\n${bag.envelopeIds.length} 封信`);
+      const validCount = this.validEnvelopeIds(bag).length;
+      updateFloatingLabel(runtime.label, `${patternText} ${regionText}｜${validCount}/${bag.envelopeIds.length} 封有效`);
     }
   }
 

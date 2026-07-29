@@ -54,6 +54,20 @@ export class MailSystem {
   private envelopeInstanceCounter = 0;
   private envelopeSpawnTimer: number | null = null;
 
+  /** "Allow mail box pattern changes with contents" round: an optional
+   * lookup into a bag's own CURRENT destinationPattern, wired from
+   * create-game-systems.ts once MailBagSystem exists (mirrors
+   * PickupSystem.setMailBoxHooks' own after-construction wiring pattern, to
+   * avoid a constructor-time circular dependency). Used only by
+   * settleAtDeparture below, to additionally require a bagged envelope's
+   * OWN destination to still match its bag's live pattern before counting
+   * it as shipped — an envelope left behind after the bag's pattern was
+   * cycled away from it stays physically boxed but simply never counts
+   * (spec: "不相符的信件...不計入出貨分數"). Null-safe: if never wired
+   * (e.g. in isolated tests), settleAtDeparture falls back to its own prior
+   * bag-only region check, unchanged. */
+  private bagPatternLookup: ((bagId: string) => MailDestination | null) | null = null;
+
   private sensorBox!: THREE.Box3;
   private stableTimer = 0;
   /** The one envelope currently snapped onto the table, ready for the stamp
@@ -273,19 +287,33 @@ export class MailSystem {
     if (rec) rec.state = 'shipped';
   }
 
+  /** See the field's own doc comment above. */
+  setBagPatternLookup(fn: (bagId: string) => MailDestination | null): void {
+    this.bagPatternLookup = fn;
+  }
+
   /** Departure-time settlement (spec十一) — counts every one of today's
    * envelopes as shipped only if it's 'shipped' (set by
    * VehicleControlSystem via markEnvelopeShipped, only for envelopes whose
    * bag both matched its vehicle's region AND actually departed) or still
    * 'bagged' inside one of the bag ids the caller confirms departed
-   * correctly. Called once, at 載具出發 press time. */
+   * correctly. "Allow mail box pattern changes with contents" round: ALSO
+   * requires the envelope's own destination to still match its bag's
+   * current pattern (via bagPatternLookup) — a bagged envelope left behind
+   * by a since-cycled-away pattern is correctly excluded here without
+   * touching correctlyShippedBagIds itself (still purely a region-vs-
+   * vehicle set, untouched — see vehicle-control-system.ts). Called once,
+   * at 載具出發 press time. */
   settleAtDeparture(correctlyShippedBagIds: Set<string>): { total: number; shipped: number; unshipped: number } {
     let shipped = 0;
     for (const id of this.dailyEnvelopeIds) {
       const rec = this.envelopes.get(id);
       if (!rec) continue;
       if (rec.state === 'shipped') { shipped++; continue; }
-      if (rec.state === 'bagged' && rec.bagId && correctlyShippedBagIds.has(rec.bagId)) {
+      if (
+        rec.state === 'bagged' && rec.bagId && correctlyShippedBagIds.has(rec.bagId) &&
+        (!this.bagPatternLookup || this.bagPatternLookup(rec.bagId) === rec.destination)
+      ) {
         rec.state = 'shipped';
         shipped++;
       }

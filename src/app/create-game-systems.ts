@@ -225,6 +225,11 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     restoreAfterPlacement: (obj, boxVelocity) => mailBagSystem.restoreContentsAfterPlacement(obj, boxVelocity),
     restoreForThrow: (obj, linearVelocity, angularVelocity) => mailBagSystem.restoreContentsForThrow(obj, linearVelocity, angularVelocity),
   });
+  // "Allow mail box pattern changes with contents" round: lets
+  // settleAtDeparture exclude a bagged envelope whose own destination no
+  // longer matches its bag's live pattern, without MailSystem needing any
+  // direct MailBagSystem import/reference of its own.
+  mailSystem.setBagPatternLookup((bagId) => mailBagSystem.getBag(bagId)?.destinationPattern ?? null);
 
   // Daily unload -> sort -> ship-via-vehicle loop (this round's core).
   // DailyFlowSystem owns the day/state/count bookkeeping and the 結束今天
