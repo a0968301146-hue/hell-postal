@@ -19,7 +19,7 @@ import { LostFoundSystem } from '../lost-found';
 import { MailSystem } from '../mail/mail-system';
 import { MailBagSystem, MAIL_RACK_INTERACTABLE_ID } from '../mail/mail-bag-system';
 import { getMailDestination } from '../mail/mail-data';
-import { BULLETIN_BOARD_INTERACTABLE_ID } from '../world-layout';
+import { BULLETIN_BOARD_INTERACTABLE_ID, TELEVISION_INTERACTABLE_ID } from '../world-layout';
 
 export class InteractionSystem {
   private raycaster: THREE.Raycaster;
@@ -50,6 +50,10 @@ export class InteractionSystem {
    * upgrade system" round spec二/三) — called ONLY from the empty-handed
    * priority chain below, gated on PickupSystem's actual heldCount === 0. */
   private onOpenUpgradeMenu: () => void;
+  /** Opens the television's full-screen media player UI ("Add television
+   * media playlist" round spec二) — same empty-handed-only priority pattern
+   * as onOpenUpgradeMenu just above. */
+  private onOpenMediaPlayer: () => void;
   private onDollyUsed?: () => void;
 
   constructor(
@@ -76,6 +80,7 @@ export class InteractionSystem {
     mailBagSystem: MailBagSystem,
     onStartMailStampUi: () => void,
     onOpenUpgradeMenu: () => void,
+    onOpenMediaPlayer: () => void,
     onDollyUsed?: () => void
   ) {
     this.raycaster = new THREE.Raycaster();
@@ -102,6 +107,7 @@ export class InteractionSystem {
     this.mailBagSystem = mailBagSystem;
     this.onStartMailStampUi = onStartMailStampUi;
     this.onOpenUpgradeMenu = onOpenUpgradeMenu;
+    this.onOpenMediaPlayer = onOpenMediaPlayer;
     this.onDollyUsed = onDollyUsed;
 
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
@@ -200,6 +206,11 @@ export class InteractionSystem {
       // fallback at the bottom of this branch. currentTarget is only ever
       // set to the board here by update()'s own holding-item raycast below.
       if (this.currentTarget && this.currentTarget.id === BULLETIN_BOARD_INTERACTABLE_ID) {
+        return;
+      }
+      // Television, same reasoning ("Add television media playlist" round
+      // spec二: "需空手才能操作電視" — E does nothing while holding anything).
+      if (this.currentTarget && this.currentTarget.id === TELEVISION_INTERACTABLE_ID) {
         return;
       }
       // Multi-carry: aiming at a NEW plain pickupable item with spare
@@ -325,6 +336,21 @@ export class InteractionSystem {
     if (this.currentTarget && this.currentTarget.id === BULLETIN_BOARD_INTERACTABLE_ID) {
       if (this.pickupSystem.heldCount === 0) {
         this.onOpenUpgradeMenu();
+      }
+      this.clearHighlight(this.currentTarget);
+      this.currentTarget = null;
+      return;
+    }
+
+    // Priority -0.9: television media player ("Add television media
+    // playlist" round spec二) — same empty-handed-only pattern as the
+    // bulletin board's own upgrade UI just above, checked before the
+    // generic pickup priorities below since the TV's own canPickUp is only
+    // true to satisfy the raycast's own filter, never meant to actually be
+    // picked up (mirrors the bulletin board/mail rack's own pattern).
+    if (this.currentTarget && this.currentTarget.id === TELEVISION_INTERACTABLE_ID) {
+      if (this.pickupSystem.heldCount === 0) {
+        this.onOpenMediaPlayer();
       }
       this.clearHighlight(this.currentTarget);
       this.currentTarget = null;
@@ -507,6 +533,21 @@ export class InteractionSystem {
         return;
       }
 
+      // Television while holding anything ("Add television media playlist"
+      // round spec二: "需空手才能操作電視"), same pattern as the bulletin
+      // board just above.
+      if (hit && hit.id === TELEVISION_INTERACTABLE_ID) {
+        if (this.currentTarget !== hit) {
+          if (this.currentTarget) this.clearHighlight(this.currentTarget);
+          this.applyHighlight(hit);
+          this.currentTarget = hit;
+          this.playerData.targetedObjectId = hit.id;
+        }
+        this.hud.showInteractionPrompt('二手電視', '需空手才能操作電視');
+        this.hud.setCrosshairActive(false);
+        return;
+      }
+
       // Holding a stamped/unstamped envelope and aiming at an OPEN mail bag
       // (spec二/三: "E 放入信件"). "Allow unset mail boxes to accept first
       // envelope" round五: an UNSET, still-empty box gets its own two more
@@ -641,6 +682,11 @@ export class InteractionSystem {
           // state !== 'holding-item' has already been routed elsewhere
           // above) — spec二's own "E 查看升級" prompt.
           this.hud.showInteractionPrompt('物流中心公告欄', 'E 查看升級');
+        } else if (newTarget.id === TELEVISION_INTERACTABLE_ID) {
+          // Empty-handed here, same reasoning as the bulletin board just
+          // above ("Add television media playlist" round spec二: "E 開啟媒
+          // 體播放器").
+          this.hud.showInteractionPrompt('二手電視', 'E 開啟媒體播放器');
         } else if (newTarget.id === MAIL_RACK_INTERACTABLE_ID) {
           // World prompt only while the crosshair directly hits the rack
           // (spec三: "只在準心命中供應架時顯示...準心移開後立即隱藏") — this

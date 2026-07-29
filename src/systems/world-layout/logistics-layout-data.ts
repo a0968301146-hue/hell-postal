@@ -233,6 +233,59 @@ export const BULLETIN_BOARD = {
   thickness: BULLETIN_BOARD_THICKNESS,
 };
 
+/** West-wall TV + small table ("Add television media playlist" round 一) —
+ * positioned south of the bulletin board's own south edge, computed from
+ * BULLETIN_BOARD directly rather than a hardcoded coordinate (same "derive
+ * from the previous structure" convention BULLETIN_BOARD itself already
+ * uses relative to WEST_WALL_SHELVES above), with real clearance
+ * (TV_TABLE_BULLETIN_CLEARANCE, spec一: "與公告欄保留至少0.5m") beyond that
+ * edge. At these numbers this lands around world Z ≈ 28.3, comfortably
+ * inside BACK_AREA (maxZ 32) with no other west-wall structure anywhere
+ * south of the bulletin board to collide with (verified: only
+ * WEST_WALL_SHELVES and BULLETIN_BOARD itself touch this wall stretch).
+ * Same axis convention as the board: `depth` is the wall→room dimension
+ * (world X), `width` runs along the wall (world Z) — the TV's screen sits
+ * on its own local +X face, which (with zero rotation, same as the board)
+ * already faces east into the room, exactly as spec requires, with no
+ * rotation needed. The table sits flush against the wall (TV_TABLE_
+ * WALL_STANDOFF mirrors BULLETIN_BOARD_WALL_STANDOFF); the TV sits centered
+ * on the tabletop, both horizontally and along the wall axis. */
+const TV_TABLE_WIDTH = 1.2; // along the wall, world Z (spec一建議尺寸)
+const TV_TABLE_DEPTH = 0.65; // wall -> room, world X
+const TV_TABLE_HEIGHT = 0.75;
+const TV_TABLE_WALL_STANDOFF = 0.02;
+const TV_TABLE_BULLETIN_CLEARANCE = 0.5; // spec一: "與公告欄保留至少0.5m"
+/** Open floor space the player needs standing in front of the TV/table to
+ * interact with it (spec一: "前方保留至少1.2m玩家通道") — mirrors
+ * BULLETIN_BOARD_STANDING_CLEARANCE's own role; nothing else is placed in
+ * the open room space east of the table, so this holds structurally without
+ * needing a second derived position here. */
+export const TV_TABLE_STANDING_CLEARANCE = 1.2;
+
+const TV_WIDTH = 0.9; // along the wall, world Z (spec一建議尺寸)
+const TV_HEIGHT = 0.6;
+const TV_DEPTH = 0.18; // wall -> room, world X — screen faces +X (east)
+
+const bulletinBoardSouthEdgeZ = BULLETIN_BOARD.centerZ + BULLETIN_BOARD.width / 2;
+
+export const TV_TABLE = {
+  centerX: westWallInnerFaceX + TV_TABLE_WALL_STANDOFF + TV_TABLE_DEPTH / 2,
+  centerY: BACK_AREA.floorY + TV_TABLE_HEIGHT / 2,
+  centerZ: bulletinBoardSouthEdgeZ + TV_TABLE_BULLETIN_CLEARANCE + TV_TABLE_WIDTH / 2,
+  width: TV_TABLE_WIDTH,
+  depth: TV_TABLE_DEPTH,
+  height: TV_TABLE_HEIGHT,
+};
+
+export const TELEVISION = {
+  centerX: TV_TABLE.centerX,
+  centerY: TV_TABLE.centerY + TV_TABLE.height / 2 + TV_HEIGHT / 2,
+  centerZ: TV_TABLE.centerZ,
+  width: TV_WIDTH,
+  height: TV_HEIGHT,
+  depth: TV_DEPTH,
+};
+
 /** Reserved (white-box only, no function yet) cargo-type zones — space is
  * claimed now so future systems have somewhere to go; purely floor decals +
  * floating labels (world-layout-system.ts buildCargoZones), no physics

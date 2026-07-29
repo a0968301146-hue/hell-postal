@@ -22,6 +22,8 @@ import { LostFoundSystem, LostFoundUI } from '../systems/lost-found';
 import { MailSystem } from '../systems/mail/mail-system';
 import { MailBagSystem } from '../systems/mail/mail-bag-system';
 import { UpgradeSystem, UpgradeMenuUI, SimilarCargoHighlight } from '../systems/upgrade';
+import { MediaPlayerSystem } from '../systems/media-player/media-player-system';
+import { MediaPlayerUI } from '../systems/media-player/media-player-ui';
 
 /** Every gameplay system GameApp constructs once at startup and keeps for
  * the rest of the session (Phase 6: "系統建立、建構子注入、註冊" moved out of
@@ -62,6 +64,8 @@ export interface GameSystems {
   /** "Add bulletin board upgrade system" round. */
   upgradeSystem: UpgradeSystem;
   similarCargoHighlight: SimilarCargoHighlight;
+  /** "Add television media playlist" round. */
+  mediaPlayerSystem: MediaPlayerSystem;
 }
 
 /** Back-references into GameApp's own small orchestration methods — the
@@ -157,6 +161,15 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   const upgradeSystem = new UpgradeSystem(pickupSystem, playerController);
   const upgradeMenuUI = new UpgradeMenuUI(pauseManager, hud, playerController, upgradeSystem);
   const similarCargoHighlight = new SimilarCargoHighlight(scene);
+
+  // West-wall television media player ("Add television media playlist"
+  // round) — same "system owns state, UI owns DOM" split as the upgrade
+  // menu just above, and the same PauseManager/pointer-lock convention.
+  // Uses the label/screen-material handles WorldLayoutSystem already built
+  // (sceneData.television) — this file never touches Three.js geometry
+  // itself for it.
+  const mediaPlayerSystem = new MediaPlayerSystem(sceneData.television.label, sceneData.television.screenMaterial);
+  const mediaPlayerUI = new MediaPlayerUI(pauseManager, playerController, mediaPlayerSystem);
 
   // Register the envelope stamp table top as a placement surface — only
   // exists when the legacy mail flow is enabled (tableTopMesh stays
@@ -362,6 +375,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     mailBagSystem,
     hooks.onStartMailStampUi,
     () => upgradeMenuUI.open(),
+    () => mediaPlayerUI.open(),
     () => settingsManager.fireTutorialEvent('dollyUsed')
   );
 
@@ -376,6 +390,6 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     scoringSystem, counterNpcSystem, counterServiceSystem, compassUI, dailyFlowSystem,
     unloadingSystem, palletSystem, cargoInspectionSystem, cargoInspectionUI,
     lostFoundSystem, lostFoundUI, mailSystem, mailBagSystem,
-    upgradeSystem, similarCargoHighlight,
+    upgradeSystem, similarCargoHighlight, mediaPlayerSystem,
   };
 }

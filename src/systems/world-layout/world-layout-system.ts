@@ -12,7 +12,7 @@ import { PhysicsWorldPort } from '../../shared/types/physics-world-port';
 import {
   WALL_THICKNESS, BACK_AREA, CARGO_ZONES, LAND_DOCKS, LAND_GATE, PIER, SEA_GATE, SEA_DOCKS, NORTH_GATES,
   WEST_WALL_SHELVES, SHELF_LEVEL_Y_OFFSETS, SHELF_BOARD_THICKNESS, SHELF_POST_THICKNESS, SHELF_FRAME_TOP_MARGIN,
-  BULLETIN_BOARD,
+  BULLETIN_BOARD, TV_TABLE, TELEVISION,
 } from './logistics-layout-data';
 import { createInteractableObject } from '../../shared/types/interactable';
 // Reads the room/gate coordinates from the neutral data layer (Phase 6:
@@ -57,6 +57,15 @@ export interface SceneData {
    * never touches PickupSystem itself (it doesn't exist yet at this point
    * in app startup). */
   shelfSurfaces: THREE.Mesh[];
+  /** Television's own floating world label + screen material handles ("Add
+   * television media playlist" round) — returned so MediaPlayerSystem
+   * (built later in create-game-systems.ts, well after PauseManager exists)
+   * can update the label text (playback status, spec八) and toggle the
+   * screen's own emissive glow while playing, without this file needing any
+   * knowledge of playback state itself (spec: "不需要把網路影片製作成
+   * Three.js VideoTexture" — this is a plain material property tweak, not a
+   * video texture). */
+  television: { label: THREE.Sprite; screenMaterial: THREE.MeshStandardMaterial };
 }
 
 /** The bulletin board's own raycast-target id ("Add bulletin board upgrade
@@ -69,6 +78,15 @@ export interface SceneData {
  * handed to PickupSystem.pickUp(); InteractionSystem intercepts E specially
  * before the generic pickup/multi-carry path runs. */
 export const BULLETIN_BOARD_INTERACTABLE_ID = 'bulletin-board';
+
+/** The west-wall television's own raycast-target id ("Add television media
+ * playlist" round spec二) — registered into the SAME shared `interactables`
+ * map, resolved by InteractionSystem's existing single crosshair raycast,
+ * exactly mirroring BULLETIN_BOARD_INTERACTABLE_ID above. The small table it
+ * sits on is NOT registered here (spec二: "互動Collider只包住電視本體") — it
+ * only gets a player-blocking physics collider, never an interactable
+ * entry, so the TV alone is ever a valid crosshair target. */
+export const TELEVISION_INTERACTABLE_ID = 'television';
 
 function stdMat(color: number, opts: Partial<THREE.MeshStandardMaterialParameters> = {}): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color, ...opts });
@@ -102,7 +120,8 @@ export function createLogisticsScene(scene: THREE.Scene, physics: PhysicsWorldPo
 
   const interactables = new Map<string, InteractableObject>();
   buildBulletinBoard(scene, physics, interactables);
-  return { interactables, floor, pierFloor, lostFoundFloor, shelfSurfaces };
+  const television = buildTelevisionAndTable(scene, physics, interactables);
+  return { interactables, floor, pierFloor, lostFoundFloor, shelfSurfaces, television };
 }
 
 /** Wall-mounted bulletin board ("Add bulletin board upgrade system" round
@@ -184,6 +203,87 @@ function buildBulletinBoard(scene: THREE.Scene, physics: PhysicsWorldPort, inter
 
   const obj = createInteractableObject(BULLETIN_BOARD_INTERACTABLE_ID, '物流中心公告欄', frameMesh, thickness, height, width);
   interactables.set(BULLETIN_BOARD_INTERACTABLE_ID, obj);
+}
+
+/** West-wall TV + small table ("Add television media playlist" round 一) —
+ * a low-poly retro TV resting on a small table, both south of the bulletin
+ * board (see TV_TABLE/TELEVISION's own doc comment in
+ * logistics-layout-data.ts for the exact placement derivation). The table
+ * gets its own player-blocking static collider but is NEVER an interactable
+ * (spec二: "互動Collider只包住電視本體，不可使用大型距離感應範圍") — only
+ * the TV itself is registered into `interactables`, as a SINGLE box mesh
+ * with a 6-entry material array so the front (+X, room-facing) face can be
+ * a distinct "screen" material without a second child mesh — this avoids
+ * any raycast-target ambiguity between a body mesh and a separate screen
+ * child (every other prop in this file registers exactly one mesh per
+ * interactable; this keeps the TV consistent with that). The returned
+ * `screenMaterial` is later toggled by MediaPlayerSystem (brighter emissive
+ * while playing, spec八) and `label` shows the current playback status —
+ * this file has zero playback-state knowledge of its own, it just hands
+ * back the handles. */
+function buildTelevisionAndTable(
+  scene: THREE.Scene, physics: PhysicsWorldPort, interactables: Map<string, InteractableObject>
+): { label: THREE.Sprite; screenMaterial: THREE.MeshStandardMaterial } {
+  const { centerX: tableX, centerY: tableY, centerZ: tableZ, width: tableWidth, depth: tableDepth, height: tableHeight } = TV_TABLE;
+
+  const tableGroup = new THREE.Group();
+  tableGroup.position.set(tableX, tableY, tableZ);
+  scene.add(tableGroup);
+
+  const woodMat = stdMat(0x7a5a34);
+  const topThickness = 0.05;
+  const topGeo = new THREE.BoxGeometry(tableDepth, topThickness, tableWidth);
+  const topMesh = new THREE.Mesh(topGeo, woodMat);
+  topMesh.position.set(0, tableHeight / 2 - topThickness / 2, 0);
+  tableGroup.add(topMesh);
+
+  const legThickness = 0.06;
+  const legHeight = tableHeight - topThickness;
+  const legGeo = new THREE.BoxGeometry(legThickness, legHeight, legThickness);
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const leg = new THREE.Mesh(legGeo, woodMat);
+      leg.position.set(sx * (tableDepth / 2 - legThickness / 2), -topThickness / 2, sz * (tableWidth / 2 - legThickness / 2));
+      tableGroup.add(leg);
+    }
+  }
+
+  tableGroup.updateMatrixWorld(true);
+
+  // Player-blocking collider only — matches the table's own full volume,
+  // never registered as an interactable target.
+  physics.createStaticCuboid(tableX, tableY, tableZ, tableDepth / 2, tableHeight / 2, tableWidth / 2);
+
+  // --- Television ---
+  const { centerX: tvX, centerY: tvY, centerZ: tvZ, width: tvWidth, height: tvHeight, depth: tvDepth } = TELEVISION;
+
+  const bodyMat = stdMat(0x554d42, { roughness: 0.85 });
+  // Off/idle screen — MediaPlayerSystem brightens this (emissiveIntensity)
+  // while something is actually playing (spec八), never a VideoTexture.
+  const screenMaterial = new THREE.MeshStandardMaterial({ color: 0x0c0e10, emissive: 0x3a6a8a, emissiveIntensity: 0, roughness: 0.35 });
+
+  // BoxGeometry's default per-face material groups are ordered
+  // [+X, -X, +Y, -Y, +Z, -Z] when given a 6-entry material array — index 0
+  // is the local +X face, which (zero rotation, same convention as
+  // BULLETIN_BOARD above) already faces east into the room, exactly where
+  // the screen needs to be (spec一: "電視螢幕面向東方倉庫內側").
+  const bodyGeo = new THREE.BoxGeometry(tvDepth, tvHeight, tvWidth);
+  const tvMesh = new THREE.Mesh(bodyGeo, [screenMaterial, bodyMat, bodyMat, bodyMat, bodyMat, bodyMat]);
+  tvMesh.position.set(tvX, tvY, tvZ);
+  scene.add(tvMesh);
+
+  const label = createFloatingLabel('媒體播放器\n尚未播放', { width: 0.9, bg: 'rgba(20,20,20,0.75)' });
+  label.position.set(tvX + tvDepth / 2 + 0.3, tvY + tvHeight / 2 + 0.35, tvZ);
+  scene.add(label);
+
+  // Interaction collider wraps ONLY the TV's own body (spec二) — no
+  // enlarged detection volume, matches tvMesh exactly.
+  physics.createStaticCuboid(tvX, tvY, tvZ, tvDepth / 2, tvHeight / 2, tvWidth / 2);
+
+  const obj = createInteractableObject(TELEVISION_INTERACTABLE_ID, '二手電視', tvMesh, tvDepth, tvHeight, tvWidth);
+  interactables.set(TELEVISION_INTERACTABLE_ID, obj);
+
+  return { label, screenMaterial };
 }
 
 function buildBackArea(scene: THREE.Scene, physics: PhysicsWorldPort): THREE.Mesh {
