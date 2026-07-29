@@ -119,9 +119,43 @@ const MAIL_BAG_EXTERIOR = {
   depth: CARGO_BOX_PRESETS.mediumBox.dimensions.depth * MAIL_BAG_SCALE,
   height: CARGO_BOX_PRESETS.mediumBox.dimensions.height * MAIL_BAG_SCALE,
 };
-export const MAIL_BAG_WALL_THICKNESS = 0.03 * MAIL_BAG_SCALE;
-export const MAIL_BAG_INTERIOR = {
-  width: MAIL_BAG_EXTERIOR.width - 2 * MAIL_BAG_WALL_THICKNESS,
-  depth: MAIL_BAG_EXTERIOR.depth - 2 * MAIL_BAG_WALL_THICKNESS,
-  height: MAIL_BAG_EXTERIOR.height - MAIL_BAG_WALL_THICKNESS,
+
+/** Single source of truth for every mail box measurement ("Align mail box
+ * colliders with visible mesh" round二: "建立單一MailBoxDimensions設定...
+ * 不可再各自寫死不同數值") — the Mesh (mail-data.ts buildBoxGeometry), all
+ * 5 Colliders, the box-mouth footprint, interiorBounds, the E-key drop
+ * point, Q-throw acceptance, and a boxed envelope's own stacking position
+ * (all in mail-bag-system.ts) now read exclusively from this one object
+ * instead of separately reconstructing width/height/depth from
+ * MAIL_BAG_EXTERIOR/wall-thickness math in more than one place. Exterior
+ * footprint is UNCHANGED from before this round (spec: "不要修改信封箱外觀
+ * 設計") — still MAIL_BAG_EXTERIOR's own numbers, still scaled off the same
+ * medium-cargo preset. `wallThickness` (side walls) and `bottomThickness`
+ * (bottom board) are kept as two independently-named fields per spec's own
+ * requested shape, but deliberately share the SAME numeric value here (the
+ * box's real wall/bottom boards were always built at one uniform thickness
+ * — this is a naming/shape change only, not a visual one). */
+export interface MailBoxDimensions {
+  outerWidth: number;
+  outerDepth: number;
+  outerHeight: number;
+  wallThickness: number;
+  bottomThickness: number;
+  innerWidth: number;
+  innerDepth: number;
+  innerHeight: number;
+}
+
+const MAIL_BOX_WALL_THICKNESS = 0.03 * MAIL_BAG_SCALE;
+const MAIL_BOX_BOTTOM_THICKNESS = MAIL_BOX_WALL_THICKNESS;
+
+export const MAIL_BOX_DIMENSIONS: MailBoxDimensions = {
+  outerWidth: MAIL_BAG_EXTERIOR.width,
+  outerDepth: MAIL_BAG_EXTERIOR.depth,
+  outerHeight: MAIL_BAG_EXTERIOR.height,
+  wallThickness: MAIL_BOX_WALL_THICKNESS,
+  bottomThickness: MAIL_BOX_BOTTOM_THICKNESS,
+  innerWidth: MAIL_BAG_EXTERIOR.width - MAIL_BOX_WALL_THICKNESS * 2,
+  innerDepth: MAIL_BAG_EXTERIOR.depth - MAIL_BOX_WALL_THICKNESS * 2,
+  innerHeight: MAIL_BAG_EXTERIOR.height - MAIL_BOX_BOTTOM_THICKNESS,
 };

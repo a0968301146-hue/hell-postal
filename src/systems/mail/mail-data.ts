@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MailDestination, MailRegion } from './mail-types';
-import { ENVELOPE_SIZE } from '../../data/world/mail-layout-data';
+import { ENVELOPE_SIZE, MailBoxDimensions } from '../../data/world/mail-layout-data';
 
 export interface MailDestinationInfo {
   id: MailDestination;
@@ -103,9 +103,11 @@ export const MAIL_ENVELOPE_VISUAL_PRESETS: MailEnvelopeVisualPreset[] = [
     // Wider flat footprint (spec: "平面尺寸較大"), but the SAME thin height
     // as every other preset (spec: "厚度仍保持很薄") — comfortably clears
     // both the stamp table (1.6x1.0m) and the enlarged mail box's own
-    // interior footprint (0.54x0.51m, mail-layout-data.ts MAIL_BAG_INTERIOR)
-    // with wide margin on every side, so it can never jam on either (spec:
-    // "不得因尺寸較大而卡在工作桌或信封箱").
+    // interior footprint (0.54x0.51m, mail-layout-data.ts MAIL_BOX_DIMENSIONS
+    // .innerWidth/.innerDepth) with wide margin on every side (>20%, per
+    // "Align mail box colliders with visible mesh" round四's own safety-
+    // margin requirement), so it can never jam on either (spec: "不得因尺寸
+    // 較大而卡在工作桌或信封箱").
     dimensions: { width: 0.34, height: ENVELOPE_SIZE.height, depth: 0.24 },
     paperColor: 0xf5f5f0, borderColor: null, hasWaxSeal: false, spawnWeight: 1,
     note: '平面尺寸較大、厚度仍很薄的信件，可完整通過信封箱箱口',
@@ -307,41 +309,38 @@ export function buildBagMaterials(pattern: MailDestinationInfo | null): THREE.Ma
  * groups (mergeGeometries's own useGroups=true assigns one group per INPUT
  * geometry in order — grouped here as [frontGeo, restGeo] so index 0 is
  * exactly the front wall, index 1 everything else, matching
- * buildBagMaterials' own [front, plain] pair). Every piece's local position
- * is computed with the EXACT same formulas mail-bag-system.ts's own
- * Rigidbody/Collider placement already uses (wallLocalY / bottomLocalY /
- * interior-plus-wallThickness offsets), so the visible mesh and the real
- * collision shape always line up pixel-for-pixel — no separate
- * "interiorBounds" needs to change here at all, since MAIL_BAG_INTERIOR's
- * own numbers (mail-layout-data.ts) are untouched by this round. The whole
- * visual stays exactly one THREE.Mesh (matching InteractableObject.mesh's
- * own single-Mesh contract). No top piece is ever created — the mouth stays
- * genuinely open, and nothing here can ever become "a filled-in solid
- * collider" since this function only ever produces a cosmetic mesh; the
- * REAL 5-collider compound body is built separately in mail-bag-system.ts
- * from these same interior/wallThickness numbers. */
-export function buildBoxGeometry(interiorWidth: number, interiorDepth: number, interiorHeight: number, wallThickness: number): THREE.BufferGeometry {
-  const wt = wallThickness;
-  const totalWidth = interiorWidth + 2 * wt;
-  const totalDepth = interiorDepth + 2 * wt;
-  const totalHeight = interiorHeight + wt; // bottom wall only — top stays open
-  const wallLocalY = -totalHeight / 2 + wt + interiorHeight / 2;
-  const bottomLocalY = -totalHeight / 2 + wt / 2;
+ * buildBagMaterials' own [front, plain] pair).
+ *
+ * "Align mail box colliders with visible mesh" round二: takes the SAME
+ * `MailBoxDimensions` object mail-bag-system.ts builds its 5 real Colliders
+ * from (position/rotation/width/height/depth for every piece computed with
+ * the EXACT identical formulas on both sides) — no separate width/height/
+ * depth parameters to accidentally drift apart from what the physics body
+ * actually uses. The whole visual stays exactly one THREE.Mesh (matching
+ * InteractableObject.mesh's own single-Mesh contract). No top piece is ever
+ * created — the mouth stays genuinely open, and nothing here can ever
+ * become "a filled-in solid collider" since this function only ever
+ * produces a cosmetic mesh; the REAL 5-collider compound body is built
+ * separately in mail-bag-system.ts from this same dims object. */
+export function buildBoxGeometry(dims: MailBoxDimensions): THREE.BufferGeometry {
+  const { outerWidth, outerDepth, outerHeight, innerWidth, innerDepth, innerHeight, wallThickness: wt, bottomThickness: bt } = dims;
+  const wallLocalY = -outerHeight / 2 + bt + innerHeight / 2;
+  const bottomLocalY = -outerHeight / 2 + bt / 2;
 
-  const bottomGeo = new THREE.BoxGeometry(totalWidth, wt, totalDepth);
+  const bottomGeo = new THREE.BoxGeometry(outerWidth, bt, outerDepth);
   bottomGeo.translate(0, bottomLocalY, 0);
 
-  const leftGeo = new THREE.BoxGeometry(wt, interiorHeight, totalDepth);
-  leftGeo.translate(-(interiorWidth / 2 + wt / 2), wallLocalY, 0);
+  const leftGeo = new THREE.BoxGeometry(wt, innerHeight, outerDepth);
+  leftGeo.translate(-(innerWidth / 2 + wt / 2), wallLocalY, 0);
 
-  const rightGeo = new THREE.BoxGeometry(wt, interiorHeight, totalDepth);
-  rightGeo.translate(interiorWidth / 2 + wt / 2, wallLocalY, 0);
+  const rightGeo = new THREE.BoxGeometry(wt, innerHeight, outerDepth);
+  rightGeo.translate(innerWidth / 2 + wt / 2, wallLocalY, 0);
 
-  const backGeo = new THREE.BoxGeometry(totalWidth, interiorHeight, wt);
-  backGeo.translate(0, wallLocalY, -(interiorDepth / 2 + wt / 2));
+  const backGeo = new THREE.BoxGeometry(outerWidth, innerHeight, wt);
+  backGeo.translate(0, wallLocalY, -(innerDepth / 2 + wt / 2));
 
-  const frontGeo = new THREE.BoxGeometry(totalWidth, interiorHeight, wt);
-  frontGeo.translate(0, wallLocalY, interiorDepth / 2 + wt / 2);
+  const frontGeo = new THREE.BoxGeometry(outerWidth, innerHeight, wt);
+  frontGeo.translate(0, wallLocalY, innerDepth / 2 + wt / 2);
 
   const restGeo = mergeGeometries([bottomGeo, leftGeo, rightGeo, backGeo], false);
   bottomGeo.dispose();
@@ -365,10 +364,10 @@ export function buildBoxGeometry(interiorWidth: number, interiorDepth: number, i
  * once at spawn and flips `.visible`, same pattern the old cinch ring
  * used). No Collider — purely decorative, and the box's own investment
  * judgment (interiorBounds) is entirely independent of this visual. */
-export function buildBoxSealVisual(interiorWidth: number, interiorDepth: number, y: number): THREE.Group {
+export function buildBoxSealVisual(dims: MailBoxDimensions, y: number): THREE.Group {
   const group = new THREE.Group();
-  const diag = Math.hypot(interiorWidth, interiorDepth);
-  const angle = Math.atan2(interiorDepth, interiorWidth);
+  const diag = Math.hypot(dims.innerWidth, dims.innerDepth);
+  const angle = Math.atan2(dims.innerDepth, dims.innerWidth);
   const strapGeo = new THREE.BoxGeometry(diag * 0.92, 0.02, 0.05);
 
   const strap1 = new THREE.Mesh(strapGeo, new THREE.MeshStandardMaterial({ color: 0x3a2a1a }));

@@ -4,7 +4,7 @@ import { InteractableObject, createInteractableObject } from '../../shared/types
 import { PickupPort } from '../../shared/types/pickup-port';
 import { HUD } from '../hud';
 import { BACK_AREA } from '../world-layout';
-import { BAG_RACK, MAIL_BAG_INTERIOR, MAIL_BAG_WALL_THICKNESS, ENVELOPE_SIZE } from '../../data/world/mail-layout-data';
+import { BAG_RACK, MAIL_BOX_DIMENSIONS, ENVELOPE_SIZE } from '../../data/world/mail-layout-data';
 import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/world-label-system';
 import { MailBagRecord, EnvelopeRecord } from './mail-types';
 import { MAIL_DESTINATIONS, MAX_OPEN_BAGS, MAIL_BAG_CAPACITY, getMailDestination, buildBagMaterials, buildBoxGeometry, buildBoxSealVisual } from './mail-data';
@@ -33,24 +33,22 @@ function disposeMaterial(mat: THREE.Material | THREE.Material[]): void {
  * 為boxed"). */
 const INSERT_STABILITY_SECONDS = 0.4;
 
-/** Overall bag footprint — interior cavity (mail-layout-data.ts) plus wall
- * thickness on X/Z (both sides) and Y (bottom only — the top stays open,
- * spec二: "袋口上方不得有Mesh或Collider封住"). Computed once, shared by every
- * bag instance's mesh/collider/interior-bounds math below. */
-const TOTAL_WIDTH = MAIL_BAG_INTERIOR.width + 2 * MAIL_BAG_WALL_THICKNESS;
-const TOTAL_DEPTH = MAIL_BAG_INTERIOR.depth + 2 * MAIL_BAG_WALL_THICKNESS;
-const TOTAL_HEIGHT = MAIL_BAG_INTERIOR.height + MAIL_BAG_WALL_THICKNESS;
+/** How high above the box's own rim the E-key drop point sits ("Align mail
+ * box colliders with visible mesh" round四: "高於箱壁頂端約0.08～0.15m"). */
+const E_INSERT_DROP_CLEARANCE = 0.1;
 
-/** Local-space (bag-mesh-relative) interior cavity bounds — every bag shares
- * this same shape, so it's computed once rather than per-instance. Used by
- * attemptInsert's "did the envelope's center genuinely enter the interior"
- * judgment (spec三). Assumes the bag mesh stays close to axis-aligned (this
- * game's general fidelity level — matches every other static-bounds check
- * in this codebase, e.g. lost-found-cabinet-system.ts's own slotBounds). */
+/** Local-space (box-mesh-relative) interior cavity bounds — every box shares
+ * this same shape, so it's computed once rather than per-instance, and reads
+ * exclusively from the single MAIL_BOX_DIMENSIONS config (spec二: "不可再各
+ * 自寫死不同數值"). Used by updateInsertion's own acceptance judgment (spec
+ * 五: 中心點進入interiorBounds／底面低於箱壁頂端／未穿過箱底). Assumes the
+ * box mesh stays close to axis-aligned (this game's general fidelity level
+ * — matches every other static-bounds check in this codebase, e.g.
+ * lost-found-cabinet-system.ts's own slotBounds). */
 const LOCAL_INTERIOR_BOUNDS = {
-  minX: -MAIL_BAG_INTERIOR.width / 2, maxX: MAIL_BAG_INTERIOR.width / 2,
-  minY: -TOTAL_HEIGHT / 2 + MAIL_BAG_WALL_THICKNESS, maxY: TOTAL_HEIGHT / 2,
-  minZ: -MAIL_BAG_INTERIOR.depth / 2, maxZ: MAIL_BAG_INTERIOR.depth / 2,
+  minX: -MAIL_BOX_DIMENSIONS.innerWidth / 2, maxX: MAIL_BOX_DIMENSIONS.innerWidth / 2,
+  minY: -MAIL_BOX_DIMENSIONS.outerHeight / 2 + MAIL_BOX_DIMENSIONS.bottomThickness, maxY: MAIL_BOX_DIMENSIONS.outerHeight / 2,
+  minZ: -MAIL_BOX_DIMENSIONS.innerDepth / 2, maxZ: MAIL_BOX_DIMENSIONS.innerDepth / 2,
 };
 
 interface BagRuntime {
@@ -169,36 +167,80 @@ export class MailBagSystem {
     const id = `${BAG_ID_PREFIX}${this.bagInstanceCounter++}`;
     const x = BAG_RACK.posX + (Math.random() - 0.5) * 0.6;
     const z = BAG_RACK.posZ + BAG_RACK.depth / 2 + 0.5 + Math.random() * 0.4;
-    const y = BACK_AREA.floorY + TOTAL_HEIGHT / 2 + 0.05;
+    const dims = MAIL_BOX_DIMENSIONS;
+    const y = BACK_AREA.floorY + dims.outerHeight / 2 + 0.05;
 
-    const geo = buildBoxGeometry(MAIL_BAG_INTERIOR.width, MAIL_BAG_INTERIOR.depth, MAIL_BAG_INTERIOR.height, MAIL_BAG_WALL_THICKNESS);
+    const geo = buildBoxGeometry(dims);
     const mats = buildBagMaterials(null);
     const mesh = new THREE.Mesh(geo, mats);
     mesh.position.set(x, y, z);
     this.scene.add(mesh);
 
-    const obj = createInteractableObject(id, '空信封箱', mesh, TOTAL_WIDTH, TOTAL_HEIGHT, TOTAL_DEPTH);
+    const obj = createInteractableObject(id, '空信封箱', mesh, dims.outerWidth, dims.outerHeight, dims.outerDepth);
 
+    // 5 Colliders (bottom + left/right/back/front walls, no top) — every
+    // position/rotation/width/height/depth computed with the EXACT same
+    // formulas buildBoxGeometry() just used for the visible Mesh, from the
+    // SAME dims object, so Mesh and Collider line up pixel-for-pixel
+    // ("Align mail box colliders with visible mesh" round一/二). Rotation is
+    // always identity for every piece (axis-aligned boxes), so there's
+    // nothing to pass beyond position/half-extents here.
     const bodyDesc = this.physics.createDynamicBodyDesc(x, y, z, 8);
     const body = this.physics.createDynamicBody(bodyDesc);
-    const wt = MAIL_BAG_WALL_THICKNESS;
-    const wallLocalY = -TOTAL_HEIGHT / 2 + wt + MAIL_BAG_INTERIOR.height / 2;
-    const bottomCollider = this.physics.addColliderToBody(body, 0, -TOTAL_HEIGHT / 2 + wt / 2, 0, TOTAL_WIDTH / 2, wt / 2, TOTAL_DEPTH / 2);
-    this.physics.addColliderToBody(body, -(MAIL_BAG_INTERIOR.width / 2 + wt / 2), wallLocalY, 0, wt / 2, MAIL_BAG_INTERIOR.height / 2, TOTAL_DEPTH / 2); // left
-    this.physics.addColliderToBody(body, (MAIL_BAG_INTERIOR.width / 2 + wt / 2), wallLocalY, 0, wt / 2, MAIL_BAG_INTERIOR.height / 2, TOTAL_DEPTH / 2); // right
-    this.physics.addColliderToBody(body, 0, wallLocalY, -(MAIL_BAG_INTERIOR.depth / 2 + wt / 2), TOTAL_WIDTH / 2, MAIL_BAG_INTERIOR.height / 2, wt / 2); // back
-    this.physics.addColliderToBody(body, 0, wallLocalY, (MAIL_BAG_INTERIOR.depth / 2 + wt / 2), TOTAL_WIDTH / 2, MAIL_BAG_INTERIOR.height / 2, wt / 2); // front
+    const wallLocalY = -dims.outerHeight / 2 + dims.bottomThickness + dims.innerHeight / 2;
+    const bottomCollider = this.physics.addColliderToBody(
+      body, 0, -dims.outerHeight / 2 + dims.bottomThickness / 2, 0,
+      dims.outerWidth / 2, dims.bottomThickness / 2, dims.outerDepth / 2
+    );
+    this.physics.addColliderToBody( // left
+      body, -(dims.innerWidth / 2 + dims.wallThickness / 2), wallLocalY, 0,
+      dims.wallThickness / 2, dims.innerHeight / 2, dims.outerDepth / 2
+    );
+    this.physics.addColliderToBody( // right
+      body, dims.innerWidth / 2 + dims.wallThickness / 2, wallLocalY, 0,
+      dims.wallThickness / 2, dims.innerHeight / 2, dims.outerDepth / 2
+    );
+    this.physics.addColliderToBody( // back
+      body, 0, wallLocalY, -(dims.innerDepth / 2 + dims.wallThickness / 2),
+      dims.outerWidth / 2, dims.innerHeight / 2, dims.wallThickness / 2
+    );
+    this.physics.addColliderToBody( // front
+      body, 0, wallLocalY, dims.innerDepth / 2 + dims.wallThickness / 2,
+      dims.outerWidth / 2, dims.innerHeight / 2, dims.wallThickness / 2
+    );
     obj.rigidBody = body;
     obj.collider = bottomCollider;
     this.interactables.set(id, obj);
 
+    // Raycast hit-proxy ("Align mail box colliders with visible mesh"
+    // round三: "信封箱互動優先於一般放置模式") — the visible Mesh is a thin
+    // open shell (bottom + 4 walls only), so a crosshair ray aimed down
+    // through the genuinely-open top into empty interior space would often
+    // miss every real surface entirely, leaving currentTarget unresolved
+    // and letting E fall through to PickupSystem's generic placement mode
+    // instead of the box-specific insert flow. This invisible, slightly
+    // taller-than-the-box proxy (same established pattern already used for
+    // the sorting box's own open-top container, see sorting-box-system.ts's
+    // own HitProxy) makes the box's FULL outer volume — including the open
+    // air above the mouth — reliably raycastable, while carrying zero
+    // physics Collider of its own and being stripped from the held-item
+    // viewmodel clone automatically (PickupSystem already skips any child
+    // flagged `userData.isHitProxy`).
+    const proxyHeight = dims.outerHeight + 0.2;
+    const proxyGeo = new THREE.BoxGeometry(dims.outerWidth, proxyHeight, dims.outerDepth);
+    const proxyMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+    const hitProxy = new THREE.Mesh(proxyGeo, proxyMat);
+    hitProxy.position.y = (proxyHeight - dims.outerHeight) / 2; // bottom-aligned, extra headroom above the rim
+    hitProxy.userData.isHitProxy = true;
+    mesh.add(hitProxy);
+
     const label = createFloatingLabel('未設定\n0 封信', { width: 0.7, bg: 'rgba(20,20,20,0.75)' });
-    label.position.set(0, TOTAL_HEIGHT / 2 + 0.35, 0);
+    label.position.set(0, dims.outerHeight / 2 + 0.35, 0);
     mesh.add(label);
 
     // Sealed-state strap visual — built once, toggled visible only while
     // sealed (spec七) rather than rebuilt on every seal/unseal.
-    const sealVisual = buildBoxSealVisual(MAIL_BAG_INTERIOR.width, MAIL_BAG_INTERIOR.depth, TOTAL_HEIGHT / 2 - 0.02);
+    const sealVisual = buildBoxSealVisual(dims, dims.outerHeight / 2 - 0.02);
     mesh.add(sealVisual);
 
     this.bags.set(id, {
@@ -305,7 +347,7 @@ export class MailBagSystem {
       obj.mesh.visible = true;
       obj.canPickUp = true;
       const p = bagObj.mesh.position;
-      obj.mesh.position.set(p.x + (Math.random() - 0.5) * 0.3, p.y + TOTAL_HEIGHT / 2 + 0.1, p.z + (Math.random() - 0.5) * 0.3);
+      obj.mesh.position.set(p.x + (Math.random() - 0.5) * 0.3, p.y + MAIL_BOX_DIMENSIONS.outerHeight / 2 + 0.1, p.z + (Math.random() - 0.5) * 0.3);
       if (obj.rigidBody) {
         obj.rigidBody.setTranslation(obj.mesh.position, true);
         obj.rigidBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
@@ -386,17 +428,28 @@ export class MailBagSystem {
       if (!bagObj || !runtime) continue;
       const bp = bagObj.mesh.position;
 
+      // "Align mail box colliders with visible mesh" round五: horizontal
+      // (X/Z) acceptance is still the envelope's CENTER point against the
+      // interior footprint, but the vertical judgment is explicitly the
+      // envelope's own BOTTOM face — below the rim (spec: "信封底面低於箱
+      // 壁頂端") and not sunk through the bottom board (spec: "未穿過箱
+      // 底") — rather than the bare center-point range check this used
+      // before. Every envelope preset shares the exact same height (see
+      // mail-data.ts's own doc comment on ENVELOPE_SIZE.height), so this
+      // one constant is valid for all of them.
+      const halfEnvelopeHeight = ENVELOPE_SIZE.height / 2;
       let insideId: string | null = null;
       for (const id of this.trackedUnbaggedEnvelopeIds()) {
         const obj = this.interactables.get(id);
         if (!obj || obj.isHeld || !obj.mesh.visible) continue;
         const lx = obj.mesh.position.x - bp.x;
-        const ly = obj.mesh.position.y - bp.y;
         const lz = obj.mesh.position.z - bp.z;
+        const bottomFaceY = (obj.mesh.position.y - bp.y) - halfEnvelopeHeight;
         if (
           lx >= LOCAL_INTERIOR_BOUNDS.minX && lx <= LOCAL_INTERIOR_BOUNDS.maxX &&
-          ly >= LOCAL_INTERIOR_BOUNDS.minY && ly <= LOCAL_INTERIOR_BOUNDS.maxY &&
-          lz >= LOCAL_INTERIOR_BOUNDS.minZ && lz <= LOCAL_INTERIOR_BOUNDS.maxZ
+          lz >= LOCAL_INTERIOR_BOUNDS.minZ && lz <= LOCAL_INTERIOR_BOUNDS.maxZ &&
+          bottomFaceY <= LOCAL_INTERIOR_BOUNDS.maxY &&
+          bottomFaceY >= LOCAL_INTERIOR_BOUNDS.minY - 0.01 // small settle tolerance, still catches genuine tunneling
         ) { insideId = id; break; }
       }
 
@@ -473,8 +526,8 @@ export class MailBagSystem {
       bagObj.mesh.add(obj.mesh);
       const stackIndex = bag.envelopeIds.length;
       const localY = LOCAL_INTERIOR_BOUNDS.minY + ENVELOPE_SIZE.height / 2 + stackIndex * (ENVELOPE_SIZE.height + 0.005);
-      const jitterRangeX = Math.max(0, MAIL_BAG_INTERIOR.width - ENVELOPE_SIZE.width) * 0.4;
-      const jitterRangeZ = Math.max(0, MAIL_BAG_INTERIOR.depth - ENVELOPE_SIZE.depth) * 0.4;
+      const jitterRangeX = Math.max(0, MAIL_BOX_DIMENSIONS.innerWidth - ENVELOPE_SIZE.width) * 0.4;
+      const jitterRangeZ = Math.max(0, MAIL_BOX_DIMENSIONS.innerDepth - ENVELOPE_SIZE.depth) * 0.4;
       obj.mesh.position.set((Math.random() - 0.5) * jitterRangeX, localY, (Math.random() - 0.5) * jitterRangeZ);
       obj.mesh.rotation.set(0, 0, 0);
       obj.canPickUp = false;
@@ -539,13 +592,19 @@ export class MailBagSystem {
       return;
     }
 
-    // Safe drop point: centered above the mouth, high enough to clear the
-    // wall rims (spec四), expressed in the bag's own local space then
-    // converted to world space via its CURRENT matrix — respects both
-    // translation and rotation.
+    // Safe drop point: centered above the mouth, ~E_INSERT_DROP_CLEARANCE
+    // (0.08-0.15m) above the rim (spec四), expressed in the box's own local
+    // space then converted to world space via its CURRENT matrix — respects
+    // both translation and rotation. Deliberately NOT run through
+    // PickupSystem's generic placement validation (spec三) — that check
+    // treats the box's own walls as obstacles (they're real Colliders under
+    // GROUP_BOX, same as every other cargo item), which would reject a
+    // perfectly legitimate drop point sitting directly above the box's own
+    // open mouth; this drop point is fixed, always in open air above the
+    // rim, and physics re-enables normally right below (spec六).
     bagObj.mesh.updateWorldMatrix(true, false);
     const dropWorld = bagObj.mesh.localToWorld(
-      new THREE.Vector3(0, LOCAL_INTERIOR_BOUNDS.maxY + MAIL_BAG_WALL_THICKNESS * 2, 0)
+      new THREE.Vector3(0, LOCAL_INTERIOR_BOUNDS.maxY + E_INSERT_DROP_CLEARANCE, 0)
     );
 
     this.pickupSystem.forceDropHeld();
