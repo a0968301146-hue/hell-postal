@@ -24,6 +24,31 @@ export interface SlotValidation {
 
 export const MEDIA_SLOT_COUNT = 5;
 
+/** Which of the two top-level UI tabs is showing ("Add built-in BGM tab to
+ * television player" round一) — a pure UI-view concern, decoupled from
+ * which source is actually PLAYING (see MediaSourceType below): switching
+ * tabs never stops or otherwise touches playback (spec一: "切換Tab不可停止
+ * 目前正在播放的內容"). */
+export type MediaTab = 'builtin' | 'url';
+
+/** Which content is currently loaded into the shared player — set only by
+ * an explicit playSlot()/playBuiltin() call, independent of `MediaTab`
+ * above (spec四: "更新目前sourceType"). Determines which of the two
+ * separate playlists (URL slots vs. built-in BGM slots) next()/previous()/
+ * the ended-event auto-advance logic walks, so the two never blend into one
+ * combined queue (spec四: "不要把URL與內建音樂混成同一份播放清單"). */
+export type MediaSourceType = 'url' | 'builtin';
+
+/** One built-in BGM slot ("Add built-in BGM tab to television player" round
+ * 二) — `filePath`/`enabled` are plain data, never player-editable (spec三:
+ * "玩家只能選擇並播放，不可修改檔案路徑"). */
+export interface BuiltinBgmSlot {
+  id: string;
+  displayName: string;
+  filePath: string | null;
+  enabled: boolean;
+}
+
 export interface MediaPlayerSaveState {
   /** Always exactly MEDIA_SLOT_COUNT entries, raw URL text or ''. */
   slots: string[];
@@ -31,4 +56,8 @@ export interface MediaPlayerSaveState {
   /** 0..1 */
   volume: number;
   lastSlotIndex: number;
+  /** "Add built-in BGM tab to television player" round五. */
+  activeTab: MediaTab;
+  lastBuiltinBgmId: string;
+  builtinPlaybackMode: PlaybackMode;
 }

@@ -1,16 +1,18 @@
-// Full-screen "媒體播放器" UI ("Add television media playlist" round spec
-// 三). Display + input only — every actual state change goes through
-// MediaPlayerSystem's own public methods, never touched directly here
-// (mirrors UpgradeMenuUI/UpgradeSystem's own split exactly). All dynamic
-// text is set via textContent/element.value, never interpolated into
-// innerHTML (spec六: "所有文字顯示使用textContent，URL不可當作HTML插入") —
-// the only innerHTML use in this file is the fixed, static shell markup
-// built once in the constructor, which never contains any player-supplied
-// string.
+// Full-screen "電視媒體播放器" UI ("Add television media playlist" round
+// spec三, extended with a 內建音樂/網路媒體 tab split in "Add built-in BGM
+// tab to television player" round). Display + input only — every actual
+// state change goes through MediaPlayerSystem's own public methods, never
+// touched directly here (mirrors UpgradeMenuUI/UpgradeSystem's own split
+// exactly). All dynamic text is set via textContent/element.value, never
+// interpolated into innerHTML (spec六: "所有文字顯示使用textContent，URL
+// 不可當作HTML插入") — the only innerHTML use in this file is the fixed,
+// static shell markup built once in the constructor, which never contains
+// any player-supplied string (a built-in slot's own filePath is likewise
+// NEVER rendered anywhere in this UI — spec三: "不要顯示檔案路徑給玩家").
 import { PauseManager } from '../../core/pause-manager';
 import { PlayerController } from '../player';
 import { MediaPlayerSystem } from './media-player-system';
-import { MEDIA_SLOT_COUNT, PlaybackMode, SlotMediaKind } from './media-player-types';
+import { MEDIA_SLOT_COUNT, MediaTab, PlaybackMode, SlotMediaKind } from './media-player-types';
 
 function kindLabel(kind: SlotMediaKind): string {
   switch (kind) {
@@ -27,7 +29,10 @@ export class MediaPlayerUI {
   private mediaPlayerSystem: MediaPlayerSystem;
 
   private overlayEl: HTMLElement;
-  private slotsEl: HTMLElement;
+  private builtinPanelEl: HTMLElement;
+  private urlPanelEl: HTMLElement;
+  private builtinSlotsEl: HTMLElement;
+  private urlSlotsEl: HTMLElement;
   private statusTextEl: HTMLElement;
   private errorEl: HTMLElement;
   private playPauseBtn: HTMLButtonElement;
@@ -47,18 +52,34 @@ export class MediaPlayerUI {
       <div class="media-player-backdrop"></div>
       <div class="media-player-panel">
         <button id="media-player-close-btn" aria-label="關閉媒體播放器">✕</button>
-        <h2 class="media-player-title">媒體播放器</h2>
+        <h2 class="media-player-title">電視媒體播放器</h2>
+        <div class="media-player-tabs">
+          <button class="mp-tab-btn" data-tab="builtin">內建音樂</button>
+          <button class="mp-tab-btn" data-tab="url">網路媒體</button>
+        </div>
         <div class="media-player-video-area">
           <video id="media-player-video" playsinline></video>
           <div id="media-player-youtube-container"></div>
         </div>
         <p class="media-player-status">狀態：<span id="media-player-status-text">尚未播放</span></p>
         <p class="media-player-error" id="media-player-error"></p>
-        <div class="media-player-slots"></div>
-        <div class="media-player-mode-row">
-          <label><input type="radio" name="mp-mode" value="single"> 單曲循環</label>
-          <label><input type="radio" name="mp-mode" value="playlist"> 清單循環</label>
+
+        <div class="mp-tab-panel" id="mp-tab-panel-builtin">
+          <div class="media-player-slots" id="mp-builtin-slots"></div>
+          <div class="media-player-mode-row">
+            <label><input type="radio" name="mp-builtin-mode" value="single"> 單曲循環</label>
+            <label><input type="radio" name="mp-builtin-mode" value="playlist"> 清單循環</label>
+          </div>
         </div>
+
+        <div class="mp-tab-panel" id="mp-tab-panel-url">
+          <div class="media-player-slots" id="mp-url-slots"></div>
+          <div class="media-player-mode-row">
+            <label><input type="radio" name="mp-url-mode" value="single"> 單曲循環</label>
+            <label><input type="radio" name="mp-url-mode" value="playlist"> 清單循環</label>
+          </div>
+        </div>
+
         <div class="media-player-transport">
           <button id="mp-prev" aria-label="上一首">⏮ 上一首</button>
           <button id="mp-playpause" aria-label="播放／暫停">▶ 播放</button>
@@ -69,7 +90,10 @@ export class MediaPlayerUI {
     `;
     document.body.appendChild(this.overlayEl);
 
-    this.slotsEl = this.overlayEl.querySelector('.media-player-slots')!;
+    this.builtinPanelEl = this.overlayEl.querySelector('#mp-tab-panel-builtin')!;
+    this.urlPanelEl = this.overlayEl.querySelector('#mp-tab-panel-url')!;
+    this.builtinSlotsEl = this.overlayEl.querySelector('#mp-builtin-slots')!;
+    this.urlSlotsEl = this.overlayEl.querySelector('#mp-url-slots')!;
     this.statusTextEl = this.overlayEl.querySelector('#media-player-status-text')!;
     this.errorEl = this.overlayEl.querySelector('#media-player-error')!;
     this.playPauseBtn = this.overlayEl.querySelector('#mp-playpause')!;
@@ -84,12 +108,31 @@ export class MediaPlayerUI {
     this.overlayEl.querySelector('.media-player-backdrop')!.addEventListener('click', () => this.close());
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
 
-    this.overlayEl.querySelectorAll<HTMLInputElement>('input[name="mp-mode"]').forEach((radio) => {
+    // Tab switching is a pure view-state change (spec一: "切換Tab不可停止
+    // 目前正在播放的內容") — never touches playback, just which panel/mode
+    // controls are visible.
+    this.overlayEl.querySelectorAll<HTMLButtonElement>('.mp-tab-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.mediaPlayerSystem.setActiveTab(btn.dataset.tab as MediaTab);
+        this.render();
+      });
+    });
+
+    this.overlayEl.querySelectorAll<HTMLInputElement>('input[name="mp-builtin-mode"]').forEach((radio) => {
+      radio.addEventListener('change', () => {
+        if (radio.checked) this.mediaPlayerSystem.setBuiltinMode(radio.value as PlaybackMode);
+      });
+    });
+    this.overlayEl.querySelectorAll<HTMLInputElement>('input[name="mp-url-mode"]').forEach((radio) => {
       radio.addEventListener('change', () => {
         if (radio.checked) this.mediaPlayerSystem.setMode(radio.value as PlaybackMode);
       });
     });
 
+    // Shared transport — always visible regardless of which tab is being
+    // viewed, and always acts on whichever source is actually loaded into
+    // the player (MediaPlayerSystem's own currentSourceType), not
+    // necessarily the currently-viewed tab.
     this.overlayEl.querySelector('#mp-prev')!.addEventListener('click', () => this.mediaPlayerSystem.previous());
     this.playPauseBtn.addEventListener('click', () => this.mediaPlayerSystem.togglePlayPause());
     this.overlayEl.querySelector('#mp-next')!.addEventListener('click', () => this.mediaPlayerSystem.next());
@@ -137,14 +180,26 @@ export class MediaPlayerUI {
   }
 
   private render(): void {
-    this.renderSlots();
+    const activeTab = this.mediaPlayerSystem.getActiveTab();
+    this.overlayEl.querySelectorAll<HTMLButtonElement>('.mp-tab-btn').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.tab === activeTab);
+    });
+    this.builtinPanelEl.classList.toggle('active', activeTab === 'builtin');
+    this.urlPanelEl.classList.toggle('active', activeTab === 'url');
 
-    const mode = this.mediaPlayerSystem.getMode();
-    this.overlayEl.querySelectorAll<HTMLInputElement>('input[name="mp-mode"]').forEach((radio) => {
-      radio.checked = radio.value === mode;
+    this.renderBuiltinSlots();
+    this.renderUrlSlots();
+
+    const builtinMode = this.mediaPlayerSystem.getBuiltinMode();
+    this.overlayEl.querySelectorAll<HTMLInputElement>('input[name="mp-builtin-mode"]').forEach((radio) => {
+      radio.checked = radio.value === builtinMode;
+    });
+    const urlMode = this.mediaPlayerSystem.getMode();
+    this.overlayEl.querySelectorAll<HTMLInputElement>('input[name="mp-url-mode"]').forEach((radio) => {
+      radio.checked = radio.value === urlMode;
     });
 
-    this.statusTextEl.textContent = this.statusLabel();
+    this.statusTextEl.textContent = this.mediaPlayerSystem.getStatusLine();
     this.playPauseBtn.textContent = this.mediaPlayerSystem.getStatus() === 'playing' ? '⏸ 暫停' : '▶ 播放';
     this.volumeInput.value = String(this.mediaPlayerSystem.getVolume());
 
@@ -153,24 +208,65 @@ export class MediaPlayerUI {
     this.errorEl.style.display = err ? 'block' : 'none';
   }
 
-  private statusLabel(): string {
-    switch (this.mediaPlayerSystem.getStatus()) {
-      case 'playing': return `播放中：槽位 ${this.mediaPlayerSystem.getCurrentSlotIndex() + 1}`;
-      case 'paused': return '已暫停';
-      case 'error': return '播放失敗';
-      default: return '尚未播放';
-    }
+  /** Every slot always renders (no filePath ever shown, spec三) — a slot
+   * without a real file just shows "尚未加入音樂" with its own play button
+   * disabled. */
+  private renderBuiltinSlots(): void {
+    this.builtinSlotsEl.textContent = '';
+    const slots = this.mediaPlayerSystem.getBuiltinSlots();
+    const currentId = this.mediaPlayerSystem.getCurrentBuiltinId();
+    const status = this.mediaPlayerSystem.getStatus();
+    const isActive = this.mediaPlayerSystem.getCurrentSourceType() === 'builtin' && (status === 'playing' || status === 'paused');
+
+    slots.forEach((slot, i) => {
+      const row = document.createElement('div');
+      row.className = 'mp-slot-row';
+      if (isActive && slot.id === currentId) row.classList.add('mp-slot-active');
+
+      const indexLabel = document.createElement('span');
+      indexLabel.className = 'mp-slot-index';
+      indexLabel.textContent = `槽位 ${i + 1}`;
+      row.appendChild(indexLabel);
+
+      const nameLabel = document.createElement('span');
+      nameLabel.className = 'mp-slot-name';
+      nameLabel.textContent = slot.displayName;
+      row.appendChild(nameLabel);
+
+      const playBtn = document.createElement('button');
+      playBtn.className = 'mp-slot-play-btn';
+      playBtn.textContent = '播放';
+      const hasFile = slot.enabled && !!slot.filePath;
+      playBtn.disabled = !hasFile;
+      playBtn.addEventListener('click', () => {
+        void this.mediaPlayerSystem.playBuiltin(slot.id);
+      });
+      row.appendChild(playBtn);
+
+      const statusEl = document.createElement('span');
+      statusEl.className = 'mp-slot-status';
+      if (hasFile) {
+        statusEl.textContent = '可播放';
+        statusEl.classList.add('mp-slot-status-valid');
+      } else {
+        statusEl.textContent = '尚未加入音樂';
+      }
+      row.appendChild(statusEl);
+
+      this.builtinSlotsEl.appendChild(row);
+    });
   }
 
-  /** Rebuilds the 5 slot rows from scratch each render — every dynamic
+  /** Rebuilds the 5 URL slot rows from scratch each render — every dynamic
    * piece of text/value is assigned via textContent/.value (never
    * interpolated into a template-string innerHTML), so a URL the player
    * typed can never be parsed as markup (spec六). */
-  private renderSlots(): void {
-    this.slotsEl.textContent = '';
+  private renderUrlSlots(): void {
+    this.urlSlotsEl.textContent = '';
     const slots = this.mediaPlayerSystem.getSlots();
     const currentIndex = this.mediaPlayerSystem.getCurrentSlotIndex();
-    const isActive = this.mediaPlayerSystem.getStatus() === 'playing' || this.mediaPlayerSystem.getStatus() === 'paused';
+    const status = this.mediaPlayerSystem.getStatus();
+    const isActive = this.mediaPlayerSystem.getCurrentSourceType() === 'url' && (status === 'playing' || status === 'paused');
 
     for (let i = 0; i < MEDIA_SLOT_COUNT; i++) {
       const row = document.createElement('div');
@@ -223,7 +319,7 @@ export class MediaPlayerUI {
       }
       row.appendChild(statusEl);
 
-      this.slotsEl.appendChild(row);
+      this.urlSlotsEl.appendChild(row);
     }
   }
 }

@@ -1,8 +1,12 @@
 import * as THREE from 'three';
 import { LocalStorageAdapter } from '../../adapters/local-storage/local-storage-adapter';
 import { updateFloatingLabel } from '../../adapters/three/world-label-system';
-import { MediaPlayerSaveState, MEDIA_SLOT_COUNT, PlaybackMode, PlaybackStatus, SlotValidation } from './media-player-types';
+import {
+  MediaPlayerSaveState, MEDIA_SLOT_COUNT, MediaSourceType, MediaTab, PlaybackMode, PlaybackStatus, SlotValidation,
+  BuiltinBgmSlot,
+} from './media-player-types';
 import { MEDIA_PLAYER_STORAGE_KEY, classifySlotUrl, createDefaultMediaPlayerSaveState, mergeMediaPlayerSaveState } from './media-player-data';
+import { BUILTIN_BGM_SLOTS } from './builtin-bgm-data';
 
 // Minimal ambient shape for the parts of the YouTube IFrame Player API this
 // file actually calls — the real global is untyped (loaded via a plain
@@ -86,6 +90,13 @@ export class MediaPlayerSystem {
   private screenMaterial: THREE.MeshStandardMaterial;
 
   private currentSlotIndex: number;
+  /** "Add built-in BGM tab to television player" round: which of the two
+   * separate playlists (URL slots vs. built-in BGM slots) is currently
+   * loaded into the shared player — independent of `state.activeTab` (the
+   * UI's own currently-VIEWED tab, see MediaTab's own doc comment). Only
+   * ever changes inside playSlot()/playBuiltin(). */
+  private currentSourceType: MediaSourceType = 'url';
+  private currentBuiltinId: string;
   private status: PlaybackStatus = 'stopped';
   private lastError: string | null = null;
 
@@ -100,6 +111,7 @@ export class MediaPlayerSystem {
     this.screenMaterial = televisionScreenMaterial;
     this.state = mergeMediaPlayerSaveState(this.storage.getJSON<MediaPlayerSaveState>(MEDIA_PLAYER_STORAGE_KEY));
     this.currentSlotIndex = this.state.lastSlotIndex;
+    this.currentBuiltinId = this.state.lastBuiltinBgmId;
     // Deliberately never calls playSlot()/play() here (spec六: "不可進入遊
     // 戲或讀檔後自動播放" / spec七: "重新整理後...不自動開始播放") — only
     // loads the saved slots/mode/volume/lastSlotIndex into memory, status
@@ -152,7 +164,49 @@ export class MediaPlayerSystem {
     return classifySlotUrl(this.state.slots[index] ?? '');
   }
 
+  getActiveTab(): MediaTab {
+    return this.state.activeTab;
+  }
+
+  getBuiltinSlots(): readonly BuiltinBgmSlot[] {
+    return BUILTIN_BGM_SLOTS;
+  }
+
+  getBuiltinMode(): PlaybackMode {
+    return this.state.builtinPlaybackMode;
+  }
+
+  getCurrentSourceType(): MediaSourceType {
+    return this.currentSourceType;
+  }
+
+  getCurrentBuiltinId(): string {
+    return this.currentBuiltinId;
+  }
+
+  /** Shared by both the TV's own world label and MediaPlayerUI's status line
+   * (public so neither ever has to re-derive/duplicate this text itself). */
+  getStatusLine(): string {
+    switch (this.status) {
+      case 'playing':
+        return this.currentSourceType === 'builtin'
+          ? `播放中：${this.builtinDisplayName(this.currentBuiltinId)}`
+          : `播放中：網路媒體 槽位 ${this.currentSlotIndex + 1}`;
+      case 'paused': return '已暫停';
+      case 'error': return '播放失敗';
+      default: return '尚未播放';
+    }
+  }
+
   // --- Mutating API ---
+
+  /** Pure UI-view state — never touches playback (spec一: "切換Tab不可停止
+   * 目前正在播放的內容"). */
+  setActiveTab(tab: MediaTab): void {
+    this.state.activeTab = tab;
+    this.save();
+    this.notify();
+  }
 
   setSlotUrl(index: number, url: string): void {
     if (index < 0 || index >= MEDIA_SLOT_COUNT) return;
@@ -178,6 +232,12 @@ export class MediaPlayerSystem {
     this.notify();
   }
 
+  setBuiltinMode(mode: PlaybackMode): void {
+    this.state.builtinPlaybackMode = mode;
+    this.save();
+    this.notify();
+  }
+
   setVolume(volume: number): void {
     const clamped = Math.max(0, Math.min(1, volume));
     this.state.volume = clamped;
@@ -189,16 +249,20 @@ export class MediaPlayerSystem {
     this.notify();
   }
 
-  /** Explicit, player-initiated playback of one specific slot (spec六: "必
-   * 須由玩家點擊播放按鈕後才開始") — also the SAME method auto-advance
+  /** Explicit, player-initiated playback of one specific URL slot (spec六:
+   * "必須由玩家點擊播放按鈕後才開始") — also the SAME method auto-advance
    * (onMediaEnded) and auto-retry (onMediaError) call, since by that point
    * the browser already granted this tab an active media session from the
-   * player's own earlier direct click. */
+   * player's own earlier direct click. Always sets currentSourceType to
+   * 'url' first (spec四) — the sibling playBuiltin() below is the ONLY
+   * other place that ever changes it, so the two playlists can never bleed
+   * into each other mid-playback. */
   async playSlot(index: number): Promise<void> {
     if (index < 0 || index >= MEDIA_SLOT_COUNT) return;
     const validation = classifySlotUrl(this.state.slots[index]);
     if (!validation.valid) {
       this.lastError = '此槽位網址無效或為空';
+      this.currentSourceType = 'url';
       this.currentSlotIndex = index;
       this.setStatus('error');
       this.notify();
@@ -206,6 +270,7 @@ export class MediaPlayerSystem {
     }
 
     this.stopActivePlayback();
+    this.currentSourceType = 'url';
     this.currentSlotIndex = index;
     this.state.lastSlotIndex = index;
     this.lastError = null;
@@ -224,13 +289,47 @@ export class MediaPlayerSystem {
     this.notify();
   }
 
-  togglePlayPause(): void {
-    if (this.status === 'stopped' || this.status === 'error') {
-      void this.playSlot(this.currentSlotIndex);
+  /** Explicit, player-initiated playback of one built-in BGM slot ("Add
+   * built-in BGM tab to television player" round spec三/四) — mirrors
+   * playSlot() above exactly, just reading `filePath`/`enabled` from
+   * BUILTIN_BGM_SLOTS instead of a URL slot, and always through the SAME
+   * shared `<video>` element (spec四: "不要建立第二套播放器" — a built-in
+   * BGM slot is never YouTube, so there's no ytPlayer branch here at all). */
+  async playBuiltin(id: string): Promise<void> {
+    const slot = BUILTIN_BGM_SLOTS.find((s) => s.id === id);
+    if (!slot || !slot.enabled || !slot.filePath) {
+      this.lastError = '此音樂尚未加入';
+      this.currentSourceType = 'builtin';
+      this.currentBuiltinId = id;
+      this.setStatus('error');
+      this.notify();
       return;
     }
-    const validation = classifySlotUrl(this.state.slots[this.currentSlotIndex]);
-    if (validation.kind === 'youtube') {
+
+    this.stopActivePlayback();
+    this.currentSourceType = 'builtin';
+    this.currentBuiltinId = id;
+    this.state.lastBuiltinBgmId = id;
+    this.lastError = null;
+    this.save();
+
+    try {
+      await this.playDirectMedia(slot.filePath);
+      this.setStatus('playing');
+    } catch {
+      this.onMediaError();
+    }
+    this.notify();
+  }
+
+  togglePlayPause(): void {
+    if (this.status === 'stopped' || this.status === 'error') {
+      if (this.currentSourceType === 'builtin') void this.playBuiltin(this.currentBuiltinId);
+      else void this.playSlot(this.currentSlotIndex);
+      return;
+    }
+    const isYoutube = this.currentSourceType === 'url' && classifySlotUrl(this.state.slots[this.currentSlotIndex]).kind === 'youtube';
+    if (isYoutube) {
       if (!this.ytPlayer) return;
       if (this.status === 'playing') { this.ytPlayer.pauseVideo(); this.setStatus('paused'); }
       else { this.ytPlayer.playVideo(); this.setStatus('playing'); }
@@ -246,15 +345,38 @@ export class MediaPlayerSystem {
     this.notify();
   }
 
-  /** Skips empty/invalid slots (spec五: "上一首與下一首同樣跳過空槽位"). */
+  /** Skips empty/invalid slots (spec五: "上一首與下一首同樣跳過空槽位") —
+   * source-aware: walks whichever playlist (URL or built-in) is currently
+   * loaded, never the other one (spec四). */
   next(): void {
-    const idx = this.nextValidIndex(this.currentSlotIndex, 1);
-    if (idx !== null) void this.playSlot(idx);
+    if (this.currentSourceType === 'builtin') {
+      const id = this.nextValidBuiltinId(this.currentBuiltinId, 1);
+      if (id !== null) void this.playBuiltin(id);
+      else this.reportNoBuiltinBgm();
+    } else {
+      const idx = this.nextValidIndex(this.currentSlotIndex, 1);
+      if (idx !== null) void this.playSlot(idx);
+    }
   }
 
   previous(): void {
-    const idx = this.nextValidIndex(this.currentSlotIndex, -1);
-    if (idx !== null) void this.playSlot(idx);
+    if (this.currentSourceType === 'builtin') {
+      const id = this.nextValidBuiltinId(this.currentBuiltinId, -1);
+      if (id !== null) void this.playBuiltin(id);
+      else this.reportNoBuiltinBgm();
+    } else {
+      const idx = this.nextValidIndex(this.currentSlotIndex, -1);
+      if (idx !== null) void this.playSlot(idx);
+    }
+  }
+
+  /** spec四: "沒有任何有效槽位時顯示「尚無內建音樂」" — surfaced via the
+   * same lastError slot the UI's own error line already reads, rather than
+   * a new dedicated field, since it's the same "tell the player why nothing
+   * happened" concern onMediaError already owns. */
+  private reportNoBuiltinBgm(): void {
+    this.lastError = '尚無內建音樂';
+    this.notify();
   }
 
   // --- Internals ---
@@ -336,7 +458,39 @@ export class MediaPlayerSystem {
     return null;
   }
 
+  /** Same loop-back-to-start / skip-invalid shape as nextValidIndex above,
+   * just walking BUILTIN_BGM_SLOTS by id instead of the URL slots array
+   * (spec四: "跳過disabled或filePath為空的槽位"/"最後一首播放完後回到第一
+   * 個有效槽位"). Returns null only if NO built-in slot is enabled+has a
+   * filePath (spec四: "沒有任何有效槽位時顯示「尚無內建音樂」" — surfaced by
+   * the caller via onMediaEnded's own else-branch below). */
+  private nextValidBuiltinId(fromId: string, direction: 1 | -1): string | null {
+    const count = BUILTIN_BGM_SLOTS.length;
+    const fromIdx = Math.max(0, BUILTIN_BGM_SLOTS.findIndex((s) => s.id === fromId));
+    for (let step = 1; step <= count; step++) {
+      const idx = ((fromIdx + direction * step) % count + count) % count;
+      const slot = BUILTIN_BGM_SLOTS[idx];
+      if (slot.enabled && slot.filePath) return slot.id;
+    }
+    return null;
+  }
+
   private onMediaEnded(): void {
+    if (this.currentSourceType === 'builtin') {
+      if (this.state.builtinPlaybackMode === 'single') {
+        void this.playBuiltin(this.currentBuiltinId);
+        return;
+      }
+      const next = this.nextValidBuiltinId(this.currentBuiltinId, 1);
+      if (next !== null) {
+        void this.playBuiltin(next);
+      } else {
+        this.lastError = '尚無內建音樂';
+        this.setStatus('stopped');
+        this.notify();
+      }
+      return;
+    }
     if (this.state.mode === 'single') {
       void this.playSlot(this.currentSlotIndex);
       return;
@@ -351,10 +505,20 @@ export class MediaPlayerSystem {
   }
 
   /** spec六: "播放失敗時顯示錯誤，不可讓遊戲崩潰" / "清單模式中某槽位失敗
-   * 時，自動嘗試下一個有效槽位". */
+   * 時，自動嘗試下一個有效槽位" — source-aware, mirrors onMediaEnded's own
+   * branching so a failed built-in slot only ever advances within the
+   * built-in list, never spills into the URL slots (spec四). */
   private onMediaError(): void {
     this.lastError = '播放失敗';
-    if (this.state.mode === 'playlist') {
+    if (this.currentSourceType === 'builtin') {
+      if (this.state.builtinPlaybackMode === 'playlist') {
+        const next = this.nextValidBuiltinId(this.currentBuiltinId, 1);
+        if (next !== null && next !== this.currentBuiltinId) {
+          void this.playBuiltin(next);
+          return;
+        }
+      }
+    } else if (this.state.mode === 'playlist') {
       const next = this.nextValidIndex(this.currentSlotIndex, 1);
       if (next !== null && next !== this.currentSlotIndex) {
         void this.playSlot(next);
@@ -378,17 +542,12 @@ export class MediaPlayerSystem {
    * class's only touch on the 3D scene, both handles handed in by whoever
    * constructed it (create-game-systems.ts), never built here. */
   private refreshWorldLabel(): void {
-    updateFloatingLabel(this.label, `媒體播放器\n${this.statusLine()}`);
+    updateFloatingLabel(this.label, `媒體播放器\n${this.getStatusLine()}`);
     this.screenMaterial.emissiveIntensity = this.status === 'playing' ? 0.9 : 0;
   }
 
-  private statusLine(): string {
-    switch (this.status) {
-      case 'playing': return `播放中：槽位 ${this.currentSlotIndex + 1}`;
-      case 'paused': return '已暫停';
-      case 'error': return '播放失敗';
-      default: return '尚未播放';
-    }
+  private builtinDisplayName(id: string): string {
+    return BUILTIN_BGM_SLOTS.find((s) => s.id === id)?.displayName ?? id;
   }
 
   private save(): void {

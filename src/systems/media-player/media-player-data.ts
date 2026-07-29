@@ -1,4 +1,5 @@
-import { MEDIA_SLOT_COUNT, MediaPlayerSaveState, PlaybackMode, SlotValidation } from './media-player-types';
+import { MEDIA_SLOT_COUNT, MediaPlayerSaveState, MediaTab, PlaybackMode, SlotValidation } from './media-player-types';
+import { BUILTIN_BGM_SLOTS } from './builtin-bgm-data';
 
 export const MEDIA_PLAYER_STORAGE_KEY = 'hp_media_player_v1';
 
@@ -61,11 +62,22 @@ export function classifySlotUrl(raw: string): SlotValidation {
 }
 
 export function createDefaultMediaPlayerSaveState(): MediaPlayerSaveState {
-  return { slots: ['', '', '', '', ''], mode: 'playlist', volume: 0.7, lastSlotIndex: 0 };
+  return {
+    slots: ['', '', '', '', ''], mode: 'playlist', volume: 0.7, lastSlotIndex: 0,
+    // "Add built-in BGM tab to television player" round: defaults to the
+    // 內建音樂 tab (spec一: "預設開啟「內建音樂」") — playlist mode for
+    // built-in BGM too, same default as URL mode.
+    activeTab: 'builtin', lastBuiltinBgmId: BUILTIN_BGM_SLOTS[0].id, builtinPlaybackMode: 'playlist',
+  };
 }
 
 /** Field-by-field fallback to defaults for any missing/corrupt field —
- * mirrors upgrade-system.ts's own mergeUpgradeSaveState pattern exactly. */
+ * mirrors upgrade-system.ts's own mergeUpgradeSaveState pattern exactly.
+ * "Add built-in BGM tab to television player" round五: a save written
+ * before this round simply lacks activeTab/lastBuiltinBgmId/
+ * builtinPlaybackMode entirely — falls through to defaults here exactly
+ * like every other missing field, no special-cased migration needed
+ * (spec五: "舊存檔缺少新欄位時使用預設值，不可報錯"). */
 export function mergeMediaPlayerSaveState(saved: Partial<MediaPlayerSaveState> | null): MediaPlayerSaveState {
   const base = createDefaultMediaPlayerSaveState();
   if (!saved) return base;
@@ -84,5 +96,13 @@ export function mergeMediaPlayerSaveState(saved: Partial<MediaPlayerSaveState> |
       ? saved.lastSlotIndex
       : base.lastSlotIndex;
 
-  return { slots, mode, volume, lastSlotIndex };
+  const activeTab: MediaTab = saved.activeTab === 'builtin' || saved.activeTab === 'url' ? saved.activeTab : base.activeTab;
+  const builtinPlaybackMode: PlaybackMode =
+    saved.builtinPlaybackMode === 'single' || saved.builtinPlaybackMode === 'playlist' ? saved.builtinPlaybackMode : base.builtinPlaybackMode;
+  const lastBuiltinBgmId =
+    typeof saved.lastBuiltinBgmId === 'string' && BUILTIN_BGM_SLOTS.some((s) => s.id === saved.lastBuiltinBgmId)
+      ? saved.lastBuiltinBgmId
+      : base.lastBuiltinBgmId;
+
+  return { slots, mode, volume, lastSlotIndex, activeTab, lastBuiltinBgmId, builtinPlaybackMode };
 }
