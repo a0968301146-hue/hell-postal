@@ -108,20 +108,47 @@ export class InteractionSystem {
     document.addEventListener('mousedown', (e) => this.onMouseDown(e));
   }
 
-  /** Right-click, empty-handed, aimed at an OPEN mail bag with ≥1 envelope
-   * — takes the most-recently-inserted envelope back out (spec七: "封袋前
-   * 可以取出信封"). A dedicated raw listener rather than a new key binding
-   * (spec: "沿用現有E鍵，不建立新輸入系統" — right-click is already an
-   * existing input, just unused in this particular context; mirrors
-   * PickupSystem's own onMouseDown pattern, which already uses right-click
-   * for cancelPlacement in a different state). */
+  /** Right-click, aimed at a mail box holding ≥1 envelope — extracts the
+   * most-recently-placed one (LIFO) directly into the player's own held
+   * items via the normal PickupSystem.pickUp() path (spec二: "使用既有
+   * PickupSystem", "信封直接加入玩家heldItems，不落地、不停留在箱內").
+   * Allowed from BOTH empty-handed and holding-item states (spec三:
+   * "空手或有足夠搬運容量時") — capacity/exclusivity is peeked via
+   * PickupSystem's own canAddToHeld BEFORE calling removeLastEnvelope, so a
+   * failed check (capacity full, or currently holding large cargo/a live
+   * creature) never mutates box state at all. A held mail box itself can
+   * never be `currentTarget` (the update() loop's own raycast filters out
+   * any `obj.isHeld === true` object), so "不可在手持箱子時右鍵取出內部信
+   * 件" is satisfied structurally — no extra guard needed. Right-click has
+   * no other meaning in these two states (PickupSystem's own right-click
+   * handler only acts during 'placement-preview'), so this can never
+   * collide with cancel-placement or any other right-click function. */
   private onMouseDown(event: MouseEvent): void {
     if (event.button !== 2) return;
     if (!this.isLocked()) return;
     if (this.pauseManager.isPaused) return;
-    if (this.playerData.state !== 'empty-handed') return;
+    if (this.playerData.state !== 'empty-handed' && this.playerData.state !== 'holding-item') return;
     if (!this.currentTarget || !this.mailBagSystem.isBag(this.currentTarget.id)) return;
-    this.mailBagSystem.tryTakeOutLast(this.currentTarget.id);
+    const bagId = this.currentTarget.id;
+    const envelopeIds = this.mailBagSystem.getContainedEnvelopeIds(bagId);
+    if (envelopeIds.length === 0) {
+      this.hud.showToast('信封箱內沒有信件');
+      return;
+    }
+    const peekId = envelopeIds[envelopeIds.length - 1];
+    const peekObj = this.interactables.get(peekId);
+    // Temporarily lift the boxed envelope's own canPickUp=false (set by
+    // attemptInsert to block direct E-pickup) purely so canAddToHeld's
+    // capacity/exclusivity logic can be reused as-is — reverted immediately
+    // below if the check fails, so nothing is left mutated on failure.
+    if (peekObj) peekObj.canPickUp = true;
+    if (!peekObj || !this.pickupSystem.canAddToHeld(peekObj)) {
+      if (peekObj) peekObj.canPickUp = false;
+      this.hud.showToast('搬運容量已滿');
+      return;
+    }
+    const removed = this.mailBagSystem.removeLastEnvelope(bagId);
+    if (removed) this.pickupSystem.pickUp(removed);
   }
 
   private onKeyDown(event: KeyboardEvent): void {
@@ -178,16 +205,24 @@ export class InteractionSystem {
       // Multi-carry: aiming at a NEW plain pickupable item with spare
       // capacity (spec五A: "瞄準+按拾取鍵，若容量足夠加入持有") — mirrors
       // update()'s own targeting check exactly (same exclusions: the
-      // bulletin board above, the pallet and mail bags/rack, which each
-      // already have their own dedicated holding-item interactions here or
-      // below). A plain pickUp() call, not a second code path — LIFO
-      // ordering, capacity, and exclusivity are all enforced the one place
+      // bulletin board above, the pallet and the rack, which each already
+      // have their own dedicated holding-item interactions here or below).
+      // Mail boxes are ALSO eligible here as of "Remove sealing and add
+      // physical mail box contents" round (spec三: "空手或有足夠搬運容量時
+      // ...按E拿起信封箱") — UNLESS the player is currently holding an
+      // envelope, in which case aiming at a box means "insert" (the
+      // dedicated branch just below this one), never "pick up the box
+      // itself". A plain pickUp() call, not a second code path — LIFO
+      // ordering, capacity, and exclusivity (and, for mail boxes, the
+      // contained-envelope carry setup) are all enforced the one place
       // PickupSystem.canAddToHeld/pickUp already own.
+      const heldForBagCheck = this.playerData.heldObjectId;
+      const isHoldingEnvelope = !!(heldForBagCheck && this.mailSystem.getEnvelope(heldForBagCheck));
       if (
         this.currentTarget &&
         this.currentTarget.id !== this.palletSystem.palletId &&
         this.currentTarget.id !== MAIL_RACK_INTERACTABLE_ID &&
-        !this.mailBagSystem.isBag(this.currentTarget.id) &&
+        !(this.mailBagSystem.isBag(this.currentTarget.id) && isHoldingEnvelope) &&
         this.pickupSystem.canAddToHeld(this.currentTarget)
       ) {
         this.pickupSystem.pickUp(this.currentTarget);
@@ -217,7 +252,7 @@ export class InteractionSystem {
       const heldIdForInsert = this.playerData.heldObjectId;
       if (heldIdForInsert && this.mailSystem.getEnvelope(heldIdForInsert) && this.currentTarget && this.mailBagSystem.isBag(this.currentTarget.id)) {
         const targetBag = this.mailBagSystem.getBag(this.currentTarget.id);
-        if (targetBag && targetBag.state === 'open') {
+        if (targetBag) {
           this.mailBagSystem.tryInsertHeldEnvelope(heldIdForInsert, this.currentTarget.id);
           // Clear the target after acting (mirrors the rack-spawn special
           // case's own pattern above) — on success this state transitions
@@ -306,16 +341,6 @@ export class InteractionSystem {
     // ever be targetable while standing at the counter.
     if (this.lostFoundSystem.isNpcWaiting && this.lostFoundSystem.isPlayerNearCounter(this.camera.position)) {
       this.lostFoundSystem.tryConfirmAtCounter(null);
-      return;
-    }
-
-    // Priority 0.5: sealing a targeted mail bag (spec八: "已設定圖樣且至少有
-    //一封信的袋子按E：顯示「E 封閉分類袋」") — intercepts before the generic
-    // pickup below ONLY when the bag actually qualifies for sealing; an
-    // ineligible bag (no pattern yet / still empty) just falls through and
-    // gets picked up normally like any other prop.
-    if (this.currentTarget && this.mailBagSystem.isBag(this.currentTarget.id) && this.mailBagSystem.canSeal(this.currentTarget.id)) {
-      this.mailBagSystem.trySeal(this.currentTarget.id);
       return;
     }
 
@@ -495,7 +520,7 @@ export class InteractionSystem {
       const heldEnvelopeForBagPrompt = heldIdForBagPrompt ? this.mailSystem.getEnvelope(heldIdForBagPrompt) : undefined;
       if (heldEnvelopeForBagPrompt) {
         const hitBag = hit && this.mailBagSystem.isBag(hit.id) ? this.mailBagSystem.getBag(hit.id) : null;
-        if (hit && hitBag && hitBag.state === 'open') {
+        if (hit && hitBag) {
           if (this.currentTarget !== hit) {
             if (this.currentTarget) this.clearHighlight(this.currentTarget);
             this.applyHighlight(hit);
@@ -514,11 +539,15 @@ export class InteractionSystem {
 
       // Multi-carry: aiming at a NEW plain pickupable item with spare
       // capacity (spec五A) — same exclusions as onKeyDown's own multi-carry
-      // branch (never offered for the board/pallet/bags/rack, each already
-      // handled above or below).
+      // branch (never offered for the board/pallet/rack, each already
+      // handled above or below). Mail boxes ARE included here (mirrors
+      // onKeyDown's own change) — by this point the "holding an envelope,
+      // aiming at a bag" case has already returned above, so reaching here
+      // while aiming at a bag always means "pick up the box itself" (spec
+      // 三: "空手或有足夠搬運容量時...拿起信封箱").
       if (
         hit && hit.id !== this.palletSystem.palletId && hit.id !== MAIL_RACK_INTERACTABLE_ID &&
-        !this.mailBagSystem.isBag(hit.id) && this.pickupSystem.canAddToHeld(hit)
+        this.pickupSystem.canAddToHeld(hit)
       ) {
         if (this.currentTarget !== hit) {
           if (this.currentTarget) this.clearHighlight(this.currentTarget);
@@ -592,29 +621,20 @@ export class InteractionSystem {
             `目的地：${dest.displayName}\n地區：${regionText}\n狀態：${stampText}\n按 E 拿起`
           );
         } else if (this.mailBagSystem.isBag(newTarget.id)) {
+          // "Remove sealing and add physical mail box contents" round八: no
+          // more sealed/open state text — every box is always pickupable/
+          // loadable. Empty-handed E is always "pick up the box" (never
+          // "insert" — that only ever applies while holding an envelope,
+          // handled entirely by the holding-item branches above, never
+          // reached from here). Right-click's own extraction hint only
+          // shows once the box actually has something to extract.
           const bag = this.mailBagSystem.getBag(newTarget.id)!;
           const pattern = bag.destinationPattern ? getMailDestination(bag.destinationPattern) : null;
           const patternText = pattern ? `${pattern.displayName}（${pattern.region === 'domestic' ? '國內' : '海外'}）` : '未設定';
-          const stateText = bag.state === 'sealed' ? '已封閉' : '開啟中';
-          // "Enlarge mail bags and add E key letter placement" round 三: an
-          // open bag with zero envelopes shows "信封箱內沒有信件" while
-          // empty-handed — canSeal's own false branch here is ALREADY
-          // exactly "envelopeIds.length===0" in practice (canSeal requires
-          // both a pattern AND at least one envelope; "Allow unset mail
-          // boxes to accept first envelope" round means a pattern can now
-          // exist with zero envelopes too — e.g. right after F sets one on
-          // an otherwise-empty box — but canSeal's own envelopeIds.length>0
-          // check alone already covers that case correctly, see
-          // canAcceptEnvelope in mail-bag-system.ts), so this is not a new
-          // condition, just new text for the existing case.
-          const actionHint = bag.state === 'sealed'
-            ? '按 E 拿起'
-            : this.mailBagSystem.canSeal(newTarget.id)
-              ? 'E：封箱　F：更改圖樣\n右鍵：取出信封'
-              : '信封箱內沒有信件\nF：設定圖樣　按 E 拿起';
+          const extractHint = bag.envelopeIds.length > 0 ? '\n右鍵：取出信件' : '';
           this.hud.showInteractionPrompt(
             newTarget.displayName,
-            `圖樣：${patternText}\n狀態：${stateText}\n信件數：${bag.envelopeIds.length}／${bag.capacity}\n${actionHint}`
+            `圖樣：${patternText}\n信件數：${bag.envelopeIds.length}／${bag.capacity}\nE：拿起信封箱　F：更改圖樣${extractHint}`
           );
         } else if (newTarget.id === BULLETIN_BOARD_INTERACTABLE_ID) {
           // Empty-handed here (this whole raycast branch only runs once

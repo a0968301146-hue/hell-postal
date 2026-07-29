@@ -143,10 +143,10 @@ export class VehicleControlSystem {
   private onShippingStarted?: () => LostFoundSettlementInput;
   /** MailSystem/MailBagSystem — narrow read/write surface ("Add modular
    * envelope stamping and regional mail bag system" round 九/十一): this
-   * class is the ONE place a sealed bag's region is checked against a
-   * vehicle's acceptedMailRegions (vehicleAcceptsMailRegion, vehicle-data.ts)
-   * and the ONE place bag physical presence in a departing bay is scanned —
-   * MailBagSystem only ever reports plain bag facts (region/sealed ids/
+   * class is the ONE place a bag's region is checked against a vehicle's
+   * acceptedMailRegions (vehicleAcceptsMailRegion, vehicle-data.ts) and the
+   * ONE place bag physical presence in a departing bay is scanned —
+   * MailBagSystem only ever reports plain bag facts (region/all bag ids/
    * envelope membership), never judges vehicle compatibility itself; the
    * final per-envelope settlement tally is delegated back to MailSystem
    * (spec: "結算以每封信計算", envelope state stays owned there). */
@@ -419,18 +419,25 @@ export class VehicleControlSystem {
       }
     }
 
-    // Mail bags (spec九/十一) — same one-time physical-bay scan as the
-    // pallet block above: any SEALED bag currently resting in ANY of the
-    // six slots' cargo bays rides along with that vehicle regardless of
-    // region match (spec: "已隨載具離場的貨物照原流程清除" — same convention
-    // as wrong-vehicle cargo above); vehicleAcceptsMailRegion (vehicle-
-    // data.ts, the ONE place this rule lives) decides whether it counts as
-    // CORRECTLY shipped. A bag that never made it into any bay at all
-    // (still sitting in the mail room, or an unsealed/scattered envelope)
-    // is simply never in this set, so MailSystem.settleAtDeparture below
-    // naturally counts its envelopes as unshipped.
+    // Mail bags ("Remove sealing and add physical mail box contents" round
+    // 九/十一) — same one-time physical-bay scan as the pallet block above:
+    // ANY box (sealing no longer exists — every box is eligible regardless
+    // of contents) currently resting in ANY of the six slots' cargo bays
+    // rides along with that vehicle regardless of region match (spec: "已隨
+    // 載具離場的貨物照原流程清除" — same convention as wrong-vehicle cargo
+    // above); vehicleAcceptsMailRegion (vehicle-data.ts, the ONE place this
+    // rule lives) decides whether it counts as CORRECTLY shipped. A box
+    // that never made it into any bay at all (still sitting in the mail
+    // room) is simply never in this set, so MailSystem.settleAtDeparture
+    // below naturally counts its envelopes as unshipped — and since
+    // getContainedEnvelopeIds() always reflects the box's CURRENT live
+    // contents (escaped/removed envelopes already cleared out by
+    // MailBagSystem's own updateEscapedEnvelopes/removeLastEnvelope), this
+    // scan only ever needs the box's own identity/region here, never its
+    // envelope list directly (spec九: "計分只看當下仍在interiorBounds且已
+    // 登記的信件" is already enforced upstream, before this scan runs).
     const correctlyShippedBagIds = new Set<string>();
-    for (const bagId of this.mailBagSystem.getSealedBagIds()) {
+    for (const bagId of this.mailBagSystem.getAllBagIds()) {
       const bagObj = this.interactables.get(bagId);
       if (!bagObj || bagObj.isHeld || !bagObj.mesh.visible) continue;
       for (const slot of this.slots) {
@@ -621,7 +628,7 @@ export class VehicleControlSystem {
       if (obj.id === PALLET_ID) { obj.mesh.visible = false; continue; }
       // Mail bags aren't CargoData — route their teardown through
       // MailBagSystem itself so its own bag registry doesn't keep a stale
-      // sealed-bag entry pointing at an already-destroyed InteractableObject.
+      // entry pointing at an already-destroyed InteractableObject.
       if (this.mailBagSystem.getBag(obj.id)) { this.mailBagSystem.removeShippedBag(obj.id); continue; }
       this.cargoSystem.removeCargo(obj.id);
     }

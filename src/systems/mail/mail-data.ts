@@ -357,29 +357,3 @@ export function buildBoxGeometry(dims: MailBoxDimensions): THREE.BufferGeometry 
   return merged;
 }
 
-/** Sealed-state visual ("Replace mail bags with open mail boxes" round七:
- * "不必真的生成可開關箱蓋；可使用繩索、封條或簡化上蓋視覺表示已封箱") — two
- * crossing strap strips laid just above the box's own open mouth, toggled
- * visible only while `state === 'sealed'` (mail-bag-system.ts adds this
- * once at spawn and flips `.visible`, same pattern the old cinch ring
- * used). No Collider — purely decorative, and the box's own investment
- * judgment (interiorBounds) is entirely independent of this visual. */
-export function buildBoxSealVisual(dims: MailBoxDimensions, y: number): THREE.Group {
-  const group = new THREE.Group();
-  const diag = Math.hypot(dims.innerWidth, dims.innerDepth);
-  const angle = Math.atan2(dims.innerDepth, dims.innerWidth);
-  const strapGeo = new THREE.BoxGeometry(diag * 0.92, 0.02, 0.05);
-
-  const strap1 = new THREE.Mesh(strapGeo, new THREE.MeshStandardMaterial({ color: 0x3a2a1a }));
-  strap1.rotation.y = angle;
-  strap1.position.y = y;
-  group.add(strap1);
-
-  const strap2 = new THREE.Mesh(strapGeo.clone(), new THREE.MeshStandardMaterial({ color: 0x3a2a1a }));
-  strap2.rotation.y = -angle;
-  strap2.position.y = y;
-  group.add(strap2);
-
-  group.visible = false;
-  return group;
-}

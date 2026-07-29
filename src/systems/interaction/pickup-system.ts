@@ -9,6 +9,26 @@ import { HUD } from '../hud';
 import { PauseManager } from '../../core/pause-manager';
 import { SettingsManager } from '../settings';
 
+/** "Remove sealing and add physical mail box contents" round三/十: a narrow,
+ * mail-box-specific parallel to this file's own EXISTING generic container
+ * carry system (captureContainerContents/restoreContainerContents, above,
+ * built for sortingBoxId/crateId containers) — kept as a SEPARATE hook
+ * rather than folded into that system because mail boxes have a stricter
+ * requirement the generic one doesn't (spec三: contained envelopes must stay
+ * VISIBLE and visually follow the box's own rotation while held), which the
+ * generic system's hide-and-track-in-a-side-array approach doesn't provide.
+ * Set once via setMailBoxHooks() from create-game-systems.ts (after both
+ * PickupSystem and MailBagSystem exist, avoiding a constructor-time circular
+ * dependency), then invoked from pickUp()/confirmPlacement()/executeThrow()
+ * ALONGSIDE (never replacing) the existing isContainer checks — the two are
+ * mutually exclusive since mail boxes never set sortingBoxId/crateId. */
+export interface MailBoxCarryHooks {
+  isMailBox(obj: InteractableObject): boolean;
+  prepareForCarry(obj: InteractableObject): void;
+  restoreAfterPlacement(obj: InteractableObject, boxVelocity: THREE.Vector3): void;
+  restoreForThrow(obj: InteractableObject, linearVelocity: THREE.Vector3, angularVelocity: THREE.Vector3): void;
+}
+
 export class PickupSystem implements PickupPort {
   private camera: THREE.PerspectiveCamera;
   private worldScene: THREE.Scene;
@@ -78,6 +98,14 @@ export class PickupSystem implements PickupPort {
 
   // Container content tracking (for moving envelopes with containers)
   private carriedEnvelopes: { obj: InteractableObject; localPos: THREE.Vector3; localQuat: THREE.Quaternion; wasSorted: boolean }[] = [];
+
+  /** See the MailBoxCarryHooks doc comment above — null until
+   * setMailBoxHooks() wires it up from create-game-systems.ts. */
+  private mailBoxHooks: MailBoxCarryHooks | null = null;
+
+  setMailBoxHooks(hooks: MailBoxCarryHooks): void {
+    this.mailBoxHooks = hooks;
+  }
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -218,6 +246,11 @@ export class PickupSystem implements PickupPort {
     const isContainer = obj.mesh.userData.sortingBoxId || obj.mesh.userData.crateId;
     if (isContainer) {
       this.captureContainerContents(obj);
+    }
+    // Mail box: reparent its contained envelopes under its own Mesh so
+    // they ride along visibly (spec三) — see MailBoxCarryHooks doc comment.
+    if (this.mailBoxHooks?.isMailBox(obj)) {
+      this.mailBoxHooks.prepareForCarry(obj);
     }
 
     // Hide world mesh
@@ -650,6 +683,12 @@ export class PickupSystem implements PickupPort {
       obj.mesh.updateMatrixWorld(true);
       this.restoreContainerContents(obj);
     }
+    // Mail box: unparent contained envelopes and restore their own physics
+    // at the box's final placed transform, near-zero velocity so they settle
+    // naturally (spec四).
+    if (this.mailBoxHooks?.isMailBox(obj)) {
+      this.mailBoxHooks.restoreAfterPlacement(obj, new THREE.Vector3(0, 0, 0));
+    }
 
     obj.isHeld = false;
     obj.canPickUp = true;
@@ -750,6 +789,20 @@ export class PickupSystem implements PickupPort {
     if (isContainer && this.carriedEnvelopes.length > 0) {
       obj.mesh.updateMatrixWorld(true);
       this.restoreContainerContentsWithVelocity(obj, dir, ratio);
+    }
+    // Mail box: unparent contents and restore their physics IMMEDIATELY at
+    // throw time (spec五: "在丟出的瞬間就要恢復物理，而非等箱子落地後才處
+    // 理"), inheriting the box's own ACTUAL post-impulse velocity — read
+    // AFTER applyImpulse/applyTorqueImpulse above, not the pre-impulse zero.
+    if (this.mailBoxHooks?.isMailBox(obj) && obj.rigidBody) {
+      obj.mesh.updateMatrixWorld(true);
+      const boxLinvel = obj.rigidBody.linvel();
+      const boxAngvel = obj.rigidBody.angvel();
+      this.mailBoxHooks.restoreForThrow(
+        obj,
+        new THREE.Vector3(boxLinvel.x, boxLinvel.y, boxLinvel.z),
+        new THREE.Vector3(boxAngvel.x, boxAngvel.y, boxAngvel.z)
+      );
     }
 
     obj.isHeld = false;

@@ -32,14 +32,19 @@ export interface EnvelopeRecord {
   visualPresetId: string;
 }
 
-export type MailBagState = 'open' | 'sealed';
-
+/** "Remove sealing and add physical mail box contents" round一: sealing is
+ * gone entirely — a mail box no longer has a separate lifecycle state of
+ * its own at all, only ever "open" in the old sense. The 3 conceptual
+ * states the spec still describes (empty / destination-set / holding
+ * envelopes) are derived directly from `destinationPattern`/`envelopeIds`
+ * wherever needed, never stored as a redundant parallel field that could
+ * drift out of sync with them. */
 export interface MailBagRecord {
   bagId: string;
-  /** null until the player sets it via F at the bag (spec六: "unset"). */
+  /** null until the player sets it via F at the bag (spec六: "unset"), or
+   * the first correctly-stamped envelope to settle inside auto-sets it. */
   destinationPattern: MailDestination | null;
   region: MailRegion | null;
-  state: MailBagState;
   envelopeIds: string[];
   capacity: number;
 }

@@ -215,6 +215,16 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // register placement surfaces / call forceDropHeld() on reset).
   const mailSystem = new MailSystem(scene, physics, interactables, pickupSystem);
   const mailBagSystem = new MailBagSystem(scene, physics, interactables, pickupSystem, hud, mailSystem);
+  // Wired after both exist (avoids a constructor-time circular dependency —
+  // MailBagSystem's own constructor already takes pickupSystem) — see
+  // MailBoxCarryHooks' own doc comment in pickup-system.ts ("Remove sealing
+  // and add physical mail box contents" round三/十).
+  pickupSystem.setMailBoxHooks({
+    isMailBox: (obj) => mailBagSystem.isMailBox(obj),
+    prepareForCarry: (obj) => mailBagSystem.prepareContentsForCarry(obj),
+    restoreAfterPlacement: (obj, boxVelocity) => mailBagSystem.restoreContentsAfterPlacement(obj, boxVelocity),
+    restoreForThrow: (obj, linearVelocity, angularVelocity) => mailBagSystem.restoreContentsForThrow(obj, linearVelocity, angularVelocity),
+  });
 
   // Daily unload -> sort -> ship-via-vehicle loop (this round's core).
   // DailyFlowSystem owns the day/state/count bookkeeping and the 結束今天
