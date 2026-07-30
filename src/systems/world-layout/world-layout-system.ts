@@ -488,7 +488,7 @@ function buildWestWallShelves(scene: THREE.Scene, physics: PhysicsWorldPort): TH
 
 /** White-box-only floor markers reserving space for future cargo-type zones
  * (normal/large(domestic+overseas)/frozen(domestic+overseas)/live(domestic+
- * overseas)/lost-found — see CARGO_ZONES). No function yet — just space
+ * overseas)/fragile — see CARGO_ZONES). No function yet — just space
  * claims, purely decal + label, no physics collider. */
 function buildCargoZones(scene: THREE.Scene): void {
   for (const zone of CARGO_ZONES) {

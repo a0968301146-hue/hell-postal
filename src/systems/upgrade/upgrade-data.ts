@@ -22,6 +22,16 @@ import { UpgradeDefinition, UpgradeId } from './upgrade-types';
  * 半天至一天正常分數；高級升級：約一至兩天正常分數"). */
 export const UPGRADE_POINT_REWARD_PER_SHIPPED_ITEM = 1;
 
+// TEMPORARY TEST GRANT — remove before public demo. One-time starting
+// upgrade-points grant for testing ("Add sequential lost-found visitors and
+// held cargo feedback" round六: "起始測試點數1000...這是暫時的測試設定").
+// TEST_GRANT_VERSION is the guard upgrade-system.ts's applyTestGrantIfNeeded
+// checks against a save's own `testGrantVersion` — bumping this number is
+// the ONLY way to ever re-grant the points to a save that already has them,
+// so a normal page refresh can never re-apply it.
+export const TEST_STARTING_UPGRADE_POINTS = 1000;
+export const TEST_GRANT_VERSION = 1;
+
 export const UPGRADE_DEFINITIONS: UpgradeDefinition[] = [
   {
     id: 'moveSpeed',

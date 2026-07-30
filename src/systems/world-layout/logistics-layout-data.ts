@@ -337,7 +337,7 @@ export const VEHICLE_CONTROL_WALL_BUTTONS = {
  * row) and OVERSEAS_ROW (north, immediately adjacent — touches
  * DOMESTIC_ROW's own minZ exactly, never overlapping it) hold matching
  * same-size overseas copies of the large/frozen/live zones only —
- * zone-normal and zone-lost-found stay single (this round only doubles
+ * zone-normal and zone-fragile stay single (this round only doubles
  * 大型/冷凍/活體, per spec). OVERSEAS_ROW sits at Z 17.5–20.5, well clear
  * of the player spawn (z=14.8)/pallet (z=15.5, PALLET_CONFIG)/dolly's
  * parked spot (z=16, DOLLY_CONFIGS)/unload debris zone (z<=14.3) to its
@@ -357,7 +357,14 @@ export const CARGO_ZONES = [
   { id: 'zone-frozen-overseas', label: '海外冷凍貨物區', centerX: 0, color: 0x4a90b8, minZ: OVERSEAS_ROW_MIN_Z, maxZ: OVERSEAS_ROW_MAX_Z },
   { id: 'zone-live-domestic', label: '國內活體貨物區', centerX: 3.6, color: 0x4a9a4a, minZ: DOMESTIC_ROW_MIN_Z, maxZ: DOMESTIC_ROW_MAX_Z },
   { id: 'zone-live-overseas', label: '海外活體貨物區', centerX: 3.6, color: 0x4a9a4a, minZ: OVERSEAS_ROW_MIN_Z, maxZ: OVERSEAS_ROW_MAX_Z },
-  { id: 'zone-lost-found', label: '失物招領區', centerX: 7.2, color: 0xb8a04a, minZ: DOMESTIC_ROW_MIN_Z, maxZ: DOMESTIC_ROW_MAX_Z },
+  // "Add sequential lost-found visitors and held cargo feedback" round五:
+  // renamed from '失物招領區' — this decorative floor zone (id + label
+  // only, see buildCargoZones) is unrelated to the REAL lost-found NPC/
+  // cabinet system (lost-found-system.ts et al, untouched), which keeps its
+  // own room/counter/label elsewhere. Only the id/label change here; the
+  // zone's position/color/footprint are untouched (spec: "只修改後場分類區
+  // 名稱").
+  { id: 'zone-fragile', label: '易碎品區', centerX: 7.2, color: 0xb8a04a, minZ: DOMESTIC_ROW_MIN_Z, maxZ: DOMESTIC_ROW_MAX_Z },
 ].map(z => ({ ...z, halfWidth: CARGO_ZONE_HALF_WIDTH }));
 
 // Compass convention (see compass-ui.ts): North = -Z, East = +X, South = +Z, West = -X.

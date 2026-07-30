@@ -62,10 +62,18 @@ export const LOST_ITEM_PRESETS: LostItemPreset[] = [
   preset('crystal-ball', '水晶球', 'orb', 0x4ab0c8, { x: 0.16, y: 0.16, z: 0.16 }),
 ];
 
-/** How many DECOY (non-target) lost items burst in alongside the day's one
- * real target ("Expand lost found return storage and scoring" round 五) —
- * the ONE place this count is defined. */
+/** How many DECOY (non-target) lost items burst in alongside the day's
+ * targets ("Expand lost found return storage and scoring" round五, still 5
+ * total per day under "Add sequential lost-found visitors and held cargo
+ * feedback" round一 — only the TARGET count grew from 1 to 3) — the ONE
+ * place this count is defined. */
 export const DECOY_LOST_ITEM_COUNT = 5;
+
+/** How many NPCs (and distinct target items) appear per day ("Add
+ * sequential lost-found visitors and held cargo feedback" round一: "每天3
+ * 位") — the ONE place this count is defined; LOST_FOUND_CASES above must
+ * have at least this many entries for prepareDailyCases() to draw from. */
+export const DAILY_LOST_FOUND_NPC_COUNT = 3;
 
 export interface LostFoundCaseDef {
   id: string;
@@ -76,11 +84,18 @@ export interface LostFoundCaseDef {
   successText: string;
 }
 
-/** One case this round — lost-found-system.ts's pickTodaysCase() cycles
- * through this list by day number, so adding more cases later needs no
- * code changes there. */
+/** Case pool ("Add sequential lost-found visitors and held cargo feedback"
+ * round一: 3位NPC每天各自要求1個不同的目標失物) — every entry maps to a
+ * DIFFERENT LOST_ITEM_PRESETS id, so any 3 DISTINCT cases drawn from this
+ * pool automatically request 3 distinct items with zero extra dedup logic
+ * (see lost-found-system.ts's prepareDailyCases()). At least 3 entries are
+ * required for that to even be possible — kept at 5 for daily variety. */
 export const LOST_FOUND_CASES: LostFoundCaseDef[] = [
   { id: 'case-001', customerName: '委託人', lostItemPresetId: 'magic-staff', successText: '「就是這個！太感謝你了。」' },
+  { id: 'case-002', customerName: '委託人', lostItemPresetId: 'plush-doll', successText: '「太好了，這是女兒最愛的玩偶。」' },
+  { id: 'case-003', customerName: '委託人', lostItemPresetId: 'ceramic-pot', successText: '「可算找回來了，謝謝你。」' },
+  { id: 'case-004', customerName: '委託人', lostItemPresetId: 'violin', successText: '「我的小提琴！太感激了。」' },
+  { id: 'case-005', customerName: '委託人', lostItemPresetId: 'magic-book', successText: '「這本書對我很重要，非常感謝。」' },
 ];
 
 /** Exact spec wording (spec七: "顯示「這不是他要找的失物」") — the ONE shared

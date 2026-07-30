@@ -10,6 +10,7 @@
 export class LostFoundUI {
   private el: HTMLDivElement;
   private hideTimer: number | null = null;
+  private statusEl: HTMLDivElement;
 
   constructor() {
     const el = document.createElement('div');
@@ -37,6 +38,54 @@ export class LostFoundUI {
     } satisfies Partial<CSSStyleDeclaration>);
     document.body.appendChild(el);
     this.el = el;
+
+    // Persistent daily-queue status ("Add sequential lost-found visitors
+    // and held cargo feedback" round一: "今日顧客：完成X／3"／"目前顧客：第X
+    // 位") — a SEPARATE, non-auto-hiding element from the wrong-item toast
+    // above, since this one stays up the whole day rather than flashing
+    // briefly.
+    const statusEl = document.createElement('div');
+    statusEl.id = 'lost-found-status';
+    Object.assign(statusEl.style, {
+      position: 'fixed',
+      top: '86px',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      padding: '4px 16px',
+      background: 'rgba(20, 20, 20, 0.6)',
+      border: '1px solid rgba(255, 255, 255, 0.2)',
+      borderRadius: '6px',
+      color: '#e8e0c8',
+      fontFamily: 'sans-serif',
+      fontSize: '13px',
+      textAlign: 'center',
+      lineHeight: '1.4',
+      pointerEvents: 'none',
+      userSelect: 'none',
+      textShadow: '0 0 4px rgba(0, 0, 0, 0.9)',
+      zIndex: '90',
+      display: 'none',
+    } satisfies Partial<CSSStyleDeclaration>);
+    document.body.appendChild(statusEl);
+    this.statusEl = statusEl;
+  }
+
+  /** `currentPosition` is 1-based (第1位/第2位/第3位), null while no NPC is
+   * currently entering/waiting/leaving (between visitors, or the whole
+   * queue finished/not yet started). Hidden entirely once no case has been
+   * prepared yet today (totalToday===0). */
+  updateQueueStatus(completed: number, totalToday: number, currentPosition: number | null): void {
+    if (totalToday === 0) {
+      this.statusEl.style.display = 'none';
+      return;
+    }
+    const currentLine = currentPosition !== null ? `<br>目前顧客：第 ${currentPosition} 位` : '';
+    this.statusEl.innerHTML = `今日顧客：完成 ${completed}／${totalToday}${currentLine}`;
+    this.statusEl.style.display = 'block';
+  }
+
+  hideQueueStatus(): void {
+    this.statusEl.style.display = 'none';
   }
 
   /** Wrong-item hint — no score/fail implied by styling (spec: "不扣分、不失

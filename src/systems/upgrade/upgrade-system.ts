@@ -3,15 +3,24 @@ import { DepartureSettlement } from '../scoring';
 import { PickupSystem } from '../interaction/pickup-system';
 import { PlayerController } from '../player';
 import { UpgradeId, UpgradeSaveState, UpgradeDefinition } from './upgrade-types';
-import { UPGRADE_DEFINITIONS, getUpgradeDefinition, UPGRADE_POINT_REWARD_PER_SHIPPED_ITEM } from './upgrade-data';
+import {
+  UPGRADE_DEFINITIONS, getUpgradeDefinition, UPGRADE_POINT_REWARD_PER_SHIPPED_ITEM,
+  TEST_STARTING_UPGRADE_POINTS, TEST_GRANT_VERSION,
+} from './upgrade-data';
 
 const UPGRADE_STORAGE_KEY = 'hp_manual_upgrades_v1';
 
 function createDefaultUpgradeSaveState(): UpgradeSaveState {
   return {
-    upgradePoints: 0,
+    // TEMPORARY TEST GRANT — remove before public demo (spec六: "新存檔／
+    // 清除存檔後，初始 upgradePoints 為 1000"). testGrantVersion is already
+    // current here, so applyTestGrantIfNeeded() below is a no-op for a
+    // brand-new save — it only ever does anything for a save that predates
+    // this field.
+    upgradePoints: TEST_STARTING_UPGRADE_POINTS,
     levels: { multiCarry: 0, heavyHandling: 0, moveSpeed: 0, similarCargoSense: 0 },
     settledDayId: null,
+    testGrantVersion: TEST_GRANT_VERSION,
   };
 }
 
@@ -36,6 +45,11 @@ function mergeUpgradeSaveState(saved: Partial<UpgradeSaveState> | null): Upgrade
     upgradePoints: typeof saved.upgradePoints === 'number' && saved.upgradePoints >= 0 ? saved.upgradePoints : base.upgradePoints,
     levels,
     settledDayId: typeof saved.settledDayId === 'number' ? saved.settledDayId : base.settledDayId,
+    // TEMPORARY TEST GRANT — remove before public demo. A save written
+    // before this field existed has `saved.testGrantVersion === undefined`,
+    // which falls through to null here — applyTestGrantIfNeeded() reads
+    // exactly that null as "not yet applied to this save".
+    testGrantVersion: typeof saved.testGrantVersion === 'number' ? saved.testGrantVersion : null,
   };
 }
 
@@ -64,7 +78,23 @@ export class UpgradeSystem {
     this.pickupSystem = pickupSystem;
     this.playerController = playerController;
     this.state = mergeUpgradeSaveState(this.storage.getJSON<UpgradeSaveState>(UPGRADE_STORAGE_KEY));
+    this.applyTestGrantIfNeeded();
     this.applyAllEffects();
+  }
+
+  // TEMPORARY TEST GRANT — remove before public demo. One-time migration
+  // (spec六): a save that predates TEST_GRANT_VERSION gets bumped up to at
+  // least TEST_STARTING_UPGRADE_POINTS, exactly once — saved immediately so
+  // a later reload's testGrantVersion check already matches and skips this
+  // entirely (spec: "之後重新整理不得重複補點"; unrelated to settledDayId's
+  // own once-per-DAY gate, this is once-per-SAVE). A brand-new save is
+  // already at TEST_STARTING_UPGRADE_POINTS with testGrantVersion already
+  // current (see createDefaultUpgradeSaveState), so this is a no-op for it.
+  private applyTestGrantIfNeeded(): void {
+    if (this.state.testGrantVersion === TEST_GRANT_VERSION) return;
+    this.state.upgradePoints = Math.max(this.state.upgradePoints, TEST_STARTING_UPGRADE_POINTS);
+    this.state.testGrantVersion = TEST_GRANT_VERSION;
+    this.save();
   }
 
   get upgradePoints(): number {

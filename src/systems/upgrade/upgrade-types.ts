@@ -40,4 +40,9 @@ export interface UpgradeSaveState {
    * points. Guards against a page refresh re-awarding the same day's
    * points twice (spec四). `null` before any day has ever completed. */
   settledDayId: number | null;
+  // TEMPORARY TEST GRANT — remove before public demo. null for any save
+  // that predates the test-points grant (upgrade-system.ts's
+  // applyTestGrantIfNeeded uses this to apply it exactly once — see
+  // upgrade-data.ts's TEST_GRANT_VERSION doc comment).
+  testGrantVersion: number | null;
 }

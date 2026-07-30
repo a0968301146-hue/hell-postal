@@ -10,7 +10,7 @@ import { SCENE_CONFIG } from '../world-layout';
 import { LOST_FOUND_ROOM, LOST_FOUND_COUNTER, LOST_FOUND_COUNTER_HALF_EXTENTS } from '../../data/world/lost-found-layout-data';
 import {
   LOST_ITEM_PRESETS, LostItemPreset, LOST_FOUND_CASES, LostFoundCaseDef, LOST_FOUND_WRONG_ITEM_TEXT, LOST_FOUND_MISSED_TEXT,
-  DECOY_LOST_ITEM_COUNT, buildLostItemGeometry,
+  DECOY_LOST_ITEM_COUNT, DAILY_LOST_FOUND_NPC_COUNT, buildLostItemGeometry,
 } from './lost-found-data';
 import { UNLOAD_PORTS, UNLOAD_SPAWN_JITTER_X, UNLOAD_SPAWN_JITTER_Z, UNLOAD_BURST_CONFIG } from '../daily-flow';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
@@ -28,6 +28,30 @@ function randRange(min: number, max: number): number {
 
 function scaleExtents(e: { x: number; y: number; z: number }, s: number): { x: number; y: number; z: number } {
   return { x: e.x * s, y: e.y * s, z: e.z * s };
+}
+
+function shuffle<T>(arr: T[]): T[] {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/** One NPC's own slot in today's queue ("Add sequential lost-found visitors
+ * and held cargo feedback" round一) — 'queued' (not yet spawned) ->
+ * 'entering' (walking in) -> 'waiting' (at counter) -> 'leaving' (walking
+ * out, outcome already decided) -> 'completed'|'missed' (fully gone).
+ * `targetItemId` is null until spawnTodaysLostItems() actually spawns the
+ * physical item (all 3 targets spawn together, independent of how far the
+ * queue itself has progressed — see that method's own doc comment), and is
+ * set back to null once handed over (disposeLostItem). */
+type LostFoundQueueState = 'queued' | 'entering' | 'waiting' | 'leaving' | 'completed' | 'missed';
+interface LostFoundQueueEntry {
+  caseDef: LostFoundCaseDef;
+  targetItemId: string | null;
+  state: LostFoundQueueState;
 }
 
 /**
@@ -65,25 +89,32 @@ export class LostFoundSystem {
   private previewRenderer: LostItemPreviewRenderer;
   private cabinetSystem: LostFoundCabinetSystem;
 
-  private todaysCase: LostFoundCaseDef | null = null;
-  private todaysLostItemId: string | null = null;
-  /** This round's decoy items (spec五) — never disposed intra-day (only the
-   * correctly-handed-over target ever gets removed before day reset). */
+  /** Today's fixed 3-NPC queue, in appearance order ("Add sequential
+   * lost-found visitors and held cargo feedback" round一) — see
+   * LostFoundQueueEntry's own doc comment for the per-entry state machine. */
+  private todaysQueue: LostFoundQueueEntry[] = [];
+  /** Index into todaysQueue of whichever entry is currently entering/
+   * waiting/leaving — -1 whenever nobody is (before the day's first NPC
+   * spawns, briefly between one NPC fully leaving and the next starting to
+   * enter, or once all 3 are done). Spec: "場上任何時候最多只能有1位失物
+   * NPC" — enforced structurally here since advanceQueue() only ever starts
+   * the next entry once this is back to -1. */
+  private activeIndex = -1;
+  /** Set the instant the active entry's outcome is decided (on a correct
+   * hand-over, or on a settleAtDeparture-forced departure) — resolved into
+   * the entry's own terminal 'completed'/'missed' state once npcSystem
+   * physically finishes walking out (state 'gone'), see update(). */
+  private activeOutcome: 'completed' | 'missed' | null = null;
+  /** This round's decoy items (spec一, still DECOY_LOST_ITEM_COUNT=5 total
+   * per day) — never disposed intra-day (only a correctly-handed-over
+   * target ever gets removed before day reset). */
   private todaysDecoyItemIds: string[] = [];
   private todaysTotalLostItemCount = 0;
-  private npcSpawnedToday = false;
-  private caseSolvedToday = false;
-  /** Set true the first time the player presses E at the counter while the
-   * NPC is waiting, regardless of what they're holding — including an
-   * empty-handed "talk only" press (spec三 case3) — deliberately NOT the
-   * same thing as caseSolvedToday. Read by settleAtDeparture() to decide
-   * whether 載具出發 owes a missed-interaction penalty. */
-  private lostFoundNpcInteractedToday = false;
-  /** Set true once settleAtDeparture() has actually applied the
-   * missed-interaction penalty for today — guards against a second
-   * 載具出發 press double-penalizing or double-dismissing the NPC. */
-  private missedToday = false;
-  private dayIndex = 0;
+  /** Set once settleAtDeparture() has already forced the (still-active, if
+   * any) NPC to leave and frozen the day's missed count — guards against a
+   * second 載具出發 press double-penalizing or double-dismissing (spec:
+   * "settleAtDeparture永遠不阻止發車，但只套用一次結算"). */
+  private settlementAppliedToday = false;
   private lostItemInstanceCounter = 0;
   /** Counts down after onDailyUnloadStarted() before today's lost items
    * actually burst in — matches roughly how long UnloadingSystem's own
@@ -134,72 +165,112 @@ export class LostFoundSystem {
     this.scene.add(label);
   }
 
-  /** Picks the next case in rotation and advances dayIndex — the ONE place
-   * this happens. Called from onDailyUnloadStarted() below, immediately
-   * followed by spawnNpcForToday() — case and NPC are now always
-   * established together, in the same call, so settleAtDeparture() further
-   * down never needs its own fallback case-creation path. */
-  private prepareDailyCase(): void {
-    this.todaysCase = LOST_FOUND_CASES[this.dayIndex % LOST_FOUND_CASES.length];
-    this.dayIndex++;
+  /** Draws DAILY_LOST_FOUND_NPC_COUNT (3) DISTINCT cases from the pool —
+   * every LOST_FOUND_CASES entry maps to a different lostItemPresetId (see
+   * that file's own doc comment), so any 3 distinct cases automatically
+   * request 3 distinct items with no separate dedup check needed (spec一:
+   * "不可有兩位NPC要求同一件物品"). Builds all 3 queue entries up front, all
+   * 'queued' — advanceQueue() (called right after, from
+   * onDailyUnloadStarted) is what actually starts the first one entering. */
+  private prepareDailyCases(): void {
+    const chosen = shuffle(LOST_FOUND_CASES).slice(0, DAILY_LOST_FOUND_NPC_COUNT);
+    this.todaysQueue = chosen.map((caseDef) => ({ caseDef, targetItemId: null, state: 'queued' as const }));
+    this.activeIndex = -1;
+    this.activeOutcome = null;
   }
 
-  private spawnNpcForToday(): void {
-    if (this.npcSpawnedToday || !this.todaysCase) return;
-    this.npcSpawnedToday = true;
-    const preset = LOST_ITEM_PRESETS.find((p) => p.id === this.todaysCase!.lostItemPresetId);
+  /** Starts the NEXT still-'queued' entry entering, if nobody is currently
+   * active (spec一: "場上任何時候最多只能有1位失物NPC" / "上一位完全離場後
+   * 下一位才出現") — a no-op whenever activeIndex !== -1 (someone's still
+   * entering/waiting/leaving) or every entry has already been dispatched.
+   * The ONLY two callers are onDailyUnloadStarted (kicks off entry #1) and
+   * update()'s own leaving->gone resolution (kicks off whichever is next),
+   * so a new NPC only ever starts walking in from exactly one of those two
+   * moments. */
+  private advanceQueue(): void {
+    if (this.activeIndex !== -1) return;
+    const idx = this.todaysQueue.findIndex((e) => e.state === 'queued');
+    if (idx === -1) return;
+    this.activeIndex = idx;
+    const entry = this.todaysQueue[idx];
+    entry.state = 'entering';
+    const preset = LOST_ITEM_PRESETS.find((p) => p.id === entry.caseDef.lostItemPresetId);
     if (preset) this.npcSystem.spawn(preset);
+    this.refreshQueueStatusUI();
+  }
+
+  private refreshQueueStatusUI(): void {
+    const completed = this.todaysQueue.filter((e) => e.state === 'completed').length;
+    const currentPosition = this.activeIndex !== -1 ? this.activeIndex + 1 : null;
+    this.ui.updateQueueStatus(completed, this.todaysQueue.length, currentPosition);
   }
 
   /** Wired into UnloadingSystem's existing onFirstUnload callback (game.ts)
    * — fires once, right as the daily unload burst begins. Prepares today's
-   * case AND spawns its NPC together, right here (spec一: "每日按下卸貨按鈕
-   * →建立當日失物案件與失物→同時生成當日唯一一名NPC"). Also arms the lost
-   * items' own short burst-spawn delay, so the physical target + decoys
-   * still burst in from the north ports alongside the regular cargo. */
+   * 3-case queue and starts the first NPC entering, together, right here
+   * (spec一: "每日按下卸貨按鈕→建立當日失物案件與失物→同時生成第1位NPC").
+   * Also arms the lost items' own short burst-spawn delay, so the physical
+   * targets + decoys still burst in from the north ports alongside the
+   * regular cargo — independent of NPC queue progress (see
+   * spawnTodaysLostItems's own doc comment). */
   onDailyUnloadStarted(): void {
-    this.prepareDailyCase();
+    this.prepareDailyCases();
     this.lostItemSpawnTimer = UNLOAD_PORTS[0].gate.openDuration + UNLOAD_BURST_CONFIG.chargeUpDuration;
-    this.spawnNpcForToday();
+    this.advanceQueue();
   }
 
   /** Wired into VehicleControlSystem's onShippingStarted callback — fires
-   * the instant the player presses 載具出發 (spec三/七/八), well before the
-   * six vehicles actually finish their multi-second departure animation.
-   * Builds and returns ONE frozen LostFoundSettlementInput snapshot,
-   * covering two INDEPENDENT line items (spec: "失物收納扣分與『未與NPC互
-   * 動』扣分是兩條獨立項目"):
-   *   - missed: the existing missed-interaction penalty (spec八 case一) —
-   *     only true if the player never talked to the NPC at all today.
+   * the instant the player presses 載具出發, well before the six vehicles
+   * actually finish their multi-second departure animation. Builds and
+   * returns ONE frozen LostFoundSettlementInput snapshot, covering two
+   * INDEPENDENT line items (spec: "失物收納扣分與『未接待NPC』扣分是兩條獨
+   * 立項目"):
+   *   - missedCount: how many of today's 3 NPCs are NOT 'completed' ("Add
+   *     sequential lost-found visitors and held cargo feedback" round一/六:
+   *     "當前尚未完成的NPC與佇列中尚未出現的NPC，都各算1位未接待" — no
+   *     longer special-cased by whether the player ever talked to a given
+   *     NPC, unlike the old single-NPC flow).
    *   - stored/unstored: how many of today's still-existing lost items
-   *     (the target if not yet handed over, plus every decoy) are
-   *     currently resting in a valid cabinet slot (spec七) — computed
-   *     regardless of the missed/interacted/solved state, so e.g. an
-   *     interacted-but-not-yet-returned case (spec八 case二) still gets its
-   *     target counted here if left unstored.
+   *     (any not-yet-handed-over target, plus every decoy) are currently
+   *     resting in a valid cabinet slot (spec: computed fresh every call,
+   *     independent of missedCount).
    *
    * Never blocks departure — the six vehicles leave regardless either way.
-   * If the player already talked to the NPC, `missed` stays false and the
-   * NPC/case are left alone so an already-started hand-over can still
-   * finish later today (spec八 case二: "已互動但尚未交還...NPC於發車結算時
-   * 離開"). If truly missed, the NPC leaves via the west gate right here
-   * and the case is marked missed, but the target item stays in the world
-   * (spec八 case一: "目標失物留在場景中，仍可被失物收納結算檢查"). */
+   * The currently-active NPC (if any) is forced to leave/despawn and the
+   * ENTIRE queue is cleared of anything not yet completed (spec: "清除當前
+   * NPC與整個佇列...不阻止玩家結束當天") — guarded by settlementAppliedToday
+   * so a second 載具出發 press can't re-dismiss an already-gone NPC or
+   * double-count the missed total; missedCount/handedOver/stored/unstored
+   * stay safe to recompute on every call either way (pure reads). */
   settleAtDeparture(): LostFoundSettlementInput {
-    let missed = false;
-    if (this.todaysCase && !this.missedToday && !this.caseSolvedToday && !this.lostFoundNpcInteractedToday) {
-      this.missedToday = true;
-      missed = true;
-      if (this.npcSystem.state === 'waiting') {
-        this.npcSystem.updateBubbleText(LOST_FOUND_MISSED_TEXT);
-        this.npcSystem.startLeaving();
-      } else if (this.npcSystem.state === 'walkingIn') {
-        this.npcSystem.forceRemove();
+    if (!this.settlementAppliedToday) {
+      this.settlementAppliedToday = true;
+      if (this.activeIndex !== -1) {
+        const entry = this.todaysQueue[this.activeIndex];
+        if (this.npcSystem.state === 'waiting') {
+          this.npcSystem.updateBubbleText(LOST_FOUND_MISSED_TEXT);
+          this.npcSystem.startLeaving();
+        } else if (this.npcSystem.state === 'walkingIn') {
+          this.npcSystem.forceRemove();
+        }
+        entry.state = 'missed';
+        this.activeIndex = -1;
+        this.activeOutcome = null;
+        this.refreshQueueStatusUI();
       }
     }
 
+    let missedCount = 0;
+    let handedOver = 0;
+    for (const entry of this.todaysQueue) {
+      if (entry.state === 'completed') handedOver++;
+      else missedCount++;
+    }
+
     const remainingIds: string[] = [];
-    if (this.todaysLostItemId) remainingIds.push(this.todaysLostItemId);
+    for (const entry of this.todaysQueue) {
+      if (entry.targetItemId) remainingIds.push(entry.targetItemId);
+    }
     for (const id of this.todaysDecoyItemIds) {
       if (this.interactables.has(id)) remainingIds.push(id);
     }
@@ -211,35 +282,41 @@ export class LostFoundSystem {
     const unstored = remainingIds.length - stored;
 
     return {
-      missed,
+      missedCount,
       total: this.todaysTotalLostItemCount,
-      handedOver: this.caseSolvedToday ? 1 : 0,
+      handedOver,
       stored,
       unstored,
     };
   }
 
-  /** Spawns today's target item plus DECOY_LOST_ITEM_COUNT decoys (spec五)
-   * — all excluded from CargoSystem/DailyFlowSystem.registerDailyCargo, so
-   * the shared interactables map is the ONLY place any of them exist,
-   * automatically excluding every one from dailyCargoIds-driven daily
-   * total/vehicle cargoBounds scan/unshipped scoring/day-reset cargo
-   * cleanup with zero extra guards needed in any of those systems. Decoys
-   * are drawn from the preset pool MINUS today's actual target, so they can
-   * never all duplicate it; drawing distinct presets (rather than the same
-   * one repeated) also means they're never all identical to each other. */
-  private spawnTodaysLostItems(caseDef: LostFoundCaseDef): void {
-    const targetPreset = LOST_ITEM_PRESETS.find((p) => p.id === caseDef.lostItemPresetId);
-    if (!targetPreset) return;
+  /** Spawns all 3 of today's target items PLUS DECOY_LOST_ITEM_COUNT decoys
+   * ("Add sequential lost-found visitors and held cargo feedback" round
+   * 一, still fired once, off lostItemSpawnTimer, independent of how far
+   * the NPC queue has progressed — a target item can burst into the world
+   * well before its own NPC has even started walking in, exactly like the
+   * old single-NPC flow did) — all excluded from CargoSystem/
+   * DailyFlowSystem.registerDailyCargo, so the shared interactables map is
+   * the ONLY place any of them exist, automatically excluding every one
+   * from dailyCargoIds-driven daily total/vehicle cargoBounds scan/
+   * unshipped scoring/day-reset cargo cleanup with zero extra guards needed
+   * in any of those systems. Decoys are drawn from the preset pool MINUS
+   * all 3 of today's targets, so they can never duplicate any of them;
+   * drawing distinct presets (rather than the same one repeated) also means
+   * they're never all identical to each other. */
+  private spawnTodaysLostItems(): void {
+    for (const entry of this.todaysQueue) {
+      const preset = LOST_ITEM_PRESETS.find((p) => p.id === entry.caseDef.lostItemPresetId);
+      if (preset) entry.targetItemId = this.spawnLostItem(preset, `target-${entry.caseDef.id}`);
+    }
 
-    this.todaysLostItemId = this.spawnLostItem(targetPreset, 'target');
-
-    const decoyPool = LOST_ITEM_PRESETS.filter((p) => p.id !== caseDef.lostItemPresetId);
-    const shuffled = [...decoyPool].sort(() => Math.random() - 0.5);
+    const targetPresetIds = new Set(this.todaysQueue.map((e) => e.caseDef.lostItemPresetId));
+    const decoyPool = LOST_ITEM_PRESETS.filter((p) => !targetPresetIds.has(p.id));
+    const shuffled = shuffle(decoyPool);
     const decoyPresets = shuffled.slice(0, DECOY_LOST_ITEM_COUNT);
     this.todaysDecoyItemIds = decoyPresets.map((preset, i) => this.spawnLostItem(preset, `decoy${i}`));
 
-    this.todaysTotalLostItemCount = 1 + this.todaysDecoyItemIds.length;
+    this.todaysTotalLostItemCount = this.todaysQueue.length + this.todaysDecoyItemIds.length;
   }
 
   private spawnLostItem(preset: LostItemPreset, idSuffix: string): string {
@@ -304,37 +381,36 @@ export class LostFoundSystem {
     return onEastSide && dist < SCENE_CONFIG.interactionDistance + 1;
   }
 
-  /** Press E at the counter while the day's NPC is waiting (spec三) — three
-   * independent cases, judged purely by id match against today's actual
-   * spawned target item so handing over ordinary cargo (or a decoy, or the
-   * wrong day's leftover item) always reads as "wrong" with no separate
-   * "is this even a lost item" gate needed:
-   *   1. heldId === todaysLostItemId — correct hand-over: removed from the
-   *      player's hand, world model/physics/interaction registration
-   *      cleared, case marked complete, NPC thanks and leaves.
-   *   2. heldId is some OTHER id (wrong item, incl. ordinary cargo) — hand-
-   *      over refused, item stays held (never consumed — no
-   *      forceDropHeld()/disposeLostItem() call in this branch), shows the
-   *      wrong-item hint.
-   *   3. heldId === null (empty-handed) — counts only as talking to the
-   *      NPC; the NPC's own head bubble already persistently shows its
-   *      target item's name/preview while waiting, so nothing further is
-   *      shown here and the case is NOT completed.
-   * ANY of the three sets lostFoundNpcInteractedToday = true on this first
-   * press, regardless of which case fired or whether it succeeded — this is
-   * deliberately NOT the same thing as caseSolvedToday. */
+  /** Press E at the counter while the CURRENT queue entry's NPC is waiting
+   * — two live outcomes, judged purely by id match against that entry's own
+   * spawned target item so handing over ordinary cargo (or a decoy, or
+   * another entry's target) always reads as "wrong" with no separate "is
+   * this even a lost item" gate needed:
+   *   1. heldId === the active entry's targetItemId — correct hand-over:
+   *      removed from the player's hand, world model/physics/interaction
+   *      registration cleared, entry transitions to 'leaving' with a
+   *      pending 'completed' outcome, NPC thanks and walks out.
+   *   2. heldId is some OTHER id (wrong item, incl. ordinary cargo or
+   *      another NPC's own target) — hand-over refused, item stays held
+   *      (never consumed), shows the wrong-item hint.
+   * An empty-handed press (heldId===null) does nothing now — the old
+   * "counts as talking to the NPC" distinction no longer affects the
+   * end-of-day missed count (spec一/六: any NPC not fully completed by
+   * departure counts as missed regardless of whether the player ever
+   * interacted), and the NPC's own head bubble already persistently shows
+   * its target's name/preview while waiting, so there's nothing further to
+   * show here either way. */
   tryConfirmAtCounter(heldId: string | null): void {
-    if (!this.isNpcWaiting || !this.todaysCase) return;
-    this.lostFoundNpcInteractedToday = true;
+    if (!this.isNpcWaiting || this.activeIndex === -1 || heldId === null) return;
+    const entry = this.todaysQueue[this.activeIndex];
 
-    if (heldId === null) return;
-
-    if (heldId === this.todaysLostItemId) {
+    if (heldId === entry.targetItemId) {
       this.pickupSystem.forceDropHeld();
       this.disposeLostItem(heldId);
-      this.npcSystem.updateBubbleText(this.todaysCase.successText);
+      this.npcSystem.updateBubbleText(entry.caseDef.successText);
+      entry.state = 'leaving';
+      this.activeOutcome = 'completed';
       this.npcSystem.startLeaving();
-      this.caseSolvedToday = true;
     } else {
       this.ui.showWrong(LOST_FOUND_WRONG_ITEM_TEXT);
     }
@@ -349,26 +425,29 @@ export class LostFoundSystem {
     if (obj.rigidBody) this.physics.removeRigidBody(obj.rigidBody);
     this.interactables.delete(id);
     this.cabinetSystem.untrack(id);
-    if (this.todaysLostItemId === id) this.todaysLostItemId = null;
+    const entry = this.todaysQueue.find((e) => e.targetItemId === id);
+    if (entry) entry.targetItemId = null;
   }
 
   /** Wired into DailyFlowSystem's existing resetTools callback (game.ts) —
-   * fires on every day transition. Clears any NOT-yet-completed case's NPC
-   * and every still-existing lost item (target + decoys — spec: "進入下一
-   * 天時，清除尚未完成案件的NPC與失物"), resets the cabinet's own slot
-   * occupancy, and resets every daily flag for tomorrow — a no-op for an
-   * already-solved case's target, since todaysLostItemId is already null by
-   * then (decoys still get swept either way). */
+   * fires on every day transition. Clears whichever NPC is still active (if
+   * any) and every still-existing lost item across the WHOLE queue (targets
+   * + decoys — spec: "進入下一天時，清除尚未完成案件的NPC與失物"), resets
+   * the cabinet's own slot occupancy, and resets every daily field for
+   * tomorrow — a no-op for an already-completed entry's own target, since
+   * disposeLostItem already cleared its targetItemId back to null when it
+   * was handed over (decoys still get swept either way). */
   resetDaily(): void {
     this.npcSystem.forceRemove();
-    if (this.todaysLostItemId) {
-      const obj = this.interactables.get(this.todaysLostItemId);
+    for (const entry of this.todaysQueue) {
+      if (!entry.targetItemId) continue;
+      const obj = this.interactables.get(entry.targetItemId);
       if (obj) {
         // Force it out of the player's hands first, if they're still
         // holding it, so playerData doesn't dangle-reference the
         // about-to-be-deleted interactable.
         if (obj.isHeld) this.pickupSystem.forceDropHeld();
-        this.disposeLostItem(this.todaysLostItemId);
+        this.disposeLostItem(entry.targetItemId);
       }
     }
     for (const id of this.todaysDecoyItemIds) {
@@ -378,26 +457,47 @@ export class LostFoundSystem {
       this.disposeLostItem(id);
     }
     this.cabinetSystem.resetDaily();
-    this.todaysCase = null;
-    this.todaysLostItemId = null;
+    this.todaysQueue = [];
+    this.activeIndex = -1;
+    this.activeOutcome = null;
     this.todaysDecoyItemIds = [];
     this.todaysTotalLostItemCount = 0;
     this.lostItemSpawnTimer = null;
-    this.npcSpawnedToday = false;
-    this.caseSolvedToday = false;
-    this.lostFoundNpcInteractedToday = false;
-    this.missedToday = false;
+    this.settlementAppliedToday = false;
+    this.ui.hideQueueStatus();
   }
 
   update(deltaTime: number): void {
     this.npcSystem.update(deltaTime);
     this.cabinetSystem.update(deltaTime);
 
+    // Resolve the active entry's own state against the physical NPC's walk
+    // animation (spec一: sequencing is driven by the SAME npcSystem this
+    // file already owned, not a second movement system) — 'entering'
+    // becomes 'waiting' the moment the NPC physically arrives; 'leaving'
+    // resolves into its already-decided outcome ('completed' from
+    // tryConfirmAtCounter, or 'missed' if settleAtDeparture forced it) ONLY
+    // once the NPC has fully walked out and despawned, at which point the
+    // NEXT queued entry (if any) is free to start entering (spec: "上一位
+    // 真正抵達出口並despawn後，才生成下一位").
+    if (this.activeIndex !== -1) {
+      const entry = this.todaysQueue[this.activeIndex];
+      if (entry.state === 'entering' && this.npcSystem.state === 'waiting') {
+        entry.state = 'waiting';
+      } else if (entry.state === 'leaving' && this.npcSystem.state === 'gone') {
+        entry.state = this.activeOutcome ?? 'missed';
+        this.activeOutcome = null;
+        this.activeIndex = -1;
+        this.refreshQueueStatusUI();
+        this.advanceQueue();
+      }
+    }
+
     if (this.lostItemSpawnTimer !== null) {
       this.lostItemSpawnTimer -= deltaTime;
       if (this.lostItemSpawnTimer <= 0) {
         this.lostItemSpawnTimer = null;
-        if (this.todaysCase) this.spawnTodaysLostItems(this.todaysCase);
+        if (this.todaysQueue.length > 0) this.spawnTodaysLostItems();
       }
     }
   }

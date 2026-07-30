@@ -11,13 +11,18 @@
  * lost-found <-> scoring circular import; scoring-types.ts has no deps of
  * its own, so it's the neutral home for this shape). */
 export interface LostFoundSettlementInput {
-  /** Today's NPC was never talked to at all before 載具出發 (spec八) — a
-   * separate flat penalty from lostItemUnstoredCount below. */
-  missed: boolean;
-  /** How many lost items (target + decoys) were spawned today. */
+  /** How many of today's NPCs (DAILY_LOST_FOUND_NPC_COUNT, currently 3)
+   * were NOT successfully completed before 載具出發 ("Add sequential
+   * lost-found visitors and held cargo feedback" round一/六: "每位未接待NPC
+   * 分別套用目前既有的漏接懲罰" — replaces the old single `missed: boolean`
+   * now that more than one NPC can be outstanding at once; the PER-EVENT
+   * penalty VALUE itself is unchanged, see scoring-data.ts). */
+  missedCount: number;
+  /** How many lost items (targets + decoys) were spawned today. */
   total: number;
-  /** Whether today's target item was successfully handed to its NPC. */
-  handedOver: 0 | 1;
+  /** How many of today's NPCs were successfully handed their target item —
+   * was a single 0|1, now 0..DAILY_LOST_FOUND_NPC_COUNT. */
+  handedOver: number;
   stored: number;
   unstored: number;
 }
@@ -37,13 +42,16 @@ export interface DepartureSettlement {
   shipped: number;
   unshipped: number;
   penalty: number;
-  lostFoundMissed: boolean;
+  /** How many of today's lost-found NPCs went uncompleted — was a single
+   * boolean, now a count (0..DAILY_LOST_FOUND_NPC_COUNT), see
+   * LostFoundSettlementInput.missedCount's own doc comment. */
+  lostFoundMissedCount: number;
   lostFoundPenalty: number;
-  /** Lost-item storage settlement fields (spec七: 今日失物總數/成功交還0或1/
-   * 已收納數量/未收納數量/失物收納扣分) — independent of lostFoundMissed/
+  /** Lost-item storage settlement fields (spec七: 今日失物總數/成功交還數/
+   * 已收納數量/未收納數量/失物收納扣分) — independent of lostFoundMissedCount/
    * lostFoundPenalty above (spec: "兩條獨立項目"). */
   lostItemTotal: number;
-  lostItemHandedOver: 0 | 1;
+  lostItemHandedOver: number;
   lostItemStoredCount: number;
   lostItemUnstoredCount: number;
   lostItemPenalty: number;

@@ -272,23 +272,31 @@ export class HUD {
    * lostFoundMissed/lostFoundPenalty above, spec: "兩條獨立項目"). */
   showDayCompleteSummary(params: {
     total: number; shipped: number; unshipped: number; penalty: number;
-    lostFoundMissed: boolean; lostFoundPenalty: number;
-    lostItemTotal: number; lostItemHandedOver: 0 | 1; lostItemStoredCount: number; lostItemUnstoredCount: number; lostItemPenalty: number;
+    lostFoundMissedCount: number; lostFoundPenalty: number;
+    lostItemTotal: number; lostItemHandedOver: number; lostItemStoredCount: number; lostItemUnstoredCount: number; lostItemPenalty: number;
     mailTotal: number; mailShipped: number; mailUnshipped: number; mailPenalty: number;
     finalScore: number; onContinue: () => void;
   }): void {
     const {
-      total, shipped, unshipped, penalty, lostFoundMissed, lostFoundPenalty,
+      total, shipped, unshipped, penalty, lostFoundMissedCount, lostFoundPenalty,
       lostItemTotal, lostItemHandedOver, lostItemStoredCount, lostItemUnstoredCount, lostItemPenalty,
       mailTotal, mailShipped, mailUnshipped, mailPenalty,
       finalScore, onContinue,
     } = params;
-    const lostFoundLine = lostFoundMissed
-      ? `<p>失物招領：未接待</p><p>失物招領扣分：-${lostFoundPenalty}</p>`
-      : `<p>失物招領：已接待</p>`;
+    // "Add sequential lost-found visitors and held cargo feedback" round
+    // 一/六: up to DAILY_LOST_FOUND_NPC_COUNT NPCs a day now, so this line
+    // reports a COUNT of missed NPCs rather than a single yes/no.
+    const lostFoundLine = lostFoundMissedCount > 0
+      ? `<p>失物招領：未接待 ${lostFoundMissedCount} 位</p><p>失物招領扣分：-${lostFoundPenalty}</p>`
+      : `<p>失物招領：全數已接待</p>`;
+    // Denominator = today's total NPC count — every one of today's NPCs is
+    // either handed-over (counted in lostItemHandedOver) or missed (counted
+    // in lostFoundMissedCount) by settlement time, so the two sums to it
+    // without needing a separate "how many NPCs today" param.
+    const npcCountToday = lostItemHandedOver + lostFoundMissedCount;
     const lostItemLine = `
       <p>今日失物總數：${lostItemTotal}</p>
-      <p>成功交還：${lostItemHandedOver}／1</p>
+      <p>成功交還：${lostItemHandedOver}／${npcCountToday}</p>
       <p>已收納失物：${lostItemStoredCount}</p>
       <p>未收納失物：${lostItemUnstoredCount}</p>
       <p>失物收納扣分：${lostItemPenalty > 0 ? '-' : ''}${lostItemPenalty}</p>

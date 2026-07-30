@@ -181,7 +181,16 @@ export class PlayerController {
     else if (bindings.matches('moveBackward', code)) this.moveBackward = true;
     else if (bindings.matches('moveLeft', code)) this.moveLeft = true;
     else if (bindings.matches('moveRight', code)) this.moveRight = true;
-    else if (bindings.matches('sprint', code)) this.isSprinting = true;
+    else if (bindings.matches('sprint', code)) {
+      this.isSprinting = true;
+      // "Add sequential lost-found visitors and held cargo feedback" round
+      // 四: large-category cargo blocks sprint entirely, at every 重物適應
+      // level (only the SLOWDOWN factor scales with that upgrade — see
+      // heavySlowdownFactor — sprint itself never comes back until the item
+      // is set down). Toast is a one-shot cue on the actual keydown, not a
+      // per-frame nag while Shift stays held.
+      if (this.isHoldingLargeCargo()) this.hud.showToast('搬運大型貨物時無法衝刺');
+    }
     else if (bindings.matches('jump', code)) { if (this.grounded) this.wantsJump = true; }
 
     if (
@@ -208,9 +217,16 @@ export class PlayerController {
     if (!this._isLocked || !this._inputEnabled) return;
 
     // Pushing a dolly overrides sprinting — can't run while pushing a cart.
+    // Holding large-category cargo blocks sprint outright too ("Add
+    // sequential lost-found visitors and held cargo feedback" round四:
+    // "即使玩家按住Shift，也只能使用當前步行速度" — at EVERY 重物適應 level,
+    // never just the ones below max, see heavySlowdownFactor's own doc
+    // comment for why only the slowdown FACTOR (not this sprint gate) scales
+    // with that upgrade).
+    const isLargeCargo = this.isHoldingLargeCargo();
     const speedMult = this.playerData.state === 'pushing-dolly'
       ? DOLLY_PUSH_SPEED_MULTIPLIER
-      : (this.isSprinting ? SCENE_CONFIG.sprintMultiplier : 1);
+      : (this.isSprinting && !isLargeCargo ? SCENE_CONFIG.sprintMultiplier : 1);
     // Upgrade C: always computed from the ORIGINAL SCENE_CONFIG.playerSpeed
     // constant, never a previously-boosted value (spec五C). Upgrade B's
     // large-cargo slowdown applies ON TOP of this post-upgrade base speed
@@ -219,7 +235,7 @@ export class PlayerController {
     // gravity (SCENE_CONFIG.sprintMultiplier/jumpHeight/gravity) are never
     // touched by either upgrade.
     const upgradedBaseSpeed = SCENE_CONFIG.playerSpeed * (1 + this.moveSpeedBonusFraction);
-    const heavyFactor = this.isHoldingLargeCargo() ? this.heavySlowdownFactor() : 1;
+    const heavyFactor = isLargeCargo ? this.heavySlowdownFactor() : 1;
     const speed = upgradedBaseSpeed * speedMult * heavyFactor * deltaTime;
 
     // Get forward/right on XZ

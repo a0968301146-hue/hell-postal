@@ -381,7 +381,7 @@ export class VehicleControlSystem {
     // below, folded into the same settleDeparture() call as the
     // unshipped-cargo penalty, so ScoringSystem stays the one place any of
     // them is applied.
-    const lostFound = this.onShippingStarted?.() ?? { missed: false, total: 0, handedOver: 0 as const, stored: 0, unstored: 0 };
+    const lostFound = this.onShippingStarted?.() ?? { missedCount: 0, total: 0, handedOver: 0, stored: 0, unstored: 0 };
 
     const slotById = new Map(this.slots.map((s) => [s.config.id, s]));
     let shippedCorrect = 0;
@@ -669,8 +669,8 @@ export class VehicleControlSystem {
   private showDayCompleteSummary(): void {
     const settlement = this.pendingSettlement ?? {
       total: this.dailyFlowSystem.totalCargoCount, shipped: 0, unshipped: 0, penalty: 0,
-      lostFoundMissed: false, lostFoundPenalty: 0,
-      lostItemTotal: 0, lostItemHandedOver: 0 as const, lostItemStoredCount: 0, lostItemUnstoredCount: 0, lostItemPenalty: 0,
+      lostFoundMissedCount: 0, lostFoundPenalty: 0,
+      lostItemTotal: 0, lostItemHandedOver: 0, lostItemStoredCount: 0, lostItemUnstoredCount: 0, lostItemPenalty: 0,
       mailTotal: 0, mailShipped: 0, mailUnshipped: 0, mailPenalty: 0,
       finalScore: this.settingsManager.progress.score,
     };

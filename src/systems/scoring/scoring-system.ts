@@ -38,7 +38,11 @@ export class ScoringSystem {
     lostFound: LostFoundSettlementInput, mail: MailSettlementInput
   ): DepartureSettlement {
     const penalty = unshipped * UNSHIPPED_PENALTY_PER_ITEM;
-    const lostFoundPenalty = lostFound.missed ? LOST_FOUND_MISSED_PENALTY : 0;
+    // "Add sequential lost-found visitors and held cargo feedback" round
+    // 六: applies the SAME existing per-event penalty value once PER missed
+    // NPC (0..DAILY_LOST_FOUND_NPC_COUNT), not just once per day — the
+    // penalty VALUE itself (LOST_FOUND_MISSED_PENALTY) is unchanged.
+    const lostFoundPenalty = lostFound.missedCount * LOST_FOUND_MISSED_PENALTY;
     const lostItemPenalty = lostFound.unstored * LOST_ITEM_UNSTORED_PENALTY_PER_ITEM;
     // Each unshipped envelope uses the SAME per-item penalty as regular
     // cargo (spec十一: "每封未寄出信件使用現有『每件未出貨扣分值』") — no
@@ -52,7 +56,7 @@ export class ScoringSystem {
       shipped: shippedCorrect,
       unshipped,
       penalty,
-      lostFoundMissed: lostFound.missed,
+      lostFoundMissedCount: lostFound.missedCount,
       lostFoundPenalty,
       lostItemTotal: lostFound.total,
       lostItemHandedOver: lostFound.handedOver,

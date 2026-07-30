@@ -29,6 +29,23 @@ export interface MailBoxCarryHooks {
   restoreForThrow(obj: InteractableObject, linearVelocity: THREE.Vector3, angularVelocity: THREE.Vector3): void;
 }
 
+/** Held-item camera-local anchor baseline ("Add sequential lost-found
+ * visitors and held cargo feedback" round二: suggested starting values) —
+ * local to viewModelCamera, which sits at the local origin looking down -Z
+ * (see PickupSystem's constructor), so this is genuinely camera-relative,
+ * never a world coordinate. Roughly center-low: X=0 (screen-horizontal
+ * center), Y=-0.35 (below the crosshair), Z=-0.85 (in front of the camera,
+ * comfortably past the 0.01 near plane). */
+const HELD_ANCHOR_X = 0;
+const HELD_ANCHOR_Y = -0.35;
+const HELD_ANCHOR_Z = -0.85;
+
+/** A medium item's own rough footprint (matches cargo-shape-presets.ts's
+ * 'medium-box', ~0.4m) — distanceForSize()'s own reference point: items
+ * near this size sit at the anchor baseline unchanged, smaller ones get
+ * pulled a little closer, bigger ones get pushed further away and lower. */
+const HELD_MEDIUM_REF_DIM = 0.45;
+
 export class PickupSystem implements PickupPort {
   private camera: THREE.PerspectiveCamera;
   private worldScene: THREE.Scene;
@@ -53,6 +70,13 @@ export class PickupSystem implements PickupPort {
    * arrays are always kept the same length as `heldStack`. */
   private heldViewMeshes: THREE.Mesh[] = [];
   private heldViewBasePositions: THREE.Vector3[] = [];
+  /** Each held item's OWN size-driven distance/height (distanceForSize's
+   * result, before the recency slot offset is layered on top) — kept
+   * parallel to heldViewMeshes so reslotHeldViews() can recompute every
+   * item's final position from scratch whenever the stack's top changes,
+   * without needing to re-derive each one's own distance from its
+   * InteractableObject again. */
+  private heldViewOwnBase: { y: number; z: number }[] = [];
   /** Per-slot lateral offset applied on top of an item's own natural
    * held-position calculation, so up to 3 simultaneously-held items don't
    * visually overlap/jitter against each other ("Add bulletin board upgrade
@@ -217,6 +241,14 @@ export class PickupSystem implements PickupPort {
   // --- PICK UP ---
   pickUp(obj: InteractableObject): void {
     if (!this.canAddToHeld(obj)) return;
+
+    // "Add sequential lost-found visitors and held cargo feedback" round三:
+    // "切換物品...時，也必須立即清除震動" — a multi-carry pickup while
+    // already charging Q changes WHICH item is activeHeldItem (heldStack's
+    // new top), so any in-progress charge/shake belongs to the item being
+    // displaced and must not silently carry over onto the freshly-added
+    // one's own viewmodel.
+    if (this.isCharging) this.cancelCharge();
 
     if (!this.hasFiredFirstPickup) {
       this.hasFiredFirstPickup = true;
@@ -433,6 +465,30 @@ export class PickupSystem implements PickupPort {
     this.carriedEnvelopes = [];
   }
 
+  /** Per-item distance/height nudge off HELD_ANCHOR_* ("Add sequential
+   * lost-found visitors and held cargo feedback" round二: "依貨物Collider
+   * 尺寸自動調整距離...小型稍靠近、中型標準距離、大型稍微向下、向前移，避免
+   * 模型塞滿整個畫面"). Continuous in maxDim rather than a hard 3-way
+   * snap, so there's no visible pop as an item's size crosses a boundary.
+   * Containers (mail box/sorting box) get an extra fixed push on top — they
+   * read as noticeably bulkier than their raw maxDim alone would suggest,
+   * being held two-handed out in front rather than cradled like a box. */
+  private distanceForSize(maxDim: number, isContainer: boolean): { z: number; y: number } {
+    const oversize = Math.max(0, maxDim - HELD_MEDIUM_REF_DIM);
+    const undersize = Math.max(0, HELD_MEDIUM_REF_DIM - maxDim);
+    // Large cargo (up to ~1.6m on an axis, see LARGE_CARGO_SHAPE_PRESETS)
+    // needs a much bigger push than the 0.6/0.3 ratio below alone gives —
+    // tuned against an actual screenshot so the crosshair/prompt text stay
+    // clear of it (spec二: "避免模型塞滿整個畫面") without ever scaling it.
+    let z = HELD_ANCHOR_Z - oversize * 1.3 + undersize * 0.35;
+    let y = HELD_ANCHOR_Y - oversize * 0.65;
+    if (isContainer) {
+      z -= 0.55;
+      y -= 0.2;
+    }
+    return { z, y };
+  }
+
   /** Adds ONE more viewmodel clone for `obj` on top of whatever's already
    * held (never removes existing ones — see removeTopHeldViewMesh/
    * removeAllHeldViewMeshes below for how each one is later cleared). */
@@ -440,6 +496,14 @@ export class PickupSystem implements PickupPort {
     // Clone the entire mesh tree (including children like walls, labels for containers)
     const cloned = obj.mesh.clone(true);
     cloned.frustumCulled = false;
+    // pickUp() already set obj.mesh.visible = false (hiding the WORLD mesh)
+    // before calling this method — Object3D.clone() copies that `visible`
+    // flag too, so the freshly-cloned VIEWMODEL root would silently inherit
+    // it and never render (THREE's renderer skips a whole invisible
+    // subtree without even checking children). The viewmodel is a wholly
+    // separate THREE.Scene/clone from the world mesh, so it must always be
+    // visible on its own regardless of the source mesh's current state.
+    cloned.visible = true;
 
     // Remove hitproxies from viewmodel first (they're invisible and waste
     // raycasting) so we don't bother giving them owned resources below.
@@ -469,45 +533,59 @@ export class PickupSystem implements PickupPort {
 
     const viewMesh = cloned as THREE.Mesh;
 
-    // Calculate position based on size
+    // Held-item camera-local anchor ("Add sequential lost-found visitors
+    // and held cargo feedback" round二) — HELD_ANCHOR_* is local to
+    // viewModelCamera (which itself sits at the local origin, see the
+    // constructor), never a world-space coordinate, so this naturally
+    // tracks wherever the player is looking with zero extra work. Baseline
+    // sits center-low (spec二: "螢幕水平中央、比準心低約25%~35%畫面高度"),
+    // roughly a medium item's own resting distance; distanceForSize() below
+    // nudges it per-item from there. Every held item — cargo, envelopes,
+    // lost items, mail/sorting boxes — shares this SAME anchor+function
+    // (spec二: "信封、失物與信封箱可使用同一套anchor，但依尺寸調整距離"),
+    // never a per-item-type hardcoded position.
     const maxDim = Math.max(obj.width, obj.height, obj.depth);
     const isContainer = obj.mesh.userData.sortingBoxId || obj.mesh.userData.crateId;
-
-    let holdZ: number;
-    let holdY: number;
-
+    const { z: distZ, y: distY } = this.distanceForSize(maxDim, isContainer);
     if (isContainer) {
-      // Containers: further away and lower, slightly tilted
-      holdZ = -(1.5 + maxDim * 0.6);
-      holdY = -0.7 - (maxDim > 0.8 ? (maxDim - 0.8) * 0.15 : 0);
-      // Slight tilt toward camera so player can see opening
+      // Slight tilt toward camera so the player can see inside while carrying.
       cloned.rotation.x = 0.2;
-    } else {
-      // Normal packages
-      holdZ = -(0.8 + maxDim * 0.7);
-      holdY = -0.55 - (obj.height > 0.5 ? (obj.height - 0.5) * 0.2 : 0);
     }
 
-    // Slot offset (spec五A) — index 0 for the first item held, further
-    // slots for each additional one on top of it (never more than
-    // maxCarryCapacity_ - 1, capped defensively at the offset table's own
-    // length since capacity is currently at most 3).
-    const slotIndex = Math.min(this.heldViewMeshes.length, this.HELD_SLOT_OFFSETS.length - 1);
-    const offset = this.HELD_SLOT_OFFSETS[slotIndex];
-    const basePos = new THREE.Vector3(offset.x, holdY + offset.y, holdZ + offset.z);
-    viewMesh.position.copy(basePos);
-
-    // Large cargo (up to 1.35m on an axis) would otherwise fill most of the
-    // screen at viewmodel distance — shrink the CLONE only (world size /
-    // collider are untouched) once it's clearly bigger than the biggest
-    // normal-cargo preset (0.6m, see cargo-data.ts CARGO_SIZE_LIMITS).
-    if (maxDim > 0.9) {
-      viewMesh.scale.setScalar(Math.max(0.5, 0.9 / maxDim));
-    }
+    // Deliberately NEVER scales the clone (spec二: "不可縮放貨物模型") — a
+    // large item avoids filling the screen purely via distanceForSize()
+    // above pushing it further away/lower, not by shrinking its model.
 
     this.heldViewMeshes.push(viewMesh);
-    this.heldViewBasePositions.push(basePos);
+    this.heldViewBasePositions.push(new THREE.Vector3()); // placeholder — reslotHeldViews() below fills every slot in
+    this.heldViewOwnBase.push({ y: distY, z: distZ });
     this.viewModelScene.add(viewMesh);
+    this.reslotHeldViews();
+  }
+
+  /** Assigns each held item's SCREEN slot (spec二: "activeHeldItem...放在
+   * 畫面中央偏下...其他手持物可稍微向左右錯開，不可全部完全重疊") by
+   * RECENCY, not pickup order — heldViewMeshes/heldViewOwnBase stay
+   * oldest-first (index 0 = held longest, matching heldStack's own
+   * convention, see that field's doc comment), but the slot offset is
+   * looked up by DISTANCE FROM THE TOP, so the most-recently-picked-up item
+   * (activeHeldItem, array's last index) always lands at HELD_SLOT_OFFSETS
+   * [0] — dead center — regardless of how many older items are also held,
+   * and every earlier item shifts outward one slot as each new item is
+   * added on top of it. Re-run on every add AND every release (not just
+   * add) since removing the current top also promotes whichever item was
+   * underneath it back to center. */
+  private reslotHeldViews(): void {
+    const n = this.heldViewMeshes.length;
+    for (let i = 0; i < n; i++) {
+      const slotFromTop = n - 1 - i;
+      const offset = this.HELD_SLOT_OFFSETS[Math.min(slotFromTop, this.HELD_SLOT_OFFSETS.length - 1)];
+      const own = this.heldViewOwnBase[i];
+      const basePos = new THREE.Vector3(HELD_ANCHOR_X + offset.x, own.y + offset.y, own.z + offset.z);
+      this.heldViewBasePositions[i] = basePos;
+      this.heldViewMeshes[i].position.copy(basePos);
+      this.heldViewMeshes[i].rotation.set(0, 0, 0); // clear any charge-shake rotation from before the reslot
+    }
   }
 
   private disposeViewMesh(mesh: THREE.Mesh): void {
@@ -528,11 +606,16 @@ export class PickupSystem implements PickupPort {
 
   /** Removes just the TOP (most-recently-added) viewmodel clone — used
    * whenever the top-of-stack held item is placed/thrown/force-dropped,
-   * leaving every other still-held item's own viewmodel untouched. */
+   * leaving every other still-held item's own viewmodel untouched. Reslots
+   * the remainder afterward — whichever item was directly underneath the
+   * removed one is now the new top, and needs to visually snap into the
+   * center slot (spec二), not stay wherever its old side slot left it. */
   private removeTopHeldViewMesh(): void {
     const mesh = this.heldViewMeshes.pop();
     this.heldViewBasePositions.pop();
+    this.heldViewOwnBase.pop();
     if (mesh) this.disposeViewMesh(mesh);
+    this.reslotHeldViews();
   }
 
   /** Pops the current top-of-stack held item and updates player state to
