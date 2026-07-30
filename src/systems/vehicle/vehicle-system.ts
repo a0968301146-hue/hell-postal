@@ -18,13 +18,16 @@ const ARRIVE_EPS = 0.05;
  * this affects the other five vehicles' movement or appearance. */
 const FROG_HOP_DISTANCE = 1.3; // meters of ground travel per hop arc
 const FROG_HOP_HEIGHT = 0.35; // peak bob height, meters
-/** The upperMouthLid hinges at the BACK-TOP of the basin and extends
- * FORWARD when closed (local +Z). Rotating that hinge group around local X
- * by a NEGATIVE angle swings the lid's far edge UP and back to directly
- * above the hinge (positive would swing it down through the basin floor
- * instead) — see buildFrogVehicle's own doc comment for the derivation.
- * Negative here is deliberate, not a typo. */
-const FROG_MOUTH_OPEN_ANGLE = -Math.PI / 2; // spec四: "向上打開約90度"
+/** The upperMouthLid hinges along a SIDE edge of the basin ("Enlarge frog
+ * cargo mouth and route clearance" round — moved off the back edge, see
+ * buildFrogVehicle's own doc comment for why) and extends across the width
+ * when closed (local +X from the hinge). Rotating that hinge group around
+ * local Z by a POSITIVE angle swings the lid's far edge UP to directly
+ * above the hinge (negative would swing it down through the basin floor
+ * instead) — this sign is specific to THIS hinge axis/offset combination;
+ * it was negative under the previous round's back-hinge (local X rotation)
+ * design, which is a different configuration, not a typo carried over. */
+const FROG_MOUTH_OPEN_ANGLE = Math.PI / 2; // spec: "向上打開約90度"
 const FROG_MOUTH_ANGULAR_SPEED = Math.PI; // rad/s lerp rate (~0.5s for a full 90° swing, within spec四's 0.4~0.7s)
 const FROG_MOUTH_CLOSE_EPS = 0.02; // rad — "fully closed" tolerance that gates departure movement (spec四)
 /** How high above BACK_AREA's floor the basin FLOOR (lowerMouthBase — the
@@ -182,41 +185,45 @@ export class VehicleSystem {
     };
   }
 
-  /** "Refine frog carrier with upward-opening mouth structure" round —
-   * builds a low, frog-shaped creature (bodyRoot: torso + headBase + 4
+  /** Builds a low, frog-shaped creature (bodyRoot: torso + headBase + 4
    * limbs + eyes) with an upward-opening biological mouth (lowerMouthBase:
    * a fixed basin floor + 4 short rim walls; upperMouthLid: a single lid
-   * hinged at the basin's back-top edge that swings UP and back to reveal
-   * a top-loading cargo cavity). Every mouth dimension still comes from
-   * `this.config.cargoArea*` (spec: derive from VehicleConfig, never a
-   * hand-duplicated size) — these now mean the OPEN BASIN's interior
-   * exactly, not a flatbed.
+   * that swings UP to reveal a top-loading cargo cavity). Every mouth
+   * dimension still comes from `this.config.cargoArea*` (spec: derive from
+   * VehicleConfig, never a hand-duplicated size) — these mean the OPEN
+   * BASIN's interior exactly, not a flatbed.
    *
-   * Local layout convention (unchanged from before this round): the basin
-   * is centered at local (0, *, 0) — i.e. exactly the vehicleGroup's own
-   * tracked X/Z position — with the body trailing BEHIND it at negative
-   * local Z. This means `cargoBayBounds` still needs no X/Z offset
-   * (centerX/centerZ: 0), so isInCargoBay() — shared, unmodified code —
-   * keeps working correctly with zero changes of its own. The frog's fixed
-   * route (vehicle-route-data.ts: straight line, spawn south of the dock,
-   * exit back south) means local +Z always ends up facing world -Z (north,
-   * toward the player interior) once docked, via moveToward()'s continuous
-   * rotation-facing below.
+   * Local layout convention (unchanged since the mouth was first rebuilt
+   * upward-opening): the basin is centered at local (0, *, 0) — i.e.
+   * exactly the vehicleGroup's own tracked X/Z position — with the body
+   * trailing BEHIND it at negative local Z. This means `cargoBayBounds`
+   * still needs no X/Z offset (centerX/centerZ: 0), so isInCargoBay() —
+   * shared, unmodified code — keeps working correctly with zero changes of
+   * its own. The frog's fixed route (vehicle-route-data.ts: straight line,
+   * spawn south of the dock, exit back south) means local +Z always ends up
+   * facing world -Z (north, toward the player interior) once docked, via
+   * moveToward()'s continuous rotation-facing below.
    *
-   * Upward-opening hinge derivation (spec四: "向上打開，不要前開/側開/下巴前
-   * 掀"): the hinge group sits at local (0, basinTopY, -mouthHalfZ) — the
-   * BACK-TOP edge of the basin — and the lid mesh is offset FORWARD from
-   * that pivot (+Z, local to the hinge), so at rotation.x = 0 it lies flat
+   * Upward-opening hinge derivation ("Enlarge frog cargo mouth and route
+   * clearance" round: hinge moved from the basin's BACK edge to a SIDE
+   * edge — with cargoAreaLength now 5.0m to fit the daily cargo quota, a
+   * back-hinged lid spanning the full DEPTH would swing up to an absurd
+   * ~5m height when open; hinging along the WIDTH edge instead keeps the
+   * open height tied to the much shorter width, comfortably under
+   * BACK_AREA's ceiling — see the lid-building code below for the exact
+   * numbers). The hinge group sits at local (-mouthHalfX-overhang,
+   * basinTopY, 0) — the LEFT-TOP edge of the basin — and the lid mesh is
+   * offset toward +X from that pivot, so at rotation.z = 0 it lies flat
    * across the basin's open top, exactly covering it. Rotating a point at
-   * forward offset d around local X by θ maps it to
-   * (0, -d·sinθ, d·cosθ). A NEGATIVE θ therefore makes the y-component
-   * positive (lifts UP) while the z-component shrinks toward 0 (folds back
-   * to directly above the hinge) — e.g. at θ=-90°, the lid's far tip ends
-   * up d meters straight above the hinge, never sweeping forward, sideways,
-   * or down through the basin. This is why FROG_MOUTH_OPEN_ANGLE is
-   * negative — a plain positive angle (as an old revision of this method
-   * used for a *drop-down* jaw) would swing this lid down through the
-   * floor instead. */
+   * offset d (along local +X) around local Z by θ maps it to
+   * (d·cosθ, d·sinθ). A POSITIVE θ therefore makes the y-component positive
+   * (lifts UP) while the x-component shrinks toward 0 (folds back to
+   * directly above the hinge) — e.g. at θ=+90°, the lid's far tip ends up d
+   * meters straight above the hinge, never sweeping forward, sideways, or
+   * down through the basin. This sign is specific to this hinge axis/
+   * offset combination — the previous round's back-hinge (local X
+   * rotation) needed the opposite sign for the same "opens upward" result,
+   * a different configuration, not an inconsistency. */
   private buildFrogVehicle(floorY: number): void {
     const config = this.config;
     const skinMat = new THREE.MeshStandardMaterial({ color: 0xf0f0ea });
@@ -238,9 +245,14 @@ export class VehicleSystem {
     // --- headBase: wide, flat skull that the basin sits on top of/inside
     // of (spec二: "寬而扁的頭部"). Its own top surface is exactly
     // basinFloorY, so the basin reads as embedded in the head, not a
-    // separate floating box. ---
-    const headHalfX = mouthHalfX + 0.05;
-    const headHalfZ = mouthHalfZ + 0.1;
+    // separate floating box. Exactly matches the basin footprint on both
+    // axes now (no extra overhang margin) — "Enlarge frog cargo mouth and
+    // route clearance" round: with the basin now this wide/deep, any extra
+    // margin here would eat directly into the rockgiant-neighbor width
+    // budget (see vehicle-data.ts's own doc comment on this config) for no
+    // real visual benefit. ---
+    const headHalfX = mouthHalfX;
+    const headHalfZ = mouthHalfZ;
     const headGeo = new THREE.BoxGeometry(headHalfX * 2, 0.5, headHalfZ * 2);
     const headBase = new THREE.Mesh(headGeo, skinMat);
     const headCenterY = floorY + 0.25;
@@ -249,10 +261,17 @@ export class VehicleSystem {
     this.physics.addColliderToBody(this.body, 0, headCenterY, 0, headHalfX, 0.25, headHalfZ);
 
     // --- torso/body: low, thick oval trailing behind the head (spec二:
-    // "身體低矮、橢圓厚實"). ---
+    // "身體低矮、橢圓厚實"). Width now scales proportionally with the head
+    // (a fixed 1.1m cap made no sense once the basin/head routinely exceed
+    // that on their own) but stays narrower than the head (natural taper,
+    // also keeps the torso well clear of the rockgiant-neighbor width
+    // budget even though the head/basin already define the tightest
+    // margin). Z-depth trimmed from the previous round's 0.9 to 0.75 so the
+    // now much-longer head doesn't push the torso's own rear past the south
+    // wall line (BACK_AREA.maxZ=32) once docked. ---
     const torsoGeo = new THREE.SphereGeometry(1, 14, 10);
     const torso = new THREE.Mesh(torsoGeo, skinMat);
-    const torsoScale = { x: Math.min(headHalfX + 0.05, 1.1), y: 0.55, z: 0.9 };
+    const torsoScale = { x: headHalfX * 0.75, y: 0.55, z: 0.75 };
     torso.scale.set(torsoScale.x, torsoScale.y, torsoScale.z);
     const torsoCenterY = floorY + 0.55;
     const torsoCenterZ = -(headHalfZ + torsoScale.z - 0.15);
@@ -327,19 +346,30 @@ export class VehicleSystem {
       this.physics.addColliderToBody(this.body, wx, wy, wz, chx, wallH / 2, chz);
     }
 
-    // --- upperMouthLid: the ONLY moving part, hinged at the basin's
-    // back-top edge (see this method's own doc comment for the rotation
-    // derivation). No collider (spec七: 活動嘴部可不參與貨物碰撞，優先穩定
-    // 裝貨體驗) — purely visual, so it can never shove loaded cargo around
-    // as it swings. Slightly overhangs the rim walls on every side so it
-    // seals the basin cleanly when closed. */
-    const lidLength = mouthHalfZ * 2 + 0.12;
+    // --- upperMouthLid: the ONLY moving part. "Enlarge frog cargo mouth
+    // and route clearance" round: hinged along the basin's SIDE edge now,
+    // not the back edge — with cargoAreaLength grown to 5.0m, a
+    // back-hinged lid spanning the FULL depth would swing up to
+    // basinTopY+~5.1m when open (past the 6m ceiling once the basin's own
+    // Y offset is added), which is exactly the "rotation converts the
+    // lid's own length into an equal vertical rise" trap the old back-hinge
+    // design was tuned around for a much shallower basin. Hinging along the
+    // WIDTH edge instead (rotating around local Z, not X) makes the open
+    // height scale with WIDTH (2.8m) instead of DEPTH (5.0m) — a much
+    // shorter, ceiling-safe swing — while still opening straight UP (spec:
+    // "向上打開"), just folding along the basin's long axis instead of its
+    // short one. No collider (活動嘴部可不參與貨物碰撞，優先穩定裝貨體驗) —
+    // purely visual, so it can never shove loaded cargo around as it
+    // swings. Slightly overhangs the rim walls on every side so it seals
+    // the basin cleanly when closed. */
+    const lidOverhang = 0.04;
+    const lidLength = mouthHalfX * 2 + lidOverhang * 2;
     const upperJawHinge = new THREE.Group();
-    upperJawHinge.position.set(0, basinTopY, -mouthHalfZ);
+    upperJawHinge.position.set(-mouthHalfX - lidOverhang, basinTopY, 0);
     this.vehicleGroup.add(upperJawHinge);
-    const lidGeo = new THREE.BoxGeometry(mouthHalfX * 2 + wallT * 2, 0.08, lidLength);
+    const lidGeo = new THREE.BoxGeometry(lidLength, 0.08, mouthHalfZ * 2 + wallT * 2);
     const upperMouthLid = new THREE.Mesh(lidGeo, mouthMat);
-    upperMouthLid.position.set(0, 0, lidLength / 2); // offset forward from the hinge pivot — see doc comment
+    upperMouthLid.position.set(lidLength / 2, 0, 0); // offset toward +X from the hinge pivot — see doc comment
     upperJawHinge.add(upperMouthLid);
     this.frogUpperJawHinge = upperJawHinge;
 
@@ -465,11 +495,12 @@ export class VehicleSystem {
     } else {
       this.frogMouthAngle += Math.sign(diff) * maxStep;
     }
-    // Opens UPWARD — a NEGATIVE local-X rotation lifts the hinge's own
-    // forward-offset lid mesh up and back over the basin's rim, never
-    // forward/sideways/down. See buildFrogVehicle's own doc comment for
-    // the full derivation of why this sign is correct.
-    this.frogUpperJawHinge.rotation.x = this.frogMouthAngle;
+    // Opens UPWARD — a POSITIVE local-Z rotation lifts the hinge's own
+    // +X-offset lid mesh straight up over the basin's rim, never forward/
+    // sideways/down. Rotation axis changed from X to Z this round (see
+    // buildFrogVehicle's own doc comment for why the hinge moved from the
+    // back edge to a side edge, and the full sign derivation).
+    this.frogUpperJawHinge.rotation.z = this.frogMouthAngle;
   }
 
   /** Fires once, the moment this slot transitions into 'docked' (see
