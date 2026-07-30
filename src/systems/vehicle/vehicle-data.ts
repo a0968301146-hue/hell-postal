@@ -19,10 +19,9 @@ import { LAND_DOCK_SLOTS, SEA_DOCK_SLOTS } from './vehicle-dock-data';
  * grow together automatically. */
 export const VEHICLE_VISUAL_SCALE = 1.5;
 
-/** The ONE place the frog's config id is spelled out as a literal ("Rebuild
- * frog vehicle as hopping mouth cargo carrier" round) — vehicle-system.ts
- * imports this to decide whether to build the frog-specific creature mesh
- * instead of the generic box, and vehicle-control-system.ts imports it for
+/** The ONE place the frog's config id is spelled out as a literal — used by
+ * vehicle-system.ts to decide whether to build the frog-specific creature
+ * mesh instead of the generic box; vehicle-control-system.ts imports it for
  * nothing (frog-specific behavior is fully contained in VehicleSystem's own
  * onArrived/onDeparting/update/moveToward, never branched on again outside
  * that one file) — kept exported anyway for any future frog-specific read. */
@@ -152,23 +151,28 @@ const LAND_VEHICLE_BASE_CONFIGS: VehicleConfig[] = [
     id: FROG_VEHICLE_CONFIG_ID,
     vehicleType: 'land',
     displayName: '青蛙',
-    // "Rebuild frog vehicle as hopping mouth cargo carrier" round: the frog
-    // is no longer a scaled-up plain box (see vehicle-system.ts's own
-    // buildFrogVehicle for the actual body/head/jaw geometry, all derived
-    // from these same width/length/height/cargoArea* fields, never
-    // hand-duplicated) — width/length/height now describe the creature's
-    // own compact footprint (body+head+legs), and cargoArea* now describes
-    // the MOUTH INTERIOR specifically (spec四: "cargoBounds要改到嘴巴內
-    // 部...cargoBounds必須和可見嘴內空間一致"), not a flatbed. Deliberately
-    // kept well inside the ORIGINAL dock-clearance budget computed in
-    // vehicle-dock-data.ts (half-width <=1.125, half-length <=3.12) — this
-    // round touches neither that file nor any of the other five vehicles.
-    width: 1.25,
-    length: 2.6,
-    height: 1.15,
-    cargoAreaWidth: 1.0,
+    // "Refine frog carrier with upward-opening mouth structure" round: the
+    // frog is a low, wide creature (see vehicle-system.ts's own
+    // buildFrogVehicle for the actual bodyRoot/headBase/torso/limbs/eyes +
+    // upward-hinged mouth geometry, all derived from these same
+    // width/length/height/cargoArea* fields, never hand-duplicated) —
+    // width/length/height describe the creature's own compact footprint,
+    // and cargoArea* describes the OPEN BASIN'S interior exactly (spec五:
+    // "cargoBounds必須和可見嘴內空間一致"), not a flatbed. Capacity comes
+    // from basin WIDTH/DEPTH, not from making the creature taller (spec六:
+    // "不要再用整體加高換容量") — height dropped from the previous round's
+    // 1.725 (final) to 1.5, while cargoArea volume grew from 2.53m³ to
+    // 2.835m³ via wider/deeper cargoAreaWidth/Length. Deliberately kept
+    // inside the ORIGINAL dock-clearance budget computed in
+    // vehicle-dock-data.ts (half-width <=1.125 — this config's final
+    // half-width is 1.05) — this round touches neither that file nor any
+    // of the other five vehicles.
+    width: 1.4,
+    length: 2.4,
+    height: 1.0,
+    cargoAreaWidth: 1.4,
     cargoAreaLength: 1.0,
-    cargoAreaHeight: 0.75,
+    cargoAreaHeight: 0.6,
     dockPosition: LAND_DOCK_SLOTS['land-frog-01'].dockPosition,
     spawnPosition: LAND_DOCK_SLOTS['land-frog-01'].spawnPosition,
     exitPosition: LAND_DOCK_SLOTS['land-frog-01'].exitPosition,

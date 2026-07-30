@@ -12,20 +12,26 @@ const FLOOR_THICKNESS = 0.1;
 const CHASSIS_HEIGHT_RATIO = 0.3;
 const ARRIVE_EPS = 0.05;
 
-/** Frog-only hopping/mouth tuning ("Rebuild frog vehicle as hopping mouth
- * cargo carrier" round) — every other vehicle never reads any of these
+/** Frog-only hopping/mouth tuning ("Refine frog carrier with upward-opening
+ * mouth structure" round) — every other vehicle never reads any of these
  * (gated behind `this.isFrog` everywhere they're used below), so none of
  * this affects the other five vehicles' movement or appearance. */
-const FROG_HOP_DISTANCE = 1.3; // meters of ground travel per hop arc (spec三: "每次跳躍有上下起伏，落地後再下一跳")
+const FROG_HOP_DISTANCE = 1.3; // meters of ground travel per hop arc
 const FROG_HOP_HEIGHT = 0.35; // peak bob height, meters
-const FROG_MOUTH_OPEN_ANGLE = Math.PI / 2; // spec四: "張開約90度"
-const FROG_MOUTH_ANGULAR_SPEED = Math.PI; // rad/s lerp rate (~0.5s for a full 90° swing)
-/** How high above BACK_AREA's floor the mouth cavity's own vertical CENTER
- * sits — a fixed absolute offset (not proportional to config.height) since
+/** The upperMouthLid hinges at the BACK-TOP of the basin and extends
+ * FORWARD when closed (local +Z). Rotating that hinge group around local X
+ * by a NEGATIVE angle swings the lid's far edge UP and back to directly
+ * above the hinge (positive would swing it down through the basin floor
+ * instead) — see buildFrogVehicle's own doc comment for the derivation.
+ * Negative here is deliberate, not a typo. */
+const FROG_MOUTH_OPEN_ANGLE = -Math.PI / 2; // spec四: "向上打開約90度"
+const FROG_MOUTH_ANGULAR_SPEED = Math.PI; // rad/s lerp rate (~0.5s for a full 90° swing, within spec四's 0.4~0.7s)
+const FROG_MOUTH_CLOSE_EPS = 0.02; // rad — "fully closed" tolerance that gates departure movement (spec四)
+/** How high above BACK_AREA's floor the basin FLOOR (lowerMouthBase — the
+ * stable cargo-carrying base, spec三) sits — a fixed absolute offset since
  * player reach is an absolute constraint, not one that should drift if
- * config.height is ever retuned (spec二: "嘴巴開口高度不要過高...玩家站在地
- * 面就能把貨物放進嘴裡"). */
-const FROG_MOUTH_CENTER_Y_OFFSET = 1.0;
+ * config.height is ever retuned (spec六: "玩家站在地面附近就能把貨物放進去"). */
+const FROG_BASIN_FLOOR_Y_OFFSET = 0.5;
 
 export interface CargoBayBounds {
   centerX: number;
@@ -60,15 +66,15 @@ export class VehicleSystem {
   private body: RAPIER.RigidBody;
   private label: THREE.Sprite;
 
-  /** Frog-only state ("Rebuild frog vehicle as hopping mouth cargo carrier"
-   * round) — every field here stays at its default/no-op value, and every
-   * method below that reads them is gated behind `isFrog`, for the other
-   * five vehicles, which still go through the exact same generic
+  /** Frog-only state ("Refine frog carrier with upward-opening mouth
+   * structure" round) — every field here stays at its default/no-op value,
+   * and every method below that reads them is gated behind `isFrog`, for
+   * the other five vehicles, which still go through the exact same generic
    * box-building branch this class always used. */
   private isFrog = false;
   private frogHopDistanceAccum = 0;
-  private frogLowerJawHinge: THREE.Group | null = null;
-  private frogMouthFloorMesh: THREE.Mesh | null = null;
+  private frogUpperJawHinge: THREE.Group | null = null;
+  private frogLowerJawBase: THREE.Mesh | null = null;
   private frogMouthAngle = 0;
   private frogMouthTargetAngle = 0;
 
@@ -176,137 +182,176 @@ export class VehicleSystem {
     };
   }
 
-  /** "Rebuild frog vehicle as hopping mouth cargo carrier" round — builds a
-   * simple white-box creature (body/legs/head/upper+lower jaw) instead of
-   * the generic flatbed box. Every dimension still comes straight from
-   * `this.config` (spec: derive from the same VehicleConfig fields, never a
-   * second hand-duplicated size) — cargoAreaWidth/Height/Length now mean
-   * the MOUTH INTERIOR specifically (spec四), not a flatbed footprint.
-   * Local layout convention: the mouth cavity is centered at local (0,
-   * mouthCenterY, 0) — i.e. exactly the vehicleGroup's own tracked X/Z
-   * position — with the body/head/legs trailing BEHIND it at negative
-   * local Z, and the opening facing FORWARD at positive local Z. This is
-   * deliberate: it means `cargoBayBounds` needs no X/Z offset at all
-   * (centerX/centerZ: 0, exactly like the generic builder above), so
-   * isInCargoBay() — shared, unmodified code — already works correctly for
-   * the frog with zero changes of its own. The frog's own fixed route
-   * (vehicle-route-data.ts: straight line, spawn south of the dock, exit
-   * back south) means local +Z (forward/mouth-facing) always ends up
-   * pointing world -Z (north, toward the player interior) once docked —
-   * see moveToward()'s own rotation-facing logic below. */
+  /** "Refine frog carrier with upward-opening mouth structure" round —
+   * builds a low, frog-shaped creature (bodyRoot: torso + headBase + 4
+   * limbs + eyes) with an upward-opening biological mouth (lowerMouthBase:
+   * a fixed basin floor + 4 short rim walls; upperMouthLid: a single lid
+   * hinged at the basin's back-top edge that swings UP and back to reveal
+   * a top-loading cargo cavity). Every mouth dimension still comes from
+   * `this.config.cargoArea*` (spec: derive from VehicleConfig, never a
+   * hand-duplicated size) — these now mean the OPEN BASIN's interior
+   * exactly, not a flatbed.
+   *
+   * Local layout convention (unchanged from before this round): the basin
+   * is centered at local (0, *, 0) — i.e. exactly the vehicleGroup's own
+   * tracked X/Z position — with the body trailing BEHIND it at negative
+   * local Z. This means `cargoBayBounds` still needs no X/Z offset
+   * (centerX/centerZ: 0), so isInCargoBay() — shared, unmodified code —
+   * keeps working correctly with zero changes of its own. The frog's fixed
+   * route (vehicle-route-data.ts: straight line, spawn south of the dock,
+   * exit back south) means local +Z always ends up facing world -Z (north,
+   * toward the player interior) once docked, via moveToward()'s continuous
+   * rotation-facing below.
+   *
+   * Upward-opening hinge derivation (spec四: "向上打開，不要前開/側開/下巴前
+   * 掀"): the hinge group sits at local (0, basinTopY, -mouthHalfZ) — the
+   * BACK-TOP edge of the basin — and the lid mesh is offset FORWARD from
+   * that pivot (+Z, local to the hinge), so at rotation.x = 0 it lies flat
+   * across the basin's open top, exactly covering it. Rotating a point at
+   * forward offset d around local X by θ maps it to
+   * (0, -d·sinθ, d·cosθ). A NEGATIVE θ therefore makes the y-component
+   * positive (lifts UP) while the z-component shrinks toward 0 (folds back
+   * to directly above the hinge) — e.g. at θ=-90°, the lid's far tip ends
+   * up d meters straight above the hinge, never sweeping forward, sideways,
+   * or down through the basin. This is why FROG_MOUTH_OPEN_ANGLE is
+   * negative — a plain positive angle (as an old revision of this method
+   * used for a *drop-down* jaw) would swing this lid down through the
+   * floor instead. */
   private buildFrogVehicle(floorY: number): void {
     const config = this.config;
-    const skinMat = new THREE.MeshStandardMaterial({ color: 0xf2f2f2 });
-    const mouthMat = new THREE.MeshStandardMaterial({ color: 0xd8d8d8 });
-    const cavityMat = new THREE.MeshStandardMaterial({ color: 0x262626 });
+    const skinMat = new THREE.MeshStandardMaterial({ color: 0xf0f0ea });
+    const mouthMat = new THREE.MeshStandardMaterial({ color: 0xd8d8d0 });
+    const pupilMat = new THREE.MeshStandardMaterial({ color: 0x262626 });
 
     const mouthHalfX = config.cargoAreaWidth / 2;
     const mouthHalfY = config.cargoAreaHeight / 2;
     const mouthHalfZ = config.cargoAreaLength / 2;
-    const mouthCenterY = floorY + FROG_MOUTH_CENTER_Y_OFFSET;
+    const basinFloorY = floorY + FROG_BASIN_FLOOR_Y_OFFSET;
+    const basinTopY = basinFloorY + mouthHalfY * 2;
 
-    // --- Body (behind the mouth, local -Z) ---
-    const bodyGeo = new THREE.SphereGeometry(1, 14, 10);
-    const body = new THREE.Mesh(bodyGeo, skinMat);
-    body.scale.set(0.85, 0.6, 1.05);
-    const bodyCenterY = floorY + 0.62;
-    const bodyCenterZ = -(mouthHalfZ + 1.15);
-    body.position.set(0, bodyCenterY, bodyCenterZ);
-    this.vehicleGroup.add(body);
-    this.physics.addColliderToBody(this.body, 0, bodyCenterY, bodyCenterZ, 0.85, 0.6, 1.05);
+    // bodyRoot (spec三) — purely organizational: groups every NON-mouth
+    // part (torso/headBase/limbs/eyes) so the creature's structure is
+    // literally inspectable as one unit, separate from the hinged lid.
+    const bodyRoot = new THREE.Group();
+    this.vehicleGroup.add(bodyRoot);
 
-    // --- Legs (purely decorative, spec三: "不用做真實四足IK" — no collider
-    // of their own, the body collider above already covers the footprint). ---
-    const legMat = new THREE.MeshStandardMaterial({ color: 0xe0e0e0 });
-    const legGeo = new THREE.CylinderGeometry(0.16, 0.19, 0.34, 8);
-    for (const [lx, lz] of [[0.68, -0.9], [-0.68, -0.9], [0.7, -2.3], [-0.7, -2.3]] as const) {
-      const leg = new THREE.Mesh(legGeo, legMat);
-      leg.position.set(lx, floorY + 0.17, lz);
-      this.vehicleGroup.add(leg);
+    // --- headBase: wide, flat skull that the basin sits on top of/inside
+    // of (spec二: "寬而扁的頭部"). Its own top surface is exactly
+    // basinFloorY, so the basin reads as embedded in the head, not a
+    // separate floating box. ---
+    const headHalfX = mouthHalfX + 0.05;
+    const headHalfZ = mouthHalfZ + 0.1;
+    const headGeo = new THREE.BoxGeometry(headHalfX * 2, 0.5, headHalfZ * 2);
+    const headBase = new THREE.Mesh(headGeo, skinMat);
+    const headCenterY = floorY + 0.25;
+    headBase.position.set(0, headCenterY, 0);
+    bodyRoot.add(headBase);
+    this.physics.addColliderToBody(this.body, 0, headCenterY, 0, headHalfX, 0.25, headHalfZ);
+
+    // --- torso/body: low, thick oval trailing behind the head (spec二:
+    // "身體低矮、橢圓厚實"). ---
+    const torsoGeo = new THREE.SphereGeometry(1, 14, 10);
+    const torso = new THREE.Mesh(torsoGeo, skinMat);
+    const torsoScale = { x: Math.min(headHalfX + 0.05, 1.1), y: 0.55, z: 0.9 };
+    torso.scale.set(torsoScale.x, torsoScale.y, torsoScale.z);
+    const torsoCenterY = floorY + 0.55;
+    const torsoCenterZ = -(headHalfZ + torsoScale.z - 0.15);
+    torso.position.set(0, torsoCenterY, torsoCenterZ);
+    bodyRoot.add(torso);
+    this.physics.addColliderToBody(this.body, 0, torsoCenterY, torsoCenterZ, torsoScale.x, torsoScale.y, torsoScale.z);
+
+    // --- 4 limbs: short and thick, hind legs bigger for the jumping read
+    // (spec二: "四肢粗短，後腿較有力"). Purely visual — the head/torso
+    // colliders above already cover this footprint (spec三: "可簡化"). ---
+    const legMat = new THREE.MeshStandardMaterial({ color: 0xe4e4dc });
+    const frontLegGeo = new THREE.CylinderGeometry(0.14, 0.17, 0.3, 8);
+    const hindLegGeo = new THREE.CylinderGeometry(0.2, 0.24, 0.34, 8);
+    const frontLegX = headHalfX * 0.7;
+    const hindLegX = Math.max(torsoScale.x * 0.75, frontLegX * 0.9);
+    for (const lx of [frontLegX, -frontLegX]) {
+      const leg = new THREE.Mesh(frontLegGeo, legMat);
+      leg.position.set(lx, floorY + 0.15, -headHalfZ * 0.3);
+      bodyRoot.add(leg);
+    }
+    for (const lx of [hindLegX, -hindLegX]) {
+      const leg = new THREE.Mesh(hindLegGeo, legMat);
+      leg.position.set(lx, floorY + 0.17, torsoCenterZ - torsoScale.z * 0.5);
+      bodyRoot.add(leg);
     }
 
-    // --- Head/skull (fixed, links body to the jaw assembly) ---
-    const skullGeo = new THREE.BoxGeometry(mouthHalfX * 1.5, 0.75, 0.85);
-    const skull = new THREE.Mesh(skullGeo, skinMat);
-    const skullCenterZ = -(mouthHalfZ + 0.4);
-    skull.position.set(0, mouthCenterY + 0.05, skullCenterZ);
-    this.vehicleGroup.add(skull);
-    this.physics.addColliderToBody(this.body, 0, mouthCenterY + 0.05, skullCenterZ, mouthHalfX * 0.75, 0.375, 0.425);
-
-    // Two simple eye domes on top of the skull — reads as "a frog" at a
-    // glance without needing real materials/texturing (spec: "簡單白模/低模
-    // 即可，不需要精細材質").
-    const eyeGeo = new THREE.SphereGeometry(0.16, 8, 6);
-    for (const ex of [0.3, -0.3]) {
+    // --- eyes: bulge above the head, toward the back near the mouth hinge
+    // (spec二: "眼睛位於頭部上方、略微突出"). ---
+    const eyeGeo = new THREE.SphereGeometry(0.17, 10, 8);
+    const pupilGeo = new THREE.SphereGeometry(0.08, 8, 6);
+    const eyeY = basinTopY + 0.12;
+    const eyeZ = -headHalfZ * 0.55;
+    for (const ex of [0.34, -0.34]) {
       const eye = new THREE.Mesh(eyeGeo, skinMat);
-      eye.position.set(ex, mouthCenterY + 0.42, skullCenterZ);
-      this.vehicleGroup.add(eye);
+      eye.position.set(ex, eyeY, eyeZ);
+      bodyRoot.add(eye);
+      const pupil = new THREE.Mesh(pupilGeo, pupilMat);
+      pupil.position.set(ex, eyeY + 0.04, eyeZ + 0.13);
+      bodyRoot.add(pupil);
     }
 
-    // --- Mouth cavity dressing: a dark back wall so the cavity clearly
-    // reads as an enclosed pocket rather than a floating floor plane (spec
-    // 二: "載貨空間要明確可見"). ---
-    const cavityBackGeo = new THREE.BoxGeometry(mouthHalfX * 2, mouthHalfY * 2, 0.06);
-    const cavityBack = new THREE.Mesh(cavityBackGeo, cavityMat);
-    cavityBack.position.set(0, mouthCenterY, -mouthHalfZ);
-    this.vehicleGroup.add(cavityBack);
+    // --- lowerMouthBase: the STABLE cargo-carrying base (spec三: "下顎與嘴
+    // 腔底部應穩定固定，作為載貨基底"). Basin floor + 4 short rim walls,
+    // all fixed (never rotate), all solid (spec七: 主要艙體/口腔底部要有效
+    // 碰撞). Footprint is exactly mouthHalfX*2 × mouthHalfZ*2 — the same
+    // numbers cargoBayBounds uses below, so the visible basin and the
+    // placement-detection volume can never disagree (spec五). ---
+    const wallT = 0.08;
+    const wallH = mouthHalfY * 2;
+    const wallCenterY = basinFloorY + wallH / 2;
+    const floorGeo = new THREE.BoxGeometry(mouthHalfX * 2, 0.08, mouthHalfZ * 2);
+    const basinFloor = new THREE.Mesh(floorGeo, mouthMat);
+    basinFloor.position.set(0, basinFloorY, 0);
+    basinFloor.visible = false; // revealed once docked — see onArrived()
+    this.vehicleGroup.add(basinFloor);
+    this.physics.addColliderToBody(this.body, 0, basinFloorY, 0, mouthHalfX, 0.04, mouthHalfZ);
+    this.cargoBedTopMesh = basinFloor;
+    this.frogLowerJawBase = basinFloor;
 
-    // --- Upper jaw (FIXED — spec四: "上嘴或下嘴其中一側轉開" — this round
-    // opens the lower jaw only). Doubles as the cavity's own visible
-    // "roof". ---
-    const upperJawGeo = new THREE.BoxGeometry(mouthHalfX * 2.1, 0.2, mouthHalfZ * 2.3);
-    const upperJaw = new THREE.Mesh(upperJawGeo, mouthMat);
-    upperJaw.position.set(0, mouthCenterY + mouthHalfY, -mouthHalfZ * 0.15);
-    this.vehicleGroup.add(upperJaw);
-    this.physics.addColliderToBody(this.body, 0, mouthCenterY + mouthHalfY, -mouthHalfZ * 0.15, mouthHalfX * 1.05, 0.1, mouthHalfZ * 1.15);
+    const wallGeo1 = new THREE.BoxGeometry(mouthHalfX * 2, wallH, wallT); // back/front walls
+    const wallGeo2 = new THREE.BoxGeometry(wallT, wallH, mouthHalfZ * 2); // left/right walls
+    const wallSpecs: Array<[THREE.BoxGeometry, number, number, number, number, number]> = [
+      [wallGeo1, 0, wallCenterY, -mouthHalfZ, mouthHalfX, wallT / 2], // back
+      [wallGeo1, 0, wallCenterY, mouthHalfZ, mouthHalfX, wallT / 2], // front
+      [wallGeo2, -mouthHalfX, wallCenterY, 0, wallT / 2, mouthHalfZ], // left
+      [wallGeo2, mouthHalfX, wallCenterY, 0, wallT / 2, mouthHalfZ], // right
+    ];
+    for (const [geo, wx, wy, wz, chx, chz] of wallSpecs) {
+      const wall = new THREE.Mesh(geo, mouthMat);
+      wall.position.set(wx, wy, wz);
+      this.vehicleGroup.add(wall);
+      this.physics.addColliderToBody(this.body, wx, wy, wz, chx, wallH / 2, chz);
+    }
 
-    // --- Lower jaw (HINGED — pivots open/closed around its own back-top
-    // edge, i.e. right where it meets the fixed upper jaw when shut). No
-    // collider of its own (spec六: "貨物能順利放進嘴內，不要卡在嘴唇" / "不
-    // 要讓嘴巴開闔時把貨物彈飛到奇怪的位置") — purely visual, so it can
-    // never physically shove cargo around as it rotates.
-    //
-    // The hinge sits at the TOP of the cavity (matching the upper jaw's own
-    // attach height) specifically so a 90° swing — which always converts
-    // the jaw's own forward LENGTH into an equal downward DROP — lands the
-    // open jaw's far tip just above the floor instead of clipping through
-    // it (lowerJawLength below is explicitly clamped against hingeY-floorY
-    // for exactly this reason).
-    const hingeY = mouthCenterY + mouthHalfY;
-    const hingeZ = -mouthHalfZ;
-    const lowerJawHinge = new THREE.Group();
-    lowerJawHinge.position.set(0, hingeY, hingeZ);
-    this.vehicleGroup.add(lowerJawHinge);
-    const lowerJawLength = Math.min(mouthHalfZ * 2.1, hingeY - floorY - 0.1);
-    const lowerJawGeo = new THREE.BoxGeometry(mouthHalfX * 2, 0.16, lowerJawLength);
-    const lowerJawMesh = new THREE.Mesh(lowerJawGeo, mouthMat);
-    lowerJawMesh.position.set(0, 0, lowerJawLength / 2); // offset forward from the hinge pivot
-    lowerJawHinge.add(lowerJawMesh);
-    this.frogLowerJawHinge = lowerJawHinge;
+    // --- upperMouthLid: the ONLY moving part, hinged at the basin's
+    // back-top edge (see this method's own doc comment for the rotation
+    // derivation). No collider (spec七: 活動嘴部可不參與貨物碰撞，優先穩定
+    // 裝貨體驗) — purely visual, so it can never shove loaded cargo around
+    // as it swings. Slightly overhangs the rim walls on every side so it
+    // seals the basin cleanly when closed. */
+    const lidLength = mouthHalfZ * 2 + 0.12;
+    const upperJawHinge = new THREE.Group();
+    upperJawHinge.position.set(0, basinTopY, -mouthHalfZ);
+    this.vehicleGroup.add(upperJawHinge);
+    const lidGeo = new THREE.BoxGeometry(mouthHalfX * 2 + wallT * 2, 0.08, lidLength);
+    const upperMouthLid = new THREE.Mesh(lidGeo, mouthMat);
+    upperMouthLid.position.set(0, 0, lidLength / 2); // offset forward from the hinge pivot — see doc comment
+    upperJawHinge.add(upperMouthLid);
+    this.frogUpperJawHinge = upperJawHinge;
 
-    // --- Mouth floor / cargo placement surface — a plain static plate,
-    // always physically present (so anything inside always has something
-    // to rest on) but only VISIBLE/usable once the mouth is actually open
-    // (see onArrived/onDeparting) — Three.js raycasting skips invisible
-    // objects, so PickupSystem's placement-preview simply can never find a
-    // valid hit here while closed, with no extra gating code needed. */
-    const floorGeo = new THREE.BoxGeometry(mouthHalfX * 2, 0.05, mouthHalfZ * 2);
-    const mouthFloor = new THREE.Mesh(floorGeo, cavityMat);
-    mouthFloor.position.set(0, mouthCenterY - mouthHalfY, 0);
-    mouthFloor.visible = false;
-    this.vehicleGroup.add(mouthFloor);
-    this.physics.addColliderToBody(this.body, 0, mouthCenterY - mouthHalfY, 0, mouthHalfX, 0.05, mouthHalfZ);
-    this.cargoBedTopMesh = mouthFloor;
-    this.frogMouthFloorMesh = mouthFloor;
-
-    // cargoBayBounds needs no X/Z offset — see this method's own doc
-    // comment for why the mouth is centered exactly on the group's own
-    // tracked position.
+    // cargoBayBounds needs no X/Z offset (see this method's own doc
+    // comment) — footprint and height match the visible basin EXACTLY
+    // (spec五: "位置、寬度、深度、高度要與可見嘴腔空間一致"), no fudge
+    // factor in any dimension.
     this.cargoBayBounds = {
       centerX: 0,
       centerZ: 0,
-      bedFloorY: mouthCenterY - mouthHalfY,
-      bedTopY: mouthCenterY + mouthHalfY,
+      bedFloorY: basinFloorY + 0.04, // top surface of the floor plate — where cargo actually rests
+      bedTopY: basinTopY,
       halfX: mouthHalfX,
       halfZ: mouthHalfZ,
     };
@@ -342,16 +387,31 @@ export class VehicleSystem {
 
   /** Moves the whole vehicle (mesh + kinematic body) toward `target`,
    * translating any pinned cargo meshes by the same delta. Returns true once
-   * it has arrived (within a small epsilon). For the frog only ("Rebuild
-   * frog vehicle as hopping mouth cargo carrier" round三), ALSO layers a
-   * distance-synced hop arc onto the VISUAL group's own Y (never the
+   * it has arrived (within a small epsilon). For the frog only, ALSO layers
+   * a distance-synced hop arc onto the VISUAL group's own Y (never the
    * physics kinematic body, which stays flat at y=0 the whole time — see
    * the constructor's own doc comment) and continuously faces the group
    * toward its current travel direction (spec: "轉向出口方向" falls out of
    * this for free, since the frog's fixed route reverses direction exactly
    * once, between arriving and departing). Every other vehicle's own
-   * behavior here is byte-for-byte identical to before this round. */
+   * behavior here is byte-for-byte identical to before this round.
+   *
+   * Frog-only departure gate ("Refine frog carrier with upward-opening
+   * mouth structure" round, spec四: "先停止裝貨→關嘴巴→完全閉合後→再轉向出
+   * 口→再開始跳躍"): while the mouth hasn't yet reached its (closed) target
+   * angle, this returns false immediately without moving, turning, or
+   * hopping at all. Since the caller (VehicleControlSystem.updateSlot)
+   * already does nothing but return early on `!arrived`, this alone stalls
+   * the whole departure sequence until update()'s per-frame lerp — which
+   * runs regardless of state — brings the mouth fully shut; only then does
+   * movement (and the rotation-to-travel-direction below, which doubles as
+   * "turn to exit") resume. During arrival this is always a no-op, since
+   * frogMouthAngle stays 0 the entire time onArrived() hasn't fired yet. */
   moveToward(target: { x: number; z: number }, deltaTime: number, pinnedCargo: InteractableObject[]): boolean {
+    if (this.isFrog && Math.abs(this.frogMouthAngle) > FROG_MOUTH_CLOSE_EPS) {
+      return false;
+    }
+
     const pos = this.vehicleGroup.position;
     const dx = target.x - pos.x;
     const dz = target.z - pos.z;
@@ -397,7 +457,7 @@ export class VehicleSystem {
    * mouth-angle lerp toward whatever onArrived()/onDeparting() last set as
    * the target; a no-op for every other vehicle. */
   update(deltaTime: number): void {
-    if (!this.isFrog || !this.frogLowerJawHinge) return;
+    if (!this.isFrog || !this.frogUpperJawHinge) return;
     const maxStep = FROG_MOUTH_ANGULAR_SPEED * deltaTime;
     const diff = this.frogMouthTargetAngle - this.frogMouthAngle;
     if (Math.abs(diff) <= maxStep) {
@@ -405,34 +465,40 @@ export class VehicleSystem {
     } else {
       this.frogMouthAngle += Math.sign(diff) * maxStep;
     }
-    // Opens DOWNWARD — a positive local-X rotation tips the hinge's own
-    // forward-offset jaw mesh down and away from the fixed upper jaw.
-    this.frogLowerJawHinge.rotation.x = this.frogMouthAngle;
+    // Opens UPWARD — a NEGATIVE local-X rotation lifts the hinge's own
+    // forward-offset lid mesh up and back over the basin's rim, never
+    // forward/sideways/down. See buildFrogVehicle's own doc comment for
+    // the full derivation of why this sign is correct.
+    this.frogUpperJawHinge.rotation.x = this.frogMouthAngle;
   }
 
   /** Fires once, the moment this slot transitions into 'docked' (see
    * VehicleControlSystem.updateSlot) — a no-op for every vehicle except the
-   * frog, which starts swinging its lower jaw open (spec四) and reveals its
-   * mouth floor as a valid placement surface (see buildFrogVehicle's own
-   * doc comment on why toggling `.visible` alone is enough gating). */
+   * frog, which starts swinging its upperMouthLid open (spec四) and reveals
+   * its basin floor as a valid placement surface (see buildFrogVehicle's
+   * own doc comment on why toggling `.visible` alone is enough gating —
+   * Three.js raycasting skips invisible objects, so PickupSystem's
+   * placement-preview simply can never find a valid hit here while the
+   * basin is still sealed under the closed lid). */
   onArrived(): void {
     if (!this.isFrog) return;
     this.frogMouthTargetAngle = FROG_MOUTH_OPEN_ANGLE;
-    if (this.frogMouthFloorMesh) this.frogMouthFloorMesh.visible = true;
+    if (this.frogLowerJawBase) this.frogLowerJawBase.visible = true;
   }
 
   /** Fires once, the moment this slot transitions into 'departing' (spec
-   * 五: "先停止裝貨"是既有state-gated的scanCargoForShipment已經自動處理，
-   * "青蛙把嘴巴閉起來"就是這裡) — a no-op for every vehicle except the frog,
-   * which starts closing its jaw, hides the (now-unreachable) placement
-   * surface, and hides whatever cargo is riding along pinned to this slot
-   * (spec六: "不要讓貨物看起來卡住或懸空" — the alternative, leaving pinned
-   * boxes visibly floating in front of a now-closed mouth, reads far worse
-   * than simply having the frog "swallow" them for the hop out). */
+   * 四: "先停止裝貨"是既有state-gated的scanCargoForShipment已經自動處理，
+   * "青蛙把上顎關回來"就是這裡；moveToward()自己的departure gate負責"完全閉
+   * 合後才轉向、才跳走") — a no-op for every vehicle except the frog, which
+   * starts closing its lid, hides the (now-unreachable) placement surface,
+   * and hides whatever cargo is riding along pinned to this slot (spec七:
+   * 不要讓貨物看起來卡住或懸空 — the alternative, leaving pinned boxes
+   * visibly floating in front of a now-closed mouth, reads far worse than
+   * simply having the frog "swallow" them for the hop out). */
   onDeparting(pinnedCargo: InteractableObject[]): void {
     if (!this.isFrog) return;
     this.frogMouthTargetAngle = 0;
-    if (this.frogMouthFloorMesh) this.frogMouthFloorMesh.visible = false;
+    if (this.frogLowerJawBase) this.frogLowerJawBase.visible = false;
     for (const obj of pinnedCargo) obj.mesh.visible = false;
   }
 
