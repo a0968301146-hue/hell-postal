@@ -17,15 +17,9 @@ export const CARGO_REGION_DISPLAY: Record<CargoRegion, string> = {
   international: '海外',
 };
 
-/** Ratio of daily cargo assigned 'domestic' — centralized here (spec: "比例
- * 集中於 cargo region data/config"). No unlock/route-generation system
- * exists yet to drive this from real game state, so it defaults to a flat
- * 50/50 random split (spec: "若目前沒有地區生成設定，先以國內／海外各半隨機
- * 生成") — unlike cargo-category-data.ts's deterministic cyclic pick, this
- * one is a genuine per-item coin flip since the spec explicitly asks for
- * "隨機生成" here, not a hard per-batch guarantee. */
-export const DOMESTIC_REGION_RATIO = 0.5;
-
-export function pickCargoRegion(): CargoRegion {
-  return Math.random() < DOMESTIC_REGION_RATIO ? 'domestic' : 'international';
-}
+// The old flat 50/50 pickCargoRegion() coin-flip ("if 目前沒有地區生成設定,
+// 先以國內／海外各半隨機生成") was replaced by "Fix cargo throwing and
+// rebalance daily manifest" round三's fixed per-category region quota
+// (cargo-manifest-data.ts DAILY_CARGO_REGION_QUOTA) — region is now decided
+// by cargo-manifest-planner.ts's buildDailyCargoManifest() alongside the
+// category quota, before any shape is picked, never rolled per-item anymore.

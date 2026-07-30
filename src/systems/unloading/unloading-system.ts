@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { PhysicsSystem } from '../../adapters/rapier/physics-system';
-import { CargoSystem, CargoShapePreset, CargoCategory, pickWeightedCargoShapePreset } from '../cargo';
+import { CargoSystem, CargoShapePreset, CargoRegion } from '../cargo';
+import { buildDailyCargoManifest } from '../cargo/cargo-manifest-planner';
 import {
   DailyFlowSystem, UNLOAD_PORTS, UnloadPortConfig, UNLOAD_SPAWN_JITTER_X, UNLOAD_SPAWN_JITTER_Z,
-  UNLOAD_BUTTON_POS, DAILY_CARGO_CONFIG, UNLOAD_BURST_CONFIG,
+  UNLOAD_BUTTON_POS, UNLOAD_BURST_CONFIG,
 } from '../daily-flow';
 import { BACK_AREA } from '../world-layout';
 import { SCENE_CONFIG } from '../world-layout';
@@ -42,11 +43,13 @@ interface StuckWatchEntry {
   stuckDuration: number;
 }
 
-/** One spawn-plan entry: which preset, and which UNLOAD_PORTS index it
+/** One spawn-plan entry: which preset+region (from the day's quota-based
+ * manifest, cargo-manifest-planner.ts), and which UNLOAD_PORTS index it
  * launches from (spec "Add dual elevated unloading ports and day-one
  * special cargo" round 三: "兩個到貨口可交錯生成"). */
 interface PlannedSpawn {
   preset: CargoShapePreset;
+  region: CargoRegion;
   portIndex: number;
 }
 
@@ -266,40 +269,27 @@ export class UnloadingSystem {
     updateFloatingLabel(this.buttonLabel, RUNNING_TEXT);
   }
 
-  /** Builds today's full item list ("Organize and expand cargo shape
-   * presets" round: DAILY_CARGO_CONFIG's per-CATEGORY counts, not the old
-   * per-shape-family box/roller/large split — spec五: "先決定 CargoCategory，
-   * 再從該種類的 confirmed presets 中選擇外型"). Every category's own fixed
-   * daily count (normal/fragile/large/frozen/live, summing to the SAME total
-   * as before, spec: "不可因新增外型而增加總量") is filled by a WEIGHTED
-   * random pick from that category's confirmed preset list
-   * (pickWeightedCargoShapePreset), so a single day's 90 items naturally
-   * vary in silhouette without ever guaranteeing (or forbidding) any one
-   * preset appears on a given day. Every category having a nonzero fixed
-   * count on EVERY day (including day 1) is what satisfies spec十三 ("第一天
-   * 仍必須包含五種") with no separate day-1 special-case needed. The
-   * resulting list is then split EVENLY across UNLOAD_PORTS (spec三: "平均
-   * 分配貨量"), same as before. Any remainder (pool length not divisible by
-   * port count) is handed out one item at a time via oddLeftoverPortIndex,
-   * which advances every call so it doesn't always favor the same port. The
-   * per-port assignment is then shuffled together with item order so which
-   * port fires next is effectively random (spec: "交錯生成，降低同一位置的物
-   * 理壓力"), while the exact per-port COUNT stays fixed by construction.
-   * Finally dealt round-robin into UNLOAD_BURST_CONFIG.waveCount waves, same
-   * as before. */
+  /** Builds today's full item list ("Fix cargo throwing and rebalance daily
+   * manifest" round三/四: replaces the old pure-weighted-random per-category
+   * fill with cargo-manifest-planner.ts's buildDailyCargoManifest() — a
+   * fixed per-category AND per-region quota decided before any shape is
+   * picked, a 35%-per-preset cap, and a generator-only vehicle capacity
+   * estimate/dev-log, all built in that one call). The total item count and
+   * the "every category has a nonzero presence on every day, including day
+   * 1" property (spec十三) are unchanged from before — DAILY_CARGO_CATEGORY_
+   * QUOTA (cargo-manifest-data.ts) still sums to 90 and every entry is still
+   * fixed and nonzero. The resulting list is then split EVENLY across
+   * UNLOAD_PORTS (spec三: "平均分配貨量"), same as before. Any remainder
+   * (pool length not divisible by port count) is handed out one item at a
+   * time via oddLeftoverPortIndex, which advances every call so it doesn't
+   * always favor the same port. The per-port assignment is then shuffled
+   * together with item order so which port fires next is effectively random
+   * (spec: "交錯生成，降低同一位置的物理壓力"), while the exact per-port COUNT
+   * stays fixed by construction. Finally dealt round-robin into
+   * UNLOAD_BURST_CONFIG.waveCount waves, same as before. */
   private buildSpawnPlan(): PlannedSpawn[][] {
-    const dailyCounts: [CargoCategory, number][] = [
-      ['normal', DAILY_CARGO_CONFIG.normalCount],
-      ['fragile', DAILY_CARGO_CONFIG.fragileCount],
-      ['large', DAILY_CARGO_CONFIG.largeCount],
-      ['frozen', DAILY_CARGO_CONFIG.frozenCount],
-      ['live', DAILY_CARGO_CONFIG.liveCount],
-    ];
-    const items: CargoShapePreset[] = [];
-    for (const [category, count] of dailyCounts) {
-      for (let i = 0; i < count; i++) items.push(pickWeightedCargoShapePreset(category));
-    }
-    const shuffledItems = shuffle(items);
+    const { manifest } = buildDailyCargoManifest();
+    const shuffledItems = shuffle(manifest);
 
     const portCount = UNLOAD_PORTS.length;
     const base = Math.floor(shuffledItems.length / portCount);
@@ -314,7 +304,9 @@ export class UnloadingSystem {
     }
     const shuffledPortAssignment = shuffle(portAssignment);
 
-    const planned: PlannedSpawn[] = shuffledItems.map((preset, i) => ({ preset, portIndex: shuffledPortAssignment[i] }));
+    const planned: PlannedSpawn[] = shuffledItems.map((item, i) => (
+      { preset: item.preset, region: item.region, portIndex: shuffledPortAssignment[i] }
+    ));
 
     const waveCount = Math.max(1, UNLOAD_BURST_CONFIG.waveCount);
     const waves: PlannedSpawn[][] = Array.from({ length: waveCount }, () => []);
@@ -384,11 +376,11 @@ export class UnloadingSystem {
     let id: string;
     if (preset.colliderKind === 'cylinder') {
       const yawVariance = (Math.random() - 0.5) * 1.4;
-      id = this.cargoSystem.spawnDailyRoller(preset, x, y, z, yawVariance);
+      id = this.cargoSystem.spawnDailyRoller(preset, x, y, z, yawVariance, item.region);
     } else {
       const rotYRange = isLarge ? LARGE_ITEM_ROT_Y_RANGE : Math.PI;
       const rotY = (Math.random() - 0.5) * rotYRange;
-      id = this.cargoSystem.spawnDailyBox(preset, x, y, z, rotY);
+      id = this.cargoSystem.spawnDailyBox(preset, x, y, z, rotY, item.region);
     }
 
     const obj = this.cargoSystem.getInteractable(id);

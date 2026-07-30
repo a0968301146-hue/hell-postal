@@ -696,14 +696,37 @@ export class PickupSystem implements PickupPort {
   }
 
   // --- THROW ---
+
+  /** The ONE item Q-throw (its own toast/charge-bar progress AND the actual
+   * throw) ever acts on ("Fix cargo throwing and rebalance daily manifest"
+   * round一: "提示文字、蓄力進度與實際丟出必須讀取同一個activeHeldItem") —
+   * `heldStack`'s own top when any multi-carry item is held (spec一:
+   * "Q永遠處理heldItems最後拿取的物品，也就是heldItems.at(-1)"), falling
+   * back to `playerData.heldObjectId` only for the sorting pallet's own
+   * separate world-space carry (pallet-system.ts writes that field directly
+   * and never pushes onto `heldStack` — see its own class doc comment).
+   * Never reads currentTarget/crosshair or any other cached reference. */
+  private getActiveHeldItem(): InteractableObject | null {
+    if (this.heldStack.length > 0) {
+      return this.interactables.get(this.heldStack[this.heldStack.length - 1]) ?? null;
+    }
+    return this.playerData.heldObjectId ? this.interactables.get(this.playerData.heldObjectId) ?? null : null;
+  }
+
   private startCharge(): void {
     if (this.playerData.state !== 'holding-item') return;
     // Generic opt-out for held objects that must never be thrown (spec
     // "貨品外型與比例有更多變化" round 十一: the sorting pallet — throwing a
     // whole loaded pallet would fling every pinned cargo item with it).
     // Checked via a plain mesh.userData flag rather than an id/type check so
-    // any future non-throwable held object can opt in the same way.
-    const heldObj = this.playerData.heldObjectId ? this.interactables.get(this.playerData.heldObjectId) : null;
+    // any future non-throwable held object can opt in the same way — but as
+    // of "Fix cargo throwing and rebalance daily manifest" round一, cargo
+    // itself never sets this flag anymore (see cargo-system.ts spawnDailyBox/
+    // spawnDailyRoller — every pickupable cargo item is throwable, spec一:
+    // "所有可拾取貨物都可以Q丟出"), so in practice this now only ever
+    // matches the pallet, and the toast text below is correct ("若
+    // activeHeldItem確實是托盤，才顯示「整理托盤無法投擲」").
+    const heldObj = this.getActiveHeldItem();
     if (heldObj?.mesh.userData.noThrow) {
       this.hud.showToast('整理托盤無法投擲');
       return;
@@ -729,9 +752,11 @@ export class PickupSystem implements PickupPort {
 
   private executeThrow(): void {
     if (this.playerData.state !== 'holding-item') { this.cancelCharge(); return; }
-    if (!this.playerData.heldObjectId) { this.cancelCharge(); return; }
-
-    const obj = this.interactables.get(this.playerData.heldObjectId);
+    // Same single source of truth as startCharge()'s own guard (spec一) —
+    // never re-reads playerData.heldObjectId directly here, so a held
+    // pallet vs. a held cargo item can never diverge between the toast
+    // check and the actual throw.
+    const obj = this.getActiveHeldItem();
     if (!obj) { this.cancelCharge(); return; }
 
     const ratio = this.chargeRatio;
@@ -774,8 +799,16 @@ export class PickupSystem implements PickupPort {
       obj.rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
       obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
 
-      // Apply impulse
-      const impulseStrength = SCENE_CONFIG.minThrowImpulse + ratio * (SCENE_CONFIG.maxThrowImpulse - SCENE_CONFIG.minThrowImpulse);
+      // Apply impulse — large/live cargo gets a reduced (never zero) throw
+      // speed (spec一: "大型與活物可以降低投擲速度，但不可完全禁止"). Impulse
+      // is already scaled by the object's own mass just below, which cancels
+      // out of the resulting velocity (impulse/mass) — so without this
+      // explicit multiplier, a heavy live cage would fly exactly as fast as
+      // a light box once charge ratio is equal; this multiplier is the only
+      // thing that actually slows it down.
+      const isHeavyOrLiveCargo = obj.mesh.userData.shapeType === 'large' || obj.mesh.userData.shapeType === 'cage';
+      const throwSpeedMultiplier = isHeavyOrLiveCargo ? 0.5 : 1;
+      const impulseStrength = (SCENE_CONFIG.minThrowImpulse + ratio * (SCENE_CONFIG.maxThrowImpulse - SCENE_CONFIG.minThrowImpulse)) * throwSpeedMultiplier;
       const mass = obj.rigidBody.mass();
       const impulse = dir.clone().multiplyScalar(impulseStrength * mass);
       obj.rigidBody.applyImpulse({ x: impulse.x, y: impulse.y, z: impulse.z }, true);

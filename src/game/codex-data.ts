@@ -127,7 +127,13 @@ export interface CargoCodexEntry {
 
 function toCargoCodexEntry(preset: CargoShapePreset): CargoCodexEntry {
   const traits: string[] = [preset.stackable ? '可堆疊' : '不可堆疊'];
-  traits.push(preset.throwable ? '可投擲' : '不可投擲');
+  // "Fix cargo throwing and rebalance daily manifest" round一: every
+  // pickupable cargo item is throwable now (large/live just at reduced
+  // speed, never fully blocked) — preset.throwable no longer drives any
+  // actual gameplay behavior (see cargo-system.ts's own doc comment), so
+  // this trait always reads '可投擲' rather than echoing that now-inert
+  // per-preset field.
+  traits.push('可投擲');
   if (preset.uprightRequired) traits.push('需保持正向');
   return {
     id: preset.id,

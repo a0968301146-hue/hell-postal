@@ -22,25 +22,17 @@ import { BACK_AREA, NORTH_GATES } from '../world-layout';
  * the ACTUAL number of ids UnloadingSystem registers (registerDailyCargo),
  * never this constant directly, so nothing else needed to change here.
  *
- * "Organize and expand cargo shape presets" round: re-keyed from the old
- * box/roller/large SHAPE-FAMILY split (60/20/10) to a per-CATEGORY split
- * (spec五: "先決定 CargoCategory，再從該種類的 confirmed presets 中選擇外
- * 型") — every daily cargo shape now belongs to exactly one CargoCategory
- * (cargo-category-data.ts), so the daily quota has to be expressed in those
- * same terms for UnloadingSystem's buildSpawnPlan to fill each category from
- * its own confirmed preset pool. The total stays 90 (spec: "不可因新增外型
- * 而增加總量") — large keeps its exact old count (10); the remaining 80 are
- * redistributed across normal/fragile/frozen/live so every category has a
- * comfortably nonzero daily presence (spec十三: "第一天仍必須包含五種" is
- * satisfied for every day, not just day 1, since every count here is fixed
- * and nonzero — no separate day-1 override needed). */
+ * "Fix cargo throwing and rebalance daily manifest" round三: the per-category
+ * breakdown that used to live here (normalCount/fragileCount/largeCount/
+ * frozenCount/liveCount) moved to cargo-manifest-data.ts's
+ * DAILY_CARGO_CATEGORY_QUOTA, alongside its new per-region sub-quota
+ * (DAILY_CARGO_REGION_QUOTA) — UnloadingSystem's buildSpawnPlan now builds
+ * its item list via cargo-manifest-planner.ts's buildDailyCargoManifest()
+ * instead of reading counts off this object. `total` stays here (unchanged
+ * at 90, spec: "貨物總量維持90件") since other files' doc comments/upgrade
+ * tuning still reference it as the day's overall cargo scale. */
 export const DAILY_CARGO_CONFIG = {
   total: 90,
-  normalCount: 44,
-  fragileCount: 24,
-  largeCount: 10,
-  frozenCount: 6,
-  liveCount: 6,
 };
 
 /** How far below the ceiling an elevated port's cargo spawn point sits —

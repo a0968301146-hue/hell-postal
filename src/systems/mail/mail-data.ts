@@ -33,8 +33,13 @@ export function getMailDestination(id: MailDestination): MailDestinationInfo {
 }
 
 /** How many envelopes spawn on top of regular cargo during each day's
- * unload burst (spec二) — the ONE place this count is defined. */
-export const DAILY_ENVELOPE_COUNT = 12;
+ * unload burst (spec二) — the ONE place this count is defined. "Fix cargo
+ * throwing and rebalance daily manifest" round五: raised 12 -> 20 (spec:
+ * "每日信件數量從12增加到20"); with exactly 4 MAIL_DESTINATIONS this divides
+ * evenly (spawnTodaysEnvelopes' perDestination/remainder split below), so
+ * the fixed 5/5/5/5 per-destination distribution the spec asks for falls
+ * out of the existing even-split logic with no separate special-case. */
+export const DAILY_ENVELOPE_COUNT = 20;
 
 /** Cap on how many empty bags can exist in the world at once (spec六: "場上
  * 空袋上限8個，不可無限生成"). */

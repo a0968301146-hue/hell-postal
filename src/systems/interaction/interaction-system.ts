@@ -6,7 +6,7 @@ import { PickupSystem } from './pickup-system';
 import { EnvelopeSystem } from '../../game/envelope-system';
 import { EnvelopeStampStation } from '../../game/envelope-stamp-station';
 import { SortingBoxSystem } from '../../game/sorting-box-system';
-import { VehicleControlSystem } from '../vehicle';
+import { VehicleControlSystem, VEHICLE_CALL_BUTTON_ID, VEHICLE_DEPART_BUTTON_ID } from '../vehicle';
 import { CounterServiceSystem } from '../../game/counter-service-system';
 import { DollySystem } from '../../game/dolly-system';
 import { HUD } from '../hud';
@@ -229,10 +229,24 @@ export class InteractionSystem {
       // PickupSystem.canAddToHeld/pickUp already own.
       const heldForBagCheck = this.playerData.heldObjectId;
       const isHoldingEnvelope = !!(heldForBagCheck && this.mailSystem.getEnvelope(heldForBagCheck));
+      // Also blocked while the pallet itself is the currently-held item
+      // ("Fix cargo throwing and rebalance daily manifest" round一) — the
+      // pallet's own world-space carry (pallet-system.ts) writes
+      // playerData.heldObjectId directly and never pushes onto
+      // PickupSystem's own heldStack, so PickupSystem.canAddToHeld would
+      // otherwise see an "empty" heldStack and wrongly allow a multi-carry
+      // pickup here — silently overwriting heldObjectId out from under the
+      // still-carried pallet (exactly the "上一次手持物快取"-style
+      // desync spec一 warns against: Q-throw and everything else reading
+      // heldObjectId would then point at the wrong item while the pallet is
+      // still visibly attached to the player with no way to place it).
+      const isHoldingPallet = this.playerData.heldObjectId === this.palletSystem.palletId;
       if (
         this.currentTarget &&
+        !isHoldingPallet &&
         this.currentTarget.id !== this.palletSystem.palletId &&
         this.currentTarget.id !== MAIL_RACK_INTERACTABLE_ID &&
+        this.currentTarget.id !== VEHICLE_CALL_BUTTON_ID && this.currentTarget.id !== VEHICLE_DEPART_BUTTON_ID &&
         !(this.mailBagSystem.isBag(this.currentTarget.id) && isHoldingEnvelope) &&
         this.pickupSystem.canAddToHeld(this.currentTarget)
       ) {
@@ -385,6 +399,28 @@ export class InteractionSystem {
       return;
     }
 
+    // Priority 0.8: vehicle call/depart buttons (re-enabled — see
+    // feature-flags.ts ENABLE_VEHICLE_LOADING_FLOW) — now two wall-mounted
+    // plaques south of the TV, raycast targets in the SAME shared
+    // interactables map like every other crosshair-aimed prop ("Fix cargo
+    // throwing and rebalance daily manifest" round二: "準心直接命中壁掛按
+    // 鈕才可按E" — replaces the old proximity-based getNearestButton()).
+    // Must intercept before Priority 1's generic pickup below, same reason
+    // as the mail rack just above — canPickUp is only true to satisfy the
+    // raycast's own filter, never meant to actually be picked up.
+    if (this.currentTarget && this.currentTarget.id === VEHICLE_CALL_BUTTON_ID) {
+      this.vehicleControlSystem.pressCallButton();
+      this.clearHighlight(this.currentTarget);
+      this.currentTarget = null;
+      return;
+    }
+    if (this.currentTarget && this.currentTarget.id === VEHICLE_DEPART_BUTTON_ID) {
+      this.vehicleControlSystem.pressDepartButton();
+      this.clearHighlight(this.currentTarget);
+      this.currentTarget = null;
+      return;
+    }
+
     // Priority 1: pick up targeted object (envelope, package, crate, or the
     // sorting pallet). The pallet goes through its own pickUp() (world-space
     // group-carry, not PickupSystem's viewmodel clone) — see pallet-system.ts.
@@ -420,24 +456,12 @@ export class InteractionSystem {
     // Priority 3: 開始卸貨 / 結束今天 — co-located near the north unload
     // dock close enough together that a naive per-button proximity check
     // would overlap; resolve to whichever one the player is actually
-    // nearer to (same pattern as VehicleControlSystem's call/depart).
+    // nearer to. (The vehicle call/depart buttons used to share this same
+    // proximity pattern — see Priority 0.8 above for their current
+    // crosshair-raycast replacement.)
     switch (this.nearestUnloadClusterButton()) {
       case 'unload': this.unloadingSystem.pressButton(); return;
       case 'endDay': this.dailyFlowSystem.pressEndDayButton(); return;
-    }
-
-    // Priority 4: vehicle call/depart buttons (re-enabled — see
-    // feature-flags.ts ENABLE_VEHICLE_LOADING_FLOW) — the two sit close
-    // enough together that a naive per-button proximity check would
-    // overlap; resolve to whichever one the player is actually nearer to.
-    const nearestVehicleButton = this.vehicleControlSystem.getNearestButton(this.camera.position);
-    if (nearestVehicleButton === 'call') {
-      this.vehicleControlSystem.pressCallButton();
-      return;
-    }
-    if (nearestVehicleButton === 'depart') {
-      this.vehicleControlSystem.pressDepartButton();
-      return;
     }
 
     // Priority 5: counter open-for-business button
@@ -460,8 +484,11 @@ export class InteractionSystem {
   }
 
   /** Nearest-wins resolution between the co-located 開始卸貨/結束今天
-   * buttons (spec section 十九: "四個按鈕不要互相重疊") — mirrors
-   * VehicleControlSystem.getNearestButton()'s own tie-break pattern. */
+   * buttons (spec section 十九: "四個按鈕不要互相重疊") — these two stay
+   * proximity-based (unlike the vehicle call/depart buttons, now crosshair
+   * raycast targets — see VEHICLE_CALL_BUTTON_ID/VEHICLE_DEPART_BUTTON_ID
+   * above), out of scope for "Fix cargo throwing and rebalance daily
+   * manifest" round二. */
   private nearestUnloadClusterButton(): 'unload' | 'endDay' | null {
     const pos = this.camera.position;
     const unloadNear = this.unloadingSystem.isPlayerNearButton(pos);
@@ -585,9 +612,15 @@ export class InteractionSystem {
       // onKeyDown's own change) — by this point the "holding an envelope,
       // aiming at a bag" case has already returned above, so reaching here
       // while aiming at a bag always means "pick up the box itself" (spec
-      // 三: "空手或有足夠搬運容量時...拿起信封箱").
+      // 三: "空手或有足夠搬運容量時...拿起信封箱"). Vehicle call/depart
+      // buttons are excluded the same way ("Fix cargo throwing and
+      // rebalance daily manifest" round二) — their own canPickUp=true only
+      // exists to satisfy this raycast's generic filter, never meant to
+      // actually be carried.
       if (
-        hit && hit.id !== this.palletSystem.palletId && hit.id !== MAIL_RACK_INTERACTABLE_ID &&
+        hit && this.playerData.heldObjectId !== this.palletSystem.palletId &&
+        hit.id !== this.palletSystem.palletId && hit.id !== MAIL_RACK_INTERACTABLE_ID &&
+        hit.id !== VEHICLE_CALL_BUTTON_ID && hit.id !== VEHICLE_DEPART_BUTTON_ID &&
         this.pickupSystem.canAddToHeld(hit)
       ) {
         if (this.currentTarget !== hit) {
@@ -698,6 +731,21 @@ export class InteractionSystem {
             newTarget.displayName,
             this.mailBagSystem.canSpawnBag ? '按 E 取得新箱' : '空箱數量已達上限'
           );
+        } else if (newTarget.id === VEHICLE_CALL_BUTTON_ID) {
+          // Wall-mounted call button ("Fix cargo throwing and rebalance
+          // daily manifest" round二) — same blocked/idle text VehicleControlSystem
+          // already exposed for the old proximity prompt, just shown via
+          // this same crosshair-hit chain now (spec二: "準心直接命中壁掛按
+          // 鈕才可按E").
+          this.hud.showInteractionPrompt(
+            '呼叫載具',
+            this.vehicleControlSystem.canCall ? '按 E 同時呼叫陸運與海運' : this.vehicleControlSystem.callBlockedMessage()
+          );
+        } else if (newTarget.id === VEHICLE_DEPART_BUTTON_ID) {
+          this.hud.showInteractionPrompt(
+            '載具出發',
+            this.vehicleControlSystem.canDepart ? '按 E 讓兩台載具一起離場' : this.vehicleControlSystem.departBlockedMessage()
+          );
         } else {
           this.hud.showInteractionPrompt(newTarget.displayName, '按 E 拿起');
         }
@@ -780,29 +828,6 @@ export class InteractionSystem {
         this.hud.setCrosshairActive(true);
       } else {
         this.hud.showInteractionPrompt('結束今天', this.dailyFlowSystem.endDayBlockedMessage());
-        this.hud.setCrosshairActive(false);
-      }
-      return;
-    }
-
-    // Vehicle call/depart buttons — same nearest-button resolution as onKeyDown
-    const nearestVehicleButton = this.vehicleControlSystem.getNearestButton(this.camera.position);
-    if (nearestVehicleButton === 'call') {
-      if (this.vehicleControlSystem.canCall) {
-        this.hud.showInteractionPrompt('呼叫載具', '按 E 同時呼叫陸運與海運');
-        this.hud.setCrosshairActive(true);
-      } else {
-        this.hud.showInteractionPrompt('呼叫載具', this.vehicleControlSystem.callBlockedMessage());
-        this.hud.setCrosshairActive(false);
-      }
-      return;
-    }
-    if (nearestVehicleButton === 'depart') {
-      if (this.vehicleControlSystem.canDepart) {
-        this.hud.showInteractionPrompt('載具出發', '按 E 讓兩台載具一起離場');
-        this.hud.setCrosshairActive(true);
-      } else {
-        this.hud.showInteractionPrompt('載具出發', this.vehicleControlSystem.departBlockedMessage());
         this.hud.setCrosshairActive(false);
       }
       return;

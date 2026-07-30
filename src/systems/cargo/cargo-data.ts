@@ -3,7 +3,7 @@
 // stamp, weight or destination concept yet.
 
 import { CargoCategory } from './cargo-category-data';
-import { CargoRegion, pickCargoRegion } from './cargo-region-data';
+import { CargoRegion } from './cargo-region-data';
 import { CargoShapePreset, CargoSizeClass, CargoDimensions, getCargoShapePreset } from './cargo-shape-presets';
 
 export type CargoType = 'normal' | 'large' | 'fragile' | 'frozen' | 'live';
@@ -206,7 +206,15 @@ export const CARGO_BOX_PRESETS = {
  * and expand cargo shape presets" round: category/sizeClass are no longer
  * independently re-rolled after the shape is chosen — every preset now
  * carries its own fixed category, see cargo-shape-presets.ts). */
-export function createDailyCargoData(id: string, preset: CargoShapePreset): CargoData {
+/** `region` is now decided by the caller (cargo-manifest-planner.ts's
+ * buildDailyCargoManifest(), fed through spawnDailyBox/spawnDailyRoller —
+ * see cargo-system.ts) as part of the day's fixed per-category region quota
+ * (spec三), not rolled independently per item here anymore. 'live' cargo
+ * still never receives 'international' — DAILY_CARGO_REGION_QUOTA.live.
+ * international is fixed at 0 (no accepting vehicle, see vehicle-data.ts's
+ * own doc comment on SEA_VEHICLE_BASE_CONFIGS), so callers naturally never
+ * pass that combination; nothing here needs to re-guard it. */
+export function createDailyCargoData(id: string, preset: CargoShapePreset, region: CargoRegion): CargoData {
   // Shape/collider family for the fields every OTHER system (pallet-system.ts,
   // vehicle-control-system.ts, physics collider choice in cargo-system.ts)
   // still reads — see CargoShapeType's own doc comment above for why each
@@ -215,13 +223,6 @@ export function createDailyCargoData(id: string, preset: CargoShapePreset): Carg
     preset.colliderKind === 'cylinder' ? 'roller' :
     preset.category === 'large' ? 'large' :
     preset.visualKind === 'cage' ? 'cage' : 'box';
-  // Same "decided once, at spawn" rule cargo-region-data.ts's pickCargoRegion
-  // has always followed. "Update vehicle cargo compatibility and capacity"
-  // round: 'live' cargo has no accepting vehicle for region:'international'
-  // (spec: "海外活體沒有對應載具...暫時禁止生成「海外＋活物」", reconfirmed by
-  // this round's spec section九: "海外活物目前仍不生成") — force 'domestic'
-  // rather than ever spawning an unshippable combination.
-  const region = preset.category === 'live' ? 'domestic' : pickCargoRegion();
   return {
     id,
     cargoType: 'normal',

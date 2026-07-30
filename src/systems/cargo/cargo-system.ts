@@ -7,6 +7,7 @@ import {
   createDailyCargoData,
 } from './cargo-data';
 import { CargoShapePreset } from './cargo-shape-presets';
+import { CargoRegion } from './cargo-region-data';
 import { attachCargoLabels } from './cargo-label-visuals';
 import { buildCargoShapeMesh, attachCargoPresetLabel } from './cargo-visuals';
 import { FRONT_OFFICE, BACK_AREA, CARGO_SPAWN_CONFIG, LARGE_CARGO_SPAWN_POSITIONS, LABELED_CARGO_SPAWN_POSITIONS } from '../world-layout';
@@ -160,10 +161,17 @@ export class CargoSystem {
    * (live cages) locks X/Z rotation on the body so the unload burst's random
    * tumble can never land one upside down (spec E: "生成與放置時保持正
    * 向") — this only restricts ROTATION, translation/gravity/throwing are
-   * untouched. `preset.throwable === false` sets the same `noThrow` mesh
-   * flag pickup-system.ts's charge-throw guard already uses for the sorting
-   * pallet, so large/fragile/live items simply can't be thrown (spec六). */
-  spawnDailyBox(preset: CargoShapePreset, x: number, y: number, z: number, rotY: number): string {
+   * untouched. `preset.throwable` is documentation/codex metadata only as of
+   * "Fix cargo throwing and rebalance daily manifest" round一 — it USED TO
+   * set the same `noThrow` mesh flag pickup-system.ts's charge-throw guard
+   * uses for the sorting pallet (blocking large/fragile/live cargo from
+   * ever being thrown at all), but spec一 explicitly reverses that: "所有可
+   * 拾取貨物都可以Q丟出...大型與活物可以降低投擲速度，但不可完全禁止" — so
+   * `noThrow` is now EXCLUSIVELY the pallet's own flag (see pallet-
+   * system.ts), never set here; the reduced-speed nuance for large/cage
+   * lives in pickup-system.ts's executeThrow() instead, keyed off
+   * mesh.userData.shapeType. */
+  spawnDailyBox(preset: CargoShapePreset, x: number, y: number, z: number, rotY: number, region: CargoRegion): string {
     const id = `daily-box-${this.nextDailyBoxId++}`;
     const { width, height, depth } = preset.dimensions;
     const mesh = buildCargoShapeMesh(preset);
@@ -174,10 +182,9 @@ export class CargoSystem {
     // plain mesh.add() child with no id of its own, so resolveCargoFromObject()
     // walks the parent chain up to THIS mesh to find it (spec 五).
     mesh.userData.cargoId = id;
-    if (!preset.throwable) mesh.userData.noThrow = true;
     this.scene.add(mesh);
 
-    const data = createDailyCargoData(id, preset);
+    const data = createDailyCargoData(id, preset, region);
     attachCargoPresetLabel(mesh, preset);
 
     const obj = createInteractableObject(id, data.displayName, mesh, width, height, depth);
@@ -200,7 +207,7 @@ export class CargoSystem {
    * world-space AABB (width=length, height=depth=diameter) — see
    * physics-system.ts createCylinderBody doc comment for why the collider
    * needs the same tip. */
-  spawnDailyRoller(preset: CargoShapePreset, x: number, y: number, z: number, yawVariance: number): string {
+  spawnDailyRoller(preset: CargoShapePreset, x: number, y: number, z: number, yawVariance: number, region: CargoRegion): string {
     const id = `daily-roller-${this.nextDailyRollerId++}`;
     const length = preset.dimensions.width;
     const radius = preset.dimensions.height / 2;
@@ -212,10 +219,9 @@ export class CargoSystem {
     mesh.quaternion.copy(rot);
     mesh.userData.shapeType = 'roller';
     mesh.userData.cargoId = id;
-    if (!preset.throwable) mesh.userData.noThrow = true;
     this.scene.add(mesh);
 
-    const data = createDailyCargoData(id, preset);
+    const data = createDailyCargoData(id, preset, region);
     attachCargoPresetLabel(mesh, preset);
 
     const obj = createInteractableObject(id, data.displayName, mesh, length, radius * 2, radius * 2);

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { PhysicsSystem } from '../../adapters/rapier/physics-system';
-import { InteractableObject } from '../../shared/types/interactable';
+import { InteractableObject, createInteractableObject } from '../../shared/types/interactable';
 import { CargoSystem, CargoData, CargoType } from '../cargo';
 // Depends on the neutral PickupPort contract (Phase 6: 模組邊界修正)
 // instead of importing PickupSystem (systems/interaction) — that system's
@@ -15,9 +15,8 @@ import { LAND_VEHICLE_CONFIGS, SEA_VEHICLE_CONFIGS, VehicleConfig, vehicleAccept
 import { MailSystem } from '../mail/mail-system';
 import { MailBagSystem } from '../mail/mail-bag-system';
 import { VEHICLE_ROUTES } from './vehicle-route-data';
-import { VEHICLE_CONTROL_POS, BACK_AREA } from '../world-layout';
+import { VEHICLE_CONTROL_WALL_BUTTONS } from '../world-layout';
 import { ScoringSystem, DepartureSettlement, LostFoundSettlementInput } from '../scoring';
-import { SCENE_CONFIG } from '../world-layout';
 import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/world-label-system';
 import { HUD } from '../hud';
 import { DailyFlowSystem } from '../daily-flow';
@@ -77,6 +76,14 @@ function vehicleAcceptsCargo(config: VehicleConfig, data: CargoData): boolean {
  * checkAllDeparted(). */
 export type SingleVehicleState = 'absent' | 'arriving' | 'docked' | 'departing' | 'departed';
 
+/** Wall-mounted button raycast-target ids ("Fix cargo throwing and rebalance
+ * daily manifest" round二) — registered into the SAME shared `interactables`
+ * map every other crosshair-aimed prop uses (bulletin board, television),
+ * replacing the old proximity-based getNearestButton() entirely (spec二:
+ * "準心直接命中壁掛按鈕才可按E"). */
+export const VEHICLE_CALL_BUTTON_ID = 'vehicle-call-button';
+export const VEHICLE_DEPART_BUTTON_ID = 'vehicle-depart-button';
+
 const CALL_IDLE_TEXT = '呼叫載具\n按 E 同時呼叫六台載具';
 const DEPART_IDLE_TEXT = '載具出發\n按 E 讓六台載具一起離場';
 const DEPART_BLOCKED_TEXT = '載具尚未全部停靠';
@@ -89,7 +96,6 @@ const ALREADY_HAVE_TEXT = '目前已有載具';
 const SHIP_STABLE_THRESHOLD = 0.5;
 const SHIP_VELOCITY_THRESHOLD = 0.4;
 
-type ButtonId = 'call' | 'depart';
 
 /** One of the six FIXED docking slots ("Add six fixed vehicle docking
  * slots" round) — every slot always uses the exact same VehicleConfig (no
@@ -152,7 +158,6 @@ export class VehicleControlSystem {
    * (spec: "結算以每封信計算", envelope state stays owned there). */
   private mailSystem: MailSystem;
   private mailBagSystem: MailBagSystem;
-  private enabled = true;
 
   /** Fixed six slots, built once in the constructor from
    * [...LAND_VEHICLE_CONFIGS, ...SEA_VEHICLE_CONFIGS] — the SAME slot
@@ -171,8 +176,6 @@ export class VehicleControlSystem {
    * fixture). */
   private shipStableTimers: Map<string, number> = new Map();
 
-  private callButtonPos: THREE.Vector3;
-  private departButtonPos: THREE.Vector3;
   private callLabel!: THREE.Sprite;
   private departLabel!: THREE.Sprite;
 
@@ -213,66 +216,67 @@ export class VehicleControlSystem {
     this.onCargoLoaded = onCargoLoaded;
     this.onVehicleDeparted = onVehicleDeparted;
     this.onShippingStarted = onShippingStarted;
-    this.enabled = enabled;
 
     this.slots = [...LAND_VEHICLE_CONFIGS, ...SEA_VEHICLE_CONFIGS].map((config) => ({
       config, vehicle: null, state: 'absent' as SingleVehicleState, pinnedCargo: [], waypointIndex: 0,
     }));
 
-    const { centerX, centerZ, spacing } = VEHICLE_CONTROL_POS;
-    this.callButtonPos = new THREE.Vector3(centerX - spacing / 2, 0, centerZ);
-    this.departButtonPos = new THREE.Vector3(centerX + spacing / 2, 0, centerZ);
     // `enabled` gates the call/depart buttons (and everything behind them)
     // out of the scene this round (see feature-flags.ts
-    // ENABLE_VEHICLE_LOADING_FLOW). callButtonPos/departButtonPos above are
-    // cheap position math, harmless either way; getNearestButton() below is
-    // the one place that must actually check `enabled` so a disabled
-    // system can't report a button that was never built as "nearby".
+    // ENABLE_VEHICLE_LOADING_FLOW).
     if (!enabled) return;
     this.buildButtons();
   }
 
+  /** Two wall-mounted plaques on the west wall, south of the TV ("Fix cargo
+   * throwing and rebalance daily manifest" round二) — call above, depart
+   * below, sharing the same X/Z footprint from VEHICLE_CONTROL_WALL_BUTTONS
+   * (logistics-layout-data.ts), stacked at their own distinct center
+   * heights. Each is a real InteractableObject with a tightly-fit collider
+   * (spec二: "準心直接命中壁掛按鈕才可按E" — same crosshair-raycast pattern
+   * as the bulletin board/TV, no proximity detection anymore). */
   private buildButtons(): void {
-    this.callLabel = this.buildOneButton(this.callButtonPos, 0x2b6bd8, CALL_IDLE_TEXT);
-    this.departLabel = this.buildOneButton(this.departButtonPos, 0xd88a2b, DEPART_IDLE_TEXT);
+    const { centerX, centerZ, callCenterY, departCenterY, width, height, depth } = VEHICLE_CONTROL_WALL_BUTTONS;
+    this.callLabel = this.buildOneButton(centerX, callCenterY, centerZ, width, height, depth, 0x2b6bd8, CALL_IDLE_TEXT, VEHICLE_CALL_BUTTON_ID, '呼叫載具按鈕');
+    this.departLabel = this.buildOneButton(centerX, departCenterY, centerZ, width, height, depth, 0xd88a2b, DEPART_IDLE_TEXT, VEHICLE_DEPART_BUTTON_ID, '載具出發按鈕');
   }
 
-  private buildOneButton(pos: THREE.Vector3, color: number, labelText: string): THREE.Sprite {
-    const floorY = BACK_AREA.floorY;
-    const postHeight = 0.9;
-    const postGeo = new THREE.BoxGeometry(0.22, postHeight, 0.22);
-    const postMat = new THREE.MeshStandardMaterial({ color: 0x444444 });
-    const post = new THREE.Mesh(postGeo, postMat);
-    post.position.set(pos.x, floorY + postHeight / 2, pos.z);
-    this.scene.add(post);
+  private buildOneButton(
+    x: number, y: number, z: number, width: number, height: number, depth: number,
+    color: number, labelText: string, id: string, displayName: string
+  ): THREE.Sprite {
+    // BoxGeometry's own (width,height,depth) constructor args map to local
+    // (X,Y,Z) — X is the wall→room axis here (`depth` param), matching the
+    // same convention BULLETIN_BOARD/TELEVISION already use.
+    const geo = new THREE.BoxGeometry(depth, height, width);
+    const mat = new THREE.MeshStandardMaterial({ color });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, y, z);
+    this.scene.add(mesh);
 
-    const capGeo = new THREE.CylinderGeometry(0.11, 0.11, 0.07, 12);
-    const capMat = new THREE.MeshStandardMaterial({ color });
-    const cap = new THREE.Mesh(capGeo, capMat);
-    cap.position.set(pos.x, floorY + postHeight + 0.02, pos.z);
-    this.scene.add(cap);
-
-    this.physics.createStaticCuboid(pos.x, floorY + postHeight / 2, pos.z, 0.11, postHeight / 2, 0.11);
+    // Collider wraps only the plaque's own thin body — no enlarged
+    // detection volume (same convention as the bulletin board's own
+    // "互動Collider只包住板面").
+    this.physics.createStaticCuboid(x, y, z, depth / 2, height / 2, width / 2);
 
     const label = createFloatingLabel(labelText, { width: 1.0, bg: 'rgba(20,25,45,0.75)' });
-    label.position.set(pos.x, floorY + postHeight + 0.5, pos.z);
+    label.position.set(x + depth / 2 + 0.3, y + height / 2 + 0.3, z);
     this.scene.add(label);
+
+    const obj = createInteractableObject(id, displayName, mesh, depth, height, width);
+    this.interactables.set(id, obj);
+
     return label;
   }
 
+  /** Flat-plane distance — used by the cargo-shipment scan below to find
+   * which docked vehicle's cargo bay a given item is nearest to (unrelated
+   * to the call/depart buttons, which are crosshair-raycast targets now,
+   * not proximity-based — see buildButtons() above). */
   private distanceXZ(pos: THREE.Vector3, target: THREE.Vector3): number {
     const dx = pos.x - target.x;
     const dz = pos.z - target.z;
     return Math.sqrt(dx * dx + dz * dz);
-  }
-
-  getNearestButton(pos: THREE.Vector3): ButtonId | null {
-    if (!this.enabled) return null;
-    const dCall = this.distanceXZ(pos, this.callButtonPos);
-    const dDepart = this.distanceXZ(pos, this.departButtonPos);
-    const range = SCENE_CONFIG.interactionDistance + 1;
-    if (dCall > range && dDepart > range) return null;
-    return dCall <= dDepart ? 'call' : 'depart';
   }
 
   get isPaused(): boolean {

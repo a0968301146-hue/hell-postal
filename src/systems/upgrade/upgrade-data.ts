@@ -14,7 +14,7 @@ import { UpgradeDefinition, UpgradeId } from './upgrade-types';
  * departure (spec: "不得自行掃描場景，只讀取Scoring/Vehicle System提供的狀
  * 態").
  *
- * A normal day currently spawns 90 daily cargo + 12 mail envelopes (see
+ * A normal day currently spawns 90 daily cargo + 20 mail envelopes (see
  * daily-flow-data.ts DAILY_CARGO_CONFIG.total / mail-data.ts
  * DAILY_ENVELOPE_COUNT) — a solidly-played day shipping most of that with
  * modest penalties nets roughly 40-90 points at this reward rate, which is

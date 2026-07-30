@@ -286,6 +286,46 @@ export const TELEVISION = {
   depth: TV_DEPTH,
 };
 
+/** Wall-mounted vehicle call/depart buttons ("Fix cargo throwing and
+ * rebalance daily manifest" round二) — replaces the old freestanding pillar
+ * pair (VEHICLE_CONTROL_POS below, now unused) with two small plaques on the
+ * same west wall as the TV, positioned south of it (spec二: "依現有電視／
+ * 小桌子的南側邊界動態計算，不要寫死一份與電視無關的座標"). Derived from
+ * whichever of TV_TABLE/TELEVISION actually has the more southward edge —
+ * currently the table (wider than the TV itself), but this stays correct
+ * even if either footprint changes later. Same axis convention as the board
+ * /TV: `depth` is the wall→room dimension (world X, flush against the wall
+ * with a small standoff), `width` runs along the wall (world Z) — with zero
+ * rotation this already faces east into the room, matching "面向東方倉庫
+ * 內側", no rotation needed. Both buttons share this one X/Z footprint,
+ * stacked vertically at their own distinct center heights — call above,
+ * depart below (spec二: "上方：召喚載具／下方：載具出發"). */
+const VEHICLE_BUTTON_WIDTH = 0.45; // along the wall, world Z (spec二建議尺寸)
+const VEHICLE_BUTTON_HEIGHT = 0.35;
+const VEHICLE_BUTTON_DEPTH = 0.08; // wall -> room, world X — a thin wall plaque
+const VEHICLE_BUTTON_WALL_STANDOFF = 0.02; // mirrors BULLETIN_BOARD/TV_TABLE's own standoff
+const VEHICLE_BUTTON_TV_CLEARANCE = 0.5; // spec二: "與電視設施保留至少0.5m"
+/** Open floor space the player needs standing in front of the buttons to
+ * interact with them (spec二: "前方至少保留1.2m操作空間") — mirrors
+ * TV_TABLE_STANDING_CLEARANCE's own role; nothing else occupies the open
+ * room space east of this point. */
+export const VEHICLE_BUTTON_STANDING_CLEARANCE = 1.2;
+
+const tvSouthEdgeZ = Math.max(
+  TV_TABLE.centerZ + TV_TABLE.width / 2,
+  TELEVISION.centerZ + TELEVISION.width / 2
+);
+
+export const VEHICLE_CONTROL_WALL_BUTTONS = {
+  centerX: westWallInnerFaceX + VEHICLE_BUTTON_WALL_STANDOFF + VEHICLE_BUTTON_DEPTH / 2,
+  centerZ: tvSouthEdgeZ + VEHICLE_BUTTON_TV_CLEARANCE + VEHICLE_BUTTON_WIDTH / 2,
+  callCenterY: BACK_AREA.floorY + 1.35, // spec二: "上方按鈕中心高度約1.35m"
+  departCenterY: BACK_AREA.floorY + 0.85, // spec二: "下方按鈕中心高度約0.85m"
+  width: VEHICLE_BUTTON_WIDTH,
+  height: VEHICLE_BUTTON_HEIGHT,
+  depth: VEHICLE_BUTTON_DEPTH,
+};
+
 /** Reserved (white-box only, no function yet) cargo-type zones — space is
  * claimed now so future systems have somewhere to go; purely floor decals +
  * floating labels (world-layout-system.ts buildCargoZones), no physics
@@ -404,23 +444,6 @@ export const WORLD_BOUNDS = {
   minZ: BACK_AREA.minZ - 1,
   maxZ: BACK_AREA.maxZ + 40,
 };
-
-/** Vehicle control post — reachable from the package work zone and both
- * dock areas without blocking the main cargo-carrying paths. Two buttons
- * sit side by side here: 呼叫載具 (centerX - spacing/2, calls land AND sea
- * together) / 載具出發 (centerX + spacing/2).
- *
- * "Update vehicle cargo compatibility and capacity" round: moved from
- * centerX=0 to centerX=-4.5 — at the old x=0, z=25.5, this sat squarely
- * inside 石頭巨人's enlarged dock footprint (vehicle-dock-data.ts:
- * z=28.0±3.45 half-length = 24.55..31.45, which now includes z=25.5; the
- * old x=0 is also exactly this slot's own centerX). z=25.5 itself is still
- * clear at the new x=-4.5: none of the three land vehicles' dock spans
- * include x=-4.5 (frog -4.825..-2.575, rockgiant -1.95..1.95, snail
- * 2.5..5.5), and z=25.5 is itself north of every land vehicle's own front
- * edge except rockgiant's and snail's, both of which are safely out of
- * reach in X at this position. */
-export const VEHICLE_CONTROL_POS = { centerX: -4.5, centerZ: 25.5, spacing: 1.4 };
 
 /** How many normal-cargo boxes to spawn in each area, and where — kept
  * central so counts/zones aren't scattered across scene/cargo setup code. */
