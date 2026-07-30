@@ -457,6 +457,12 @@ export class VehicleControlSystem {
 
     for (const slot of this.slots) {
       this.pinCargoPhysics(slot.pinnedCargo);
+      // A no-op for every vehicle except the frog, which starts closing its
+      // mouth and hides its own pinned cargo here ("Rebuild frog vehicle as
+      // hopping mouth cargo carrier" round spec五/六 — see VehicleSystem.
+      // onDeparting's own doc comment for why hiding beats leaving it
+      // visibly floating in front of a closed mouth).
+      slot.vehicle?.onDeparting(slot.pinnedCargo);
       slot.state = 'departing';
       slot.waypointIndex = 0;
     }
@@ -493,6 +499,10 @@ export class VehicleControlSystem {
    * advancing `slot.waypointIndex` each time the current leg completes. */
   private updateSlot(slot: VehicleSlot, deltaTime: number): void {
     if (!slot.vehicle) return;
+    // Animation upkeep (currently only the frog's own mouth-angle lerp,
+    // see VehicleSystem.update's own doc comment) — runs every frame
+    // regardless of arriving/docked/departing, a no-op for the other five.
+    slot.vehicle.update(deltaTime);
     const route = VEHICLE_ROUTES[slot.config.id];
 
     if (slot.state === 'arriving') {
@@ -506,6 +516,10 @@ export class VehicleControlSystem {
       }
       slot.state = 'docked';
       slot.waypointIndex = 0;
+      // A no-op for every vehicle except the frog, which starts opening its
+      // mouth here ("Rebuild frog vehicle as hopping mouth cargo carrier"
+      // round spec四).
+      slot.vehicle.onArrived();
       // Player can start loading into whichever vehicle just arrived,
       // without waiting for the other five (idempotent past the first
       // call — see DailyFlowSystem.notifyVehicleDocked's own guard).

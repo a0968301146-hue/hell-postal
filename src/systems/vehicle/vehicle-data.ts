@@ -19,6 +19,15 @@ import { LAND_DOCK_SLOTS, SEA_DOCK_SLOTS } from './vehicle-dock-data';
  * grow together automatically. */
 export const VEHICLE_VISUAL_SCALE = 1.5;
 
+/** The ONE place the frog's config id is spelled out as a literal ("Rebuild
+ * frog vehicle as hopping mouth cargo carrier" round) — vehicle-system.ts
+ * imports this to decide whether to build the frog-specific creature mesh
+ * instead of the generic box, and vehicle-control-system.ts imports it for
+ * nothing (frog-specific behavior is fully contained in VehicleSystem's own
+ * onArrived/onDeparting/update/moveToward, never branched on again outside
+ * that one file) — kept exported anyway for any future frog-specific read. */
+export const FROG_VEHICLE_CONFIG_ID = 'land-frog-01';
+
 export interface VehicleConfig {
   id: string;
   vehicleType: 'land' | 'sea';
@@ -140,37 +149,26 @@ function scaleVehicleDimensions(base: VehicleConfig): VehicleConfig {
  * acceptedRegions. All comfortably within VEHICLE_SIZE_LIMITS. */
 const LAND_VEHICLE_BASE_CONFIGS: VehicleConfig[] = [
   {
-    id: 'land-frog-01',
+    id: FROG_VEHICLE_CONFIG_ID,
     vehicleType: 'land',
     displayName: '青蛙',
-    width: 1.5,
-    // height/cargoAreaHeight ×1.65 + length/cargoAreaLength ×1.6 ("Enlarge
-    // small and medium cargo and add NPC dialogue stages" round: doubling
-    // every small/medium CargoShapePreset's dimensions raised normal+
-    // fragile item volume by up to 8x, and empirical 1000-day capacity
-    // simulation showed 青蛙's utilization spiking over 100%, occasionally
-    // above 140% — spec: "重新計算載具容量；若放不下，擴大可見貨艙與
-    // cargoBounds"). `width` is the ONE axis left untouched — it drives the
-    // tight (as little as 0.625m) inter-vehicle dock clearance in
-    // vehicle-dock-data.ts, which this round must not touch (不掃描無關系
-    // 統); height has no such neighbor (BACK_AREA's ceiling/
-    // VEHICLE_SIZE_LIMITS.maxHeight leave room, though height ALONE tops out
-    // around ×1.69 before hitting that ceiling), and length's own dock
-    // clearance (~2m to the south wall pre-growth) has enough slack to
-    // absorb this increase and still leave >1m clear. Growing the REAL
-    // height/length fields (not just cargoArea*) genuinely enlarges the
-    // VISIBLE chassis+bed-wall mesh AND the real cargoBounds detection zone
-    // together (see vehicle-system.ts's own construction — cargoAreaHeight
-    // alone is capacity-math-only, decoupled from real geometry) — an
-    // actual enlargement, not just a bigger capacity-formula number.
-    // Re-verified empirically after this change via a fresh 1000-day
-    // simulation: max utilization ~69%, comfortably under the safe
-    // threshold with real margin for run-to-run random variance.
-    length: 2.6 * 1.6,
-    height: 1.3 * 1.65,
-    cargoAreaWidth: 1.2,
-    cargoAreaLength: 2.1 * 1.6,
-    cargoAreaHeight: 1.15 * 1.65,
+    // "Rebuild frog vehicle as hopping mouth cargo carrier" round: the frog
+    // is no longer a scaled-up plain box (see vehicle-system.ts's own
+    // buildFrogVehicle for the actual body/head/jaw geometry, all derived
+    // from these same width/length/height/cargoArea* fields, never
+    // hand-duplicated) — width/length/height now describe the creature's
+    // own compact footprint (body+head+legs), and cargoArea* now describes
+    // the MOUTH INTERIOR specifically (spec四: "cargoBounds要改到嘴巴內
+    // 部...cargoBounds必須和可見嘴內空間一致"), not a flatbed. Deliberately
+    // kept well inside the ORIGINAL dock-clearance budget computed in
+    // vehicle-dock-data.ts (half-width <=1.125, half-length <=3.12) — this
+    // round touches neither that file nor any of the other five vehicles.
+    width: 1.25,
+    length: 2.6,
+    height: 1.15,
+    cargoAreaWidth: 1.0,
+    cargoAreaLength: 1.0,
+    cargoAreaHeight: 0.75,
     dockPosition: LAND_DOCK_SLOTS['land-frog-01'].dockPosition,
     spawnPosition: LAND_DOCK_SLOTS['land-frog-01'].spawnPosition,
     exitPosition: LAND_DOCK_SLOTS['land-frog-01'].exitPosition,
