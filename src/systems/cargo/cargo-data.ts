@@ -4,7 +4,7 @@
 
 import { CargoCategory } from './cargo-category-data';
 import { CargoRegion } from './cargo-region-data';
-import { CargoShapePreset, CargoSizeClass, CargoDimensions, getCargoShapePreset } from './cargo-shape-presets';
+import { CargoShapePreset, CargoSizeClass, CargoDimensions } from './cargo-shape-presets';
 
 export type CargoType = 'normal' | 'large' | 'fragile' | 'frozen' | 'live';
 export type RouteType = 'domestic' | 'overseas';
@@ -187,13 +187,17 @@ export function createCargoData(id: string, preset: CargoLabelPreset, dimensions
 /** Back-compat for mail-layout-data.ts, which reads
  * CARGO_BOX_PRESETS.mediumBox.dimensions as the mail bag's own base exterior
  * size ("Organize and expand cargo shape presets" round spec十: "若為了相容
- * 舊存取仍需保留 shapeType：只能作為 CargoShapePreset.id 的相容別名") — a thin
- * derived view, not a second data source. The real definition of "中型紙箱"
- * lives in cargo-shape-presets.ts's 'medium-box' preset; this alias exists
- * ONLY so mail-layout-data.ts (out of this round's scope — mail bags are
- * explicitly untouched) keeps compiling and reading the exact same number. */
+ * 舊存取仍需保留 shapeType：只能作為 CargoShapePreset.id 的相容別名"). Used to
+ * be a thin derived view straight off getCargoShapePreset('medium-box'), but
+ * "Enlarge small and medium cargo and add NPC dialogue stages" round doubled
+ * every sizeClass 'small'/'medium' preset's dimensions INCLUDING 'medium-box'
+ * itself — reading it live would have silently doubled mail bags too, which
+ * is explicitly out of scope this round (spec: "不要修改...信封箱"). Frozen
+ * here instead as the exact PRE-doubling {0.42, 0.38, 0.40} snapshot, so mail
+ * bags keep their existing size regardless of any future cargo-shape-presets.ts
+ * change to 'medium-box' itself. */
 export const CARGO_BOX_PRESETS = {
-  mediumBox: { dimensions: getCargoShapePreset('medium-box')!.dimensions },
+  mediumBox: { dimensions: { width: 0.42, height: 0.38, depth: 0.40 } },
 };
 
 /** Daily-flow round cargo (spec "每日貨品清空核心流程") — deliberately

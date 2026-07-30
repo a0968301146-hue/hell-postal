@@ -5,7 +5,7 @@ import {
 import {
   createLostFoundBubble, showLostFoundBubble, updateLostFoundBubbleText, disposeLostFoundBubble, LostFoundBubble,
 } from './lost-found-bubble-ui';
-import { LostItemPreset, LOST_FOUND_SEEKING_TEXT } from './lost-found-data';
+import { LostItemPreset } from './lost-found-data';
 import { LostItemPreviewRenderer } from './lost-item-preview-renderer';
 
 const NPC_SPEED = 1.6; // m/s, simple slide-to-target movement — same convention as counter-npc-system.ts
@@ -99,6 +99,20 @@ export class LostFoundNpcSystem {
     if (this.bubble) updateLostFoundBubbleText(this.bubble, text);
   }
 
+  /** Swaps the bubble to its name+model-preview form — called by
+   * LostFoundSystem once it advances a waiting NPC from the greeting stage
+   * into waitingForItem ("Add sequential lost-found visitors and held cargo
+   * feedback" round二: "進入waitingForItem後...顯示需要的失物名稱與模型預
+   * 覽"), never automatically on arrival anymore (see update()'s own arrival
+   * branch below, which now only faces the counter — no bubble content of
+   * its own; LostFoundSystem always shows the greeting text right after via
+   * updateBubbleText() instead). No-op if this NPC has no target preset. */
+  showItemNeed(promptText: string): void {
+    if (this.bubble && this.currentPreset) {
+      showLostFoundBubble(this.bubble, this.previewRenderer, this.currentPreset, promptText);
+    }
+  }
+
   /** Immediate removal, no walk-out animation — day reset only (spec: "清除
    * 尚未完成案件的NPC與失物"). */
   forceRemove(): void {
@@ -128,9 +142,10 @@ export class LostFoundNpcSystem {
         const faceDx = LOST_FOUND_COUNTER.x - pos.x;
         const faceDz = LOST_FOUND_COUNTER.z - pos.z;
         this.group.rotation.y = Math.atan2(faceDx, faceDz);
-        if (this.bubble && this.currentPreset) {
-          showLostFoundBubble(this.bubble, this.previewRenderer, this.currentPreset, LOST_FOUND_SEEKING_TEXT);
-        }
+        // Bubble content is now entirely LostFoundSystem's call (spec二:
+        // greeting first, no item name/preview yet) — it calls
+        // updateBubbleText() with a random greeting immediately after this
+        // arrival, so nothing needs to be shown here.
       } else if (this.state === 'walkingOut') {
         this.disposeGroup();
         this.state = 'gone';

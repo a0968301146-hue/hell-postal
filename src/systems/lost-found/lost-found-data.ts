@@ -81,7 +81,6 @@ export interface LostFoundCaseDef {
   /** References LOST_ITEM_PRESETS[].id — which shape this case's NPC is
    * looking for. */
   lostItemPresetId: string;
-  successText: string;
 }
 
 /** Case pool ("Add sequential lost-found visitors and held cargo feedback"
@@ -89,14 +88,58 @@ export interface LostFoundCaseDef {
  * DIFFERENT LOST_ITEM_PRESETS id, so any 3 DISTINCT cases drawn from this
  * pool automatically request 3 distinct items with zero extra dedup logic
  * (see lost-found-system.ts's prepareDailyCases()). At least 3 entries are
- * required for that to even be possible — kept at 5 for daily variety. */
+ * required for that to even be possible — kept at 5 for daily variety. Each
+ * case's own per-case thank-you line ("Add sequential lost-found visitors
+ * and held cargo feedback" round) was replaced by a shared random pool
+ * (LOST_FOUND_THANKS_TEXTS below, spec二: "準備至少5句隨機答謝") — the
+ * thanking stage no longer reads anything case-specific, so `successText`
+ * was dropped from this shape entirely rather than left unused. */
 export const LOST_FOUND_CASES: LostFoundCaseDef[] = [
-  { id: 'case-001', customerName: '委託人', lostItemPresetId: 'magic-staff', successText: '「就是這個！太感謝你了。」' },
-  { id: 'case-002', customerName: '委託人', lostItemPresetId: 'plush-doll', successText: '「太好了，這是女兒最愛的玩偶。」' },
-  { id: 'case-003', customerName: '委託人', lostItemPresetId: 'ceramic-pot', successText: '「可算找回來了，謝謝你。」' },
-  { id: 'case-004', customerName: '委託人', lostItemPresetId: 'violin', successText: '「我的小提琴！太感激了。」' },
-  { id: 'case-005', customerName: '委託人', lostItemPresetId: 'magic-book', successText: '「這本書對我很重要，非常感謝。」' },
+  { id: 'case-001', customerName: '委託人', lostItemPresetId: 'magic-staff' },
+  { id: 'case-002', customerName: '委託人', lostItemPresetId: 'plush-doll' },
+  { id: 'case-003', customerName: '委託人', lostItemPresetId: 'ceramic-pot' },
+  { id: 'case-004', customerName: '委託人', lostItemPresetId: 'violin' },
+  { id: 'case-005', customerName: '委託人', lostItemPresetId: 'magic-book' },
 ];
+
+/** Random greeting shown the instant an NPC arrives and turns to face the
+ * counter, BEFORE its actual need is ever revealed ("Add sequential
+ * lost-found visitors and held cargo feedback" round二: "先顯示一段問候或閒
+ * 聊...此時不顯示失物名稱與預覽"). Picked fresh per NPC visit, independent of
+ * which item that NPC is actually looking for — see
+ * lost-found-system.ts's own greeting-stage transition, the ONE place this
+ * pool is read. */
+export const LOST_FOUND_GREETING_TEXTS: string[] = [
+  '「呼……終於到了，這裡是失物招領處吧？」',
+  '「不好意思，打擾一下，能幫我一個忙嗎？」',
+  '「你好呀，聽說這裡專門幫忙找東西。」',
+  '「哎呀，這趟路走得可真遠……」',
+  '「早安！今天生意還不錯吧？」',
+];
+
+/** Random thank-you shown the instant a hand-over succeeds, replacing each
+ * case's own former successText (spec二: "準備至少5句隨機答謝"). Picked
+ * fresh per successful hand-over, independent of which case just completed
+ * — see lost-found-system.ts's own thanking-stage transition. */
+export const LOST_FOUND_THANKS_TEXTS: string[] = [
+  '「太好了！真的非常感謝你。」',
+  '「你幫了我一個大忙，謝謝！」',
+  '「這下我終於放心了，謝謝你。」',
+  '「你真是幫了大忙，感激不盡。」',
+  '「太感謝了，祝你生意興隆！」',
+];
+
+export function pickRandomGreeting(): string {
+  return LOST_FOUND_GREETING_TEXTS[Math.floor(Math.random() * LOST_FOUND_GREETING_TEXTS.length)];
+}
+
+export function pickRandomThanks(): string {
+  return LOST_FOUND_THANKS_TEXTS[Math.floor(Math.random() * LOST_FOUND_THANKS_TEXTS.length)];
+}
+
+/** Shown alongside the greeting text while the NPC waits for the player's
+ * first E press (spec二: "顯示「按 E 繼續」"). */
+export const LOST_FOUND_CONTINUE_PROMPT = '按 E 繼續';
 
 /** Exact spec wording (spec七: "顯示「這不是他要找的失物」") — the ONE shared
  * message for any incorrect hand-over attempt, not per-case flavor text. */

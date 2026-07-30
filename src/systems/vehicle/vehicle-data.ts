@@ -144,11 +144,33 @@ const LAND_VEHICLE_BASE_CONFIGS: VehicleConfig[] = [
     vehicleType: 'land',
     displayName: '青蛙',
     width: 1.5,
-    length: 2.6,
-    height: 1.3,
+    // height/cargoAreaHeight ×1.65 + length/cargoAreaLength ×1.6 ("Enlarge
+    // small and medium cargo and add NPC dialogue stages" round: doubling
+    // every small/medium CargoShapePreset's dimensions raised normal+
+    // fragile item volume by up to 8x, and empirical 1000-day capacity
+    // simulation showed 青蛙's utilization spiking over 100%, occasionally
+    // above 140% — spec: "重新計算載具容量；若放不下，擴大可見貨艙與
+    // cargoBounds"). `width` is the ONE axis left untouched — it drives the
+    // tight (as little as 0.625m) inter-vehicle dock clearance in
+    // vehicle-dock-data.ts, which this round must not touch (不掃描無關系
+    // 統); height has no such neighbor (BACK_AREA's ceiling/
+    // VEHICLE_SIZE_LIMITS.maxHeight leave room, though height ALONE tops out
+    // around ×1.69 before hitting that ceiling), and length's own dock
+    // clearance (~2m to the south wall pre-growth) has enough slack to
+    // absorb this increase and still leave >1m clear. Growing the REAL
+    // height/length fields (not just cargoArea*) genuinely enlarges the
+    // VISIBLE chassis+bed-wall mesh AND the real cargoBounds detection zone
+    // together (see vehicle-system.ts's own construction — cargoAreaHeight
+    // alone is capacity-math-only, decoupled from real geometry) — an
+    // actual enlargement, not just a bigger capacity-formula number.
+    // Re-verified empirically after this change via a fresh 1000-day
+    // simulation: max utilization ~69%, comfortably under the safe
+    // threshold with real margin for run-to-run random variance.
+    length: 2.6 * 1.6,
+    height: 1.3 * 1.65,
     cargoAreaWidth: 1.2,
-    cargoAreaLength: 2.1,
-    cargoAreaHeight: 1.15,
+    cargoAreaLength: 2.1 * 1.6,
+    cargoAreaHeight: 1.15 * 1.65,
     dockPosition: LAND_DOCK_SLOTS['land-frog-01'].dockPosition,
     spawnPosition: LAND_DOCK_SLOTS['land-frog-01'].spawnPosition,
     exitPosition: LAND_DOCK_SLOTS['land-frog-01'].exitPosition,
@@ -180,11 +202,16 @@ const LAND_VEHICLE_BASE_CONFIGS: VehicleConfig[] = [
     vehicleType: 'land',
     displayName: '蝸牛',
     width: 2.0,
-    length: 3.4,
-    height: 1.5,
+    // height/cargoAreaHeight ×1.4 + length/cargoAreaLength ×1.15 — same
+    // capacity fix as 青蛙 above (蝸牛 carries live+frozen, both entirely
+    // small/medium presets this round); re-verified empirically at ~83% max
+    // utilization after this change, with a comfortable 0.15m margin under
+    // VEHICLE_SIZE_LIMITS.maxHeight (scaled height 3.15 vs the 3.3 ceiling).
+    length: 3.4 * 1.15,
+    height: 1.5 * 1.4,
     cargoAreaWidth: 1.7,
-    cargoAreaLength: 2.9,
-    cargoAreaHeight: 1.3,
+    cargoAreaLength: 2.9 * 1.15,
+    cargoAreaHeight: 1.3 * 1.4,
     dockPosition: LAND_DOCK_SLOTS['land-snail-01'].dockPosition,
     spawnPosition: LAND_DOCK_SLOTS['land-snail-01'].spawnPosition,
     exitPosition: LAND_DOCK_SLOTS['land-snail-01'].exitPosition,
@@ -220,10 +247,12 @@ const SEA_VEHICLE_BASE_CONFIGS: VehicleConfig[] = [
     displayName: '魟魚',
     width: 1.8,
     length: 3.2,
-    height: 1.2,
+    // height/cargoAreaHeight ×1.7 — same capacity fix as 青蛙 above (魟魚
+    // carries fragile+normal, both entirely small/medium presets this round).
+    height: 1.2 * 1.7,
     cargoAreaWidth: 1.5,
     cargoAreaLength: 2.6,
-    cargoAreaHeight: 1.05,
+    cargoAreaHeight: 1.05 * 1.7,
     dockPosition: SEA_DOCK_SLOTS['sea-ray-01'].dockPosition,
     spawnPosition: SEA_DOCK_SLOTS['sea-ray-01'].spawnPosition,
     exitPosition: SEA_DOCK_SLOTS['sea-ray-01'].exitPosition,
@@ -239,10 +268,14 @@ const SEA_VEHICLE_BASE_CONFIGS: VehicleConfig[] = [
     displayName: '海龜',
     width: 2.2,
     length: 3.8,
-    height: 1.5,
+    // height/cargoAreaHeight ×1.4 — same capacity fix as 青蛙 above (海龜
+    // shares the international-normal quota with 魟魚, on top of its own
+    // unaffected large quota — the shared normal portion alone was already
+    // enough to push it over budget).
+    height: 1.5 * 1.4,
     cargoAreaWidth: 1.85,
     cargoAreaLength: 3.2,
-    cargoAreaHeight: 1.35,
+    cargoAreaHeight: 1.35 * 1.4,
     dockPosition: SEA_DOCK_SLOTS['sea-turtle-01'].dockPosition,
     spawnPosition: SEA_DOCK_SLOTS['sea-turtle-01'].spawnPosition,
     exitPosition: SEA_DOCK_SLOTS['sea-turtle-01'].exitPosition,

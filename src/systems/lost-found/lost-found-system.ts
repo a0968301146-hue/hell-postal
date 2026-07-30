@@ -10,7 +10,8 @@ import { SCENE_CONFIG } from '../world-layout';
 import { LOST_FOUND_ROOM, LOST_FOUND_COUNTER, LOST_FOUND_COUNTER_HALF_EXTENTS } from '../../data/world/lost-found-layout-data';
 import {
   LOST_ITEM_PRESETS, LostItemPreset, LOST_FOUND_CASES, LostFoundCaseDef, LOST_FOUND_WRONG_ITEM_TEXT, LOST_FOUND_MISSED_TEXT,
-  DECOY_LOST_ITEM_COUNT, DAILY_LOST_FOUND_NPC_COUNT, buildLostItemGeometry,
+  LOST_FOUND_SEEKING_TEXT, LOST_FOUND_CONTINUE_PROMPT, DECOY_LOST_ITEM_COUNT, DAILY_LOST_FOUND_NPC_COUNT, buildLostItemGeometry,
+  pickRandomGreeting, pickRandomThanks,
 } from './lost-found-data';
 import { UNLOAD_PORTS, UNLOAD_SPAWN_JITTER_X, UNLOAD_SPAWN_JITTER_Z, UNLOAD_BURST_CONFIG } from '../daily-flow';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
@@ -21,6 +22,12 @@ import { LostFoundCabinetSystem, computeLostItemFitScale } from './lost-found-ca
 import { LostFoundSettlementInput } from '../scoring/scoring-types';
 
 const LOST_ITEM_ID_PREFIX = 'lostitem-';
+
+/** How long a successfully-completed NPC lingers at the counter showing its
+ * thank-you text before actually walking out ("Add sequential lost-found
+ * visitors and held cargo feedback" round二: "NPC原地進入thanking 4秒...4秒
+ * 後才離場"). */
+const LOST_FOUND_THANKING_DURATION = 4;
 
 function randRange(min: number, max: number): number {
   return min + Math.random() * (max - min);
@@ -40,18 +47,34 @@ function shuffle<T>(arr: T[]): T[] {
 }
 
 /** One NPC's own slot in today's queue ("Add sequential lost-found visitors
- * and held cargo feedback" round一) — 'queued' (not yet spawned) ->
- * 'entering' (walking in) -> 'waiting' (at counter) -> 'leaving' (walking
- * out, outcome already decided) -> 'completed'|'missed' (fully gone).
- * `targetItemId` is null until spawnTodaysLostItems() actually spawns the
- * physical item (all 3 targets spawn together, independent of how far the
- * queue itself has progressed — see that method's own doc comment), and is
- * set back to null once handed over (disposeLostItem). */
-type LostFoundQueueState = 'queued' | 'entering' | 'waiting' | 'leaving' | 'completed' | 'missed';
+ * and held cargo feedback" round一/二) — 'queued' (not yet spawned) ->
+ * 'entering' (walking in) -> 'greeting' (arrived, chit-chat + "按E繼續",
+ * no item name/preview yet) -> 'waitingForItem' (item name+preview shown,
+ * correct item + E hands it over) -> 'thanking' (item received, thank-you
+ * text, 4 real seconds, no interaction possible) -> 'leaving' (walking out)
+ * -> 'completed'|'missed' (fully gone). `targetItemId` is null until
+ * spawnTodaysLostItems() actually spawns the physical item (all 3 targets
+ * spawn together, independent of how far the queue itself has progressed —
+ * see that method's own doc comment), and is set back to null once handed
+ * over (disposeLostItem).
+ *
+ * `outcome` is set the INSTANT the result is actually decided — 'completed'
+ * the moment a correct hand-over happens (entering the thanking stage,
+ * well before the NPC physically finishes walking out), 'missed' the
+ * instant settleAtDeparture ever has to force-dismiss a not-yet-successful
+ * NPC — kept independent of `state` specifically so end-of-day tallying
+ * (settleAtDeparture) can read a stable, unambiguous result regardless of
+ * which of the two states ('leaving' — reachable via EITHER path — or
+ * 'thanking') the animation happens to be in at that exact moment (spec:
+ * "greeting／waitingForItem算未完成；thanking／leaving／completed算已完
+ * 成"). null means not yet decided (queued/entering/greeting/waitingForItem
+ * — always counted as missed if departure happens before it resolves). */
+type LostFoundQueueState = 'queued' | 'entering' | 'greeting' | 'waitingForItem' | 'thanking' | 'leaving' | 'completed' | 'missed';
 interface LostFoundQueueEntry {
   caseDef: LostFoundCaseDef;
   targetItemId: string | null;
   state: LostFoundQueueState;
+  outcome: 'completed' | 'missed' | null;
 }
 
 /**
@@ -100,11 +123,10 @@ export class LostFoundSystem {
    * NPC" — enforced structurally here since advanceQueue() only ever starts
    * the next entry once this is back to -1. */
   private activeIndex = -1;
-  /** Set the instant the active entry's outcome is decided (on a correct
-   * hand-over, or on a settleAtDeparture-forced departure) — resolved into
-   * the entry's own terminal 'completed'/'missed' state once npcSystem
-   * physically finishes walking out (state 'gone'), see update(). */
-  private activeOutcome: 'completed' | 'missed' | null = null;
+  /** Counts down while the active entry is in 'thanking' (spec二: exactly
+   * LOST_FOUND_THANKING_DURATION real seconds, no interaction, cannot be
+   * skipped) — null whenever no entry is currently thanking. */
+  private thankingTimer: number | null = null;
   /** This round's decoy items (spec一, still DECOY_LOST_ITEM_COUNT=5 total
    * per day) — never disposed intra-day (only a correctly-handed-over
    * target ever gets removed before day reset). */
@@ -174,9 +196,9 @@ export class LostFoundSystem {
    * onDailyUnloadStarted) is what actually starts the first one entering. */
   private prepareDailyCases(): void {
     const chosen = shuffle(LOST_FOUND_CASES).slice(0, DAILY_LOST_FOUND_NPC_COUNT);
-    this.todaysQueue = chosen.map((caseDef) => ({ caseDef, targetItemId: null, state: 'queued' as const }));
+    this.todaysQueue = chosen.map((caseDef) => ({ caseDef, targetItemId: null, state: 'queued' as const, outcome: null }));
     this.activeIndex = -1;
-    this.activeOutcome = null;
+    this.thankingTimer = null;
   }
 
   /** Starts the NEXT still-'queued' entry entering, if nobody is currently
@@ -223,47 +245,55 @@ export class LostFoundSystem {
    * the instant the player presses 載具出發, well before the six vehicles
    * actually finish their multi-second departure animation. Builds and
    * returns ONE frozen LostFoundSettlementInput snapshot, covering two
-   * INDEPENDENT line items (spec: "失物收納扣分與『未接待NPC』扣分是兩條獨
-   * 立項目"):
-   *   - missedCount: how many of today's 3 NPCs are NOT 'completed' ("Add
-   *     sequential lost-found visitors and held cargo feedback" round一/六:
-   *     "當前尚未完成的NPC與佇列中尚未出現的NPC，都各算1位未接待" — no
-   *     longer special-cased by whether the player ever talked to a given
-   *     NPC, unlike the old single-NPC flow).
+   * INDEPENDENT line items:
+   *   - missedCount: how many of today's 3 NPCs have no 'completed' outcome
+   *     yet ("Add sequential lost-found visitors and held cargo feedback"
+   *     round二/六: "greeting／waitingForItem算未完成...排隊中尚未出現的
+   *     NPC仍各算一次漏接") — reads each entry's own `outcome` field, set
+   *     the instant a hand-over actually succeeds, NOT the `state` string,
+   *     so an entry already in 'thanking'/'leaving' still correctly counts
+   *     as handed-over even though its exit walk hasn't finished yet (spec:
+   *     "thanking／leaving／completed算已完成").
    *   - stored/unstored: how many of today's still-existing lost items
    *     (any not-yet-handed-over target, plus every decoy) are currently
    *     resting in a valid cabinet slot (spec: computed fresh every call,
    *     independent of missedCount).
    *
    * Never blocks departure — the six vehicles leave regardless either way.
-   * The currently-active NPC (if any) is forced to leave/despawn and the
-   * ENTIRE queue is cleared of anything not yet completed (spec: "清除當前
-   * NPC與整個佇列...不阻止玩家結束當天") — guarded by settlementAppliedToday
-   * so a second 載具出發 press can't re-dismiss an already-gone NPC or
-   * double-count the missed total; missedCount/handedOver/stored/unstored
-   * stay safe to recompute on every call either way (pure reads). */
+   * The currently-active NPC is force-dismissed ONLY if it hasn't actually
+   * succeeded yet (outcome still null — stuck in entering/greeting/
+   * waitingForItem); an entry already in 'thanking'/'leaving' is left alone
+   * to finish naturally, since its outcome is already locked in as
+   * 'completed' — nothing forces an already-successful farewell to be cut
+   * short. Guarded by settlementAppliedToday so a second 載具出發 press
+   * can't re-dismiss an already-resolved NPC or double-count anything;
+   * missedCount/handedOver/stored/unstored stay safe to recompute on every
+   * call either way (pure reads). */
   settleAtDeparture(): LostFoundSettlementInput {
     if (!this.settlementAppliedToday) {
       this.settlementAppliedToday = true;
       if (this.activeIndex !== -1) {
         const entry = this.todaysQueue[this.activeIndex];
-        if (this.npcSystem.state === 'waiting') {
-          this.npcSystem.updateBubbleText(LOST_FOUND_MISSED_TEXT);
-          this.npcSystem.startLeaving();
-        } else if (this.npcSystem.state === 'walkingIn') {
-          this.npcSystem.forceRemove();
+        if (entry.outcome === null) {
+          if (this.npcSystem.state === 'waiting') {
+            this.npcSystem.updateBubbleText(LOST_FOUND_MISSED_TEXT);
+            this.npcSystem.startLeaving();
+          } else if (this.npcSystem.state === 'walkingIn') {
+            this.npcSystem.forceRemove();
+          }
+          entry.outcome = 'missed';
+          entry.state = 'missed';
+          this.activeIndex = -1;
+          this.thankingTimer = null;
+          this.refreshQueueStatusUI();
         }
-        entry.state = 'missed';
-        this.activeIndex = -1;
-        this.activeOutcome = null;
-        this.refreshQueueStatusUI();
       }
     }
 
     let missedCount = 0;
     let handedOver = 0;
     for (const entry of this.todaysQueue) {
-      if (entry.state === 'completed') handedOver++;
+      if (entry.outcome === 'completed') handedOver++;
       else missedCount++;
     }
 
@@ -381,36 +411,45 @@ export class LostFoundSystem {
     return onEastSide && dist < SCENE_CONFIG.interactionDistance + 1;
   }
 
-  /** Press E at the counter while the CURRENT queue entry's NPC is waiting
-   * — two live outcomes, judged purely by id match against that entry's own
-   * spawned target item so handing over ordinary cargo (or a decoy, or
-   * another entry's target) always reads as "wrong" with no separate "is
-   * this even a lost item" gate needed:
-   *   1. heldId === the active entry's targetItemId — correct hand-over:
-   *      removed from the player's hand, world model/physics/interaction
-   *      registration cleared, entry transitions to 'leaving' with a
-   *      pending 'completed' outcome, NPC thanks and walks out.
-   *   2. heldId is some OTHER id (wrong item, incl. ordinary cargo or
-   *      another NPC's own target) — hand-over refused, item stays held
-   *      (never consumed), shows the wrong-item hint.
-   * An empty-handed press (heldId===null) does nothing now — the old
-   * "counts as talking to the NPC" distinction no longer affects the
-   * end-of-day missed count (spec一/六: any NPC not fully completed by
-   * departure counts as missed regardless of whether the player ever
-   * interacted), and the NPC's own head bubble already persistently shows
-   * its target's name/preview while waiting, so there's nothing further to
-   * show here either way. */
+  /** Press E at the counter while the CURRENT queue entry's NPC is
+   * physically waiting there — behavior depends entirely on the entry's own
+   * dialogue stage ("Add sequential lost-found visitors and held cargo
+   * feedback" round二):
+   *   - 'greeting': the FIRST E press only advances to 'waitingForItem' and
+   *     reveals the target's name+model preview (spec: "第一次按E只進入需
+   *     求階段，不可直接交付") — fires regardless of what's held or even
+   *     empty-handed, never completes a hand-over by itself.
+   *   - 'waitingForItem': judged purely by id match against this entry's
+   *     own spawned target item, so handing over ordinary cargo (or a
+   *     decoy, or another entry's target) always reads as "wrong" with no
+   *     separate "is this even a lost item" gate needed. heldId===targetId
+   *     -> correct hand-over (removed from hand, world model/physics/
+   *     interaction registration cleared, entry moves to 'thanking' with a
+   *     locked-in 'completed' outcome, NPC's bubble swaps to a random
+   *     thank-you — see LOST_FOUND_THANKING_DURATION). Any other non-null
+   *     heldId -> refused, item stays held (never consumed), wrong-item
+   *     hint shown. heldId===null -> no-op (bubble already shows the need).
+   *   - 'entering'/'thanking'/'leaving': no-op entirely (spec:
+   *     "thanking期間不可互動、不可跳過"). */
   tryConfirmAtCounter(heldId: string | null): void {
-    if (!this.isNpcWaiting || this.activeIndex === -1 || heldId === null) return;
+    if (!this.isNpcWaiting || this.activeIndex === -1) return;
     const entry = this.todaysQueue[this.activeIndex];
+
+    if (entry.state === 'greeting') {
+      entry.state = 'waitingForItem';
+      this.npcSystem.showItemNeed(LOST_FOUND_SEEKING_TEXT);
+      return;
+    }
+
+    if (entry.state !== 'waitingForItem' || heldId === null) return;
 
     if (heldId === entry.targetItemId) {
       this.pickupSystem.forceDropHeld();
       this.disposeLostItem(heldId);
-      this.npcSystem.updateBubbleText(entry.caseDef.successText);
-      entry.state = 'leaving';
-      this.activeOutcome = 'completed';
-      this.npcSystem.startLeaving();
+      entry.state = 'thanking';
+      entry.outcome = 'completed';
+      this.thankingTimer = LOST_FOUND_THANKING_DURATION;
+      this.npcSystem.updateBubbleText(pickRandomThanks());
     } else {
       this.ui.showWrong(LOST_FOUND_WRONG_ITEM_TEXT);
     }
@@ -459,7 +498,7 @@ export class LostFoundSystem {
     this.cabinetSystem.resetDaily();
     this.todaysQueue = [];
     this.activeIndex = -1;
-    this.activeOutcome = null;
+    this.thankingTimer = null;
     this.todaysDecoyItemIds = [];
     this.todaysTotalLostItemCount = 0;
     this.lostItemSpawnTimer = null;
@@ -471,22 +510,33 @@ export class LostFoundSystem {
     this.npcSystem.update(deltaTime);
     this.cabinetSystem.update(deltaTime);
 
-    // Resolve the active entry's own state against the physical NPC's walk
-    // animation (spec一: sequencing is driven by the SAME npcSystem this
-    // file already owned, not a second movement system) — 'entering'
-    // becomes 'waiting' the moment the NPC physically arrives; 'leaving'
-    // resolves into its already-decided outcome ('completed' from
-    // tryConfirmAtCounter, or 'missed' if settleAtDeparture forced it) ONLY
-    // once the NPC has fully walked out and despawned, at which point the
-    // NEXT queued entry (if any) is free to start entering (spec: "上一位
-    // 真正抵達出口並despawn後，才生成下一位").
+    // Resolve the active entry's own dialogue stage against the physical
+    // NPC's walk animation and the thanking timer (spec一/二: sequencing
+    // still driven by the SAME npcSystem this file already owned, not a
+    // second movement system) — 'entering' becomes 'greeting' the moment
+    // the NPC physically arrives (spec: "先顯示一段問候或閒聊"); 'thanking'
+    // counts down for exactly LOST_FOUND_THANKING_DURATION real seconds
+    // (spec: "4秒後才離場", no interaction possible in the meantime — see
+    // tryConfirmAtCounter's own stage gate) before actually starting the
+    // walk-out; 'leaving' resolves into its already-decided outcome
+    // ('completed' or 'missed', see LostFoundQueueEntry's own doc comment)
+    // ONLY once the NPC has fully walked out and despawned, at which point
+    // the NEXT queued entry (if any) is free to start entering (spec: "上
+    // 一位真正抵達出口並despawn後，才生成下一位").
     if (this.activeIndex !== -1) {
       const entry = this.todaysQueue[this.activeIndex];
       if (entry.state === 'entering' && this.npcSystem.state === 'waiting') {
-        entry.state = 'waiting';
+        entry.state = 'greeting';
+        this.npcSystem.updateBubbleText(`${pickRandomGreeting()}\n${LOST_FOUND_CONTINUE_PROMPT}`);
+      } else if (entry.state === 'thanking' && this.thankingTimer !== null) {
+        this.thankingTimer -= deltaTime;
+        if (this.thankingTimer <= 0) {
+          this.thankingTimer = null;
+          entry.state = 'leaving';
+          this.npcSystem.startLeaving();
+        }
       } else if (entry.state === 'leaving' && this.npcSystem.state === 'gone') {
-        entry.state = this.activeOutcome ?? 'missed';
-        this.activeOutcome = null;
+        entry.state = entry.outcome ?? 'missed';
         this.activeIndex = -1;
         this.refreshQueueStatusUI();
         this.advanceQueue();
