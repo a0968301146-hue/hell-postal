@@ -335,10 +335,16 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     }
   );
   const palletSystem = new PalletSystem(
-    scene, physics, cargoSystem, interactables, playerData, hud,
+    scene, physics, cargoSystem, interactables, playerData, hud, pauseManager, upgradeSystem,
     () => settingsManager.fireTutorialEvent('palletUsed'),
     () => settingsManager.fireTutorialEvent('boxOrganized')
   );
+  // "Add placement rotation and pallet cargo straps" round spec三: lets
+  // pickup-system.ts's own generic executeThrow() correctly throw the
+  // pallet (its body is otherwise permanently kinematic) — see
+  // PalletThrowHooks' own doc comment in pickup-system.ts. PalletSystem
+  // implements the interface directly, so no separate adapter object.
+  pickupSystem.setPalletThrowHooks(palletSystem);
   // Still registered as a normal PickupSystem placement surface — a
   // single cargo item can still be manually placed onto the pallet's top
   // the normal way (spec: this round only adds the ABILITY to also pick

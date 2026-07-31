@@ -176,6 +176,14 @@ export class ToolSystem {
   private onWheel(event: WheelEvent): void {
     if (!this.isLocked()) return;
     if (this.pauseManager.isPaused) return;
+    // "Add placement rotation and pallet cargo straps" round spec一: "放置
+    // 預覽期間，滾輪不可切換工具欄" — PickupSystem's own wheel handler owns
+    // the wheel entirely while placing a normal held item; the pallet's own
+    // placement preview is live for the WHOLE time it's held (no separate
+    // discrete state — see pallet-system.ts), so carrying it is the second
+    // condition here.
+    if (this.playerData.state === 'placement-preview') return;
+    if (this.playerData.heldObjectId === PALLET_ID) return;
     if (Math.abs(event.deltaY) < 1) return;
     // Cycles through the three usable slots in visible left-to-right order
     // (spec三: "滾輪在1→2→3之間循環"), direction-aware so scrolling back

@@ -3,8 +3,17 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { InteractableObject, createInteractableObject } from '../../shared/types/interactable';
 import { PlayerInteractionData } from '../../core/game-state';
+import { PauseManager } from '../../core/pause-manager';
 import { CargoSystem } from '../cargo';
 import { HUD } from '../hud';
+import { UpgradeSystem } from '../upgrade';
+// Imported directly from pickup-system.ts, NOT the '../interaction' barrel
+// — that barrel also re-exports interaction-system.ts, which itself
+// imports from '../pallet' (VehicleControlSystem's own pallet-recognition
+// needs), so going through the barrel here would create a real import
+// cycle (interaction barrel -> interaction-system -> pallet barrel ->
+// pallet-system -> interaction barrel).
+import { PalletThrowHooks } from '../interaction/pickup-system';
 import { PALLET_CONFIG } from '../daily-flow';
 import { BACK_AREA, WORLD_BOUNDS } from '../world-layout';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
@@ -38,11 +47,20 @@ const MIN_CAMERA_CLEARANCE = 0.6;
  * 托盤中心上方約0.3～0.5m"). */
 const UI_ANCHOR_HEIGHT_ABOVE_TOP = 0.4;
 
+/** "Add placement rotation and pallet cargo straps" round spec一: manual
+ * yaw step per wheel notch, world-Y-only. */
+const PLACEMENT_YAW_STEP = THREE.MathUtils.degToRad(15);
+
+/** Rope strap visual thickness/height (spec六: "簡單繩索") — plain flat
+ * bars, not modeled rope geometry. */
+const ROPE_STRAP_THICKNESS = 0.05;
+const ROPE_STRAP_HEIGHT = 0.03;
+
 /** Stable id for the one pallet this round — exported so other systems that
  * need to recognize "is this the pallet" (VehicleControlSystem's departure
- * logic, PickupSystem's no-throw guard) can do so with a plain string
- * import instead of a class reference (avoids a circular dependency between
- * pallet-system.ts and vehicle-control-system.ts). */
+ * logic) can do so with a plain string import instead of a class reference
+ * (avoids a circular dependency between pallet-system.ts and
+ * vehicle-control-system.ts). */
 export const PALLET_ID = 'pallet-1';
 
 interface PinnedCargoEntry {
@@ -60,49 +78,51 @@ interface PinnedCargoEntry {
  *
  * SINGLE MODEL HIERARCHY ("Fix pallet visual and interaction UI following"
  * round) — `topMesh` (the base board) IS the hierarchy root: the three
- * decorative top slats and `uiAnchor` are its CHILDREN at fixed LOCAL
- * offsets, added once in build() and never re-added or re-parented again.
- * `topMesh` itself is deliberately kept as the ONLY THREE.Object3D ever
- * added to the scene for the whole pallet (spec一: "場景中只add一次
- * [root]") and the ONLY one whose position/rotation this class ever writes
- * (spec二: "拾取、手持、放置、旋轉時只更新[root]transform") — moving it
- * carries the slats and uiAnchor along for free via normal Three.js
- * parent-child propagation, which is the ROOT FIX for the bug this round
- * addresses (previously the three slats were each independently
- * `scene.add()`-ed at absolute world coordinates and never touched again
- * after that, so they visibly stayed behind at the pallet's original spawn
- * position while `topMesh` moved away during carry).
+ * decorative top slats, `uiAnchor`, and (this round) the two rope-strap
+ * visuals are all its CHILDREN at fixed/computed LOCAL offsets. `topMesh`
+ * is the ONLY THREE.Object3D ever added to the scene for the whole pallet,
+ * and the ONLY one whose position/rotation this class ever writes — moving
+ * it carries everything else along for free via normal Three.js
+ * parent-child propagation.
  *
- * A separate wrapper THREE.Group was deliberately NOT used here even though
- * the spec names one "palletRoot": `InteractableObject.mesh` is typed as a
- * concrete THREE.Mesh (with a `.material`) that vehicle-control-system.ts's
- * departure flow — completely out of this round's scope — directly
- * translates via `cargo.mesh.position.x/z +=` while the pallet rides along
- * pinned to a departing vehicle (see vehicle-system.ts's moveToward()).
- * Swapping in a Group there would have silently broken that unrelated,
- * untouched code path. Parenting the slats/uiAnchor under `topMesh` itself
- * satisfies every one of this round's own requirements (single object added
- * to the scene, children at local offsets, one authoritative transform
- * update site) while staying fully compatible with it — moveToward()'s
- * direct mesh.position mutation now correctly carries the slats along too,
- * for the same structural reason the player-carry path does.
+ * SINGLE SOURCE OF TRUTH while held: every frame, updateCarry() computes
+ * ONE authoritative target transform and writes it to BOTH the rigid body
+ * and `topMesh` itself, from the exact same numbers.
  *
- * SINGLE SOURCE OF TRUTH while held ("Fix pallet pickup and placement
- * state" round): every frame, updateCarry() computes ONE authoritative
- * target transform and writes it to BOTH the kinematic rigid body (via
- * setNextKinematicTranslation/Rotation, so the collider tracks `topMesh` —
- * spec 二) and `topMesh` itself, from the exact same numbers. Nothing else
- * ever touches `topMesh`'s position/quaternion (or any of its children's)
- * while isHeld is true — the generic per-frame physics-to-mesh sync loop in
- * game.ts already skips any InteractableObject with isHeld=true.
- *
- * This class also owns `playerData.state`/`heldObjectId` directly for its
- * own pickup/place transitions (rather than InteractionSystem juggling
- * them externally) so an emergency reset (NaN transform, daily reset) can
- * never leave the shared player state pointing at a pallet hold that
- * PalletSystem itself no longer considers active.
+ * ROPE STRAPS ("Add placement rotation and pallet cargo straps" round
+ * spec四-八) — a single-level bulletin-board skill (ropeStrap,
+ * upgrade-data.ts) unlocks pressing F, while carrying the pallet in its
+ * live placement preview, to toggle `isRopeBound` for whatever cargo is
+ * CURRENTLY pinned. Binding never changes how cargo is tracked WHILE being
+ * carried (the existing `pinned` local-transform-follow mechanism handles
+ * that identically whether bound or not) — it only changes what happens
+ * once the pallet stops being held:
+ * - Placed (tryPlace): bound cargo's collider re-enables (same deferred
+ *   one-step timing as everything else) but a Rapier FIXED JOINT is
+ *   created between the pallet's body and each bound cargo body at the
+ *   exact local offset it was carried at, and `isHeld` deliberately stays
+ *   true (reusing the EXISTING "isHeld blocks pickup/cargo-hook-targeting"
+ *   invariant every other system already respects — spec七 needs zero
+ *   changes to pickup-system.ts/cargo-hook-system.ts for this).
+ * - Thrown (Q, via the PalletThrowHooks pair below): the SAME fixed joints
+ *   are created BEFORE pickup-system.ts's generic executeThrow() applies
+ *   its impulse (prepareForThrow also flips the pallet's permanently-
+ *   kinematic body to Dynamic, since a kinematic body silently ignores
+ *   impulses/velocity), then each bound cargo's OWN body is given a
+ *   matching starting velocity once the pallet's real post-impulse
+ *   velocity is known (onThrown) — a one-time nudge, never per-frame
+ *   tracking, with the joint keeping them together for every physics step
+ *   after that (spec七: "不要在投擲期間每幀setTranslation硬追蹤").
+ * - Picked up again while still bound: joints are removed and the SAME
+ *   cargo goes back into the ordinary carry-`pinned` array (isRopeBound
+ *   stays true throughout, so placing it again without pressing F
+ *   re-creates the joints automatically).
+ * Since bound-and-placed cargo keeps `isHeld=true`, it's excluded from the
+ * generic per-frame physics->mesh sync loop in game-app.ts — this class's
+ * own update() manually syncs it instead whenever it's bound but not
+ * currently being carried (mid-flight after a throw, or resting placed).
  */
-export class PalletSystem {
+export class PalletSystem implements PalletThrowHooks {
   readonly palletId = PALLET_ID;
   topMesh: THREE.Mesh;
 
@@ -112,6 +132,8 @@ export class PalletSystem {
   private interactables: Map<string, InteractableObject>;
   private playerData: PlayerInteractionData;
   private hud: HUD;
+  private pauseManager: PauseManager;
+  private upgradeSystem: UpgradeSystem;
   private onFirstUse?: () => void;
   private onFirstOrganized?: () => void;
 
@@ -138,7 +160,7 @@ export class PalletSystem {
   /** Half-extents / local-space center offset of the pallet+all pinned
    * cargo's combined bounding box, computed once at pickup — reused every
    * frame for both the swept-collision clamp and the placement-validity
-   * check (spec 十四 from the previous round: "不要只檢查托盤底板"). */
+   * check (spec 十四 from an earlier round: "不要只檢查托盤底板"). */
   private unionHalfExtents = new THREE.Vector3();
   private unionLocalCenterOffset = new THREE.Vector3();
   /** Validity of `placementPos`/`placementQuat` — the floor-level position
@@ -154,12 +176,38 @@ export class PalletSystem {
    * instant same-frame overlap — flushed at the top of the NEXT update()
    * call, by which point this frame's physics.update() has already stepped
    * the world at least once with the body sitting at its resting transform
-   * but still non-colliding (spec 九-7). */
+   * but still non-colliding (spec 九-7 from an earlier round). */
   private pendingCargoRestore: InteractableObject[] = [];
+  /** Fixed-joint creation for a just-placed bound item is deferred to the
+   * SAME frame its collider re-enables (see pendingCargoRestore just
+   * above), never created while the body is still disabled — creating a
+   * Rapier joint on a disabled body was confirmed (in this round's own
+   * testing) to corrupt the physics world's internal state, surfacing as a
+   * "recursive use of an object" wasm panic inside a LATER world.step()
+   * call, sometimes several frames afterward. */
+  private pendingJointsToCreate: { cargoId: string; localPos: THREE.Vector3; localQuat: THREE.Quaternion }[] = [];
+
+  /** "Add placement rotation and pallet cargo straps" round spec一/二:
+   * manual wheel-controlled yaw (world-Y-only), replacing the old
+   * camera-facing auto-yaw while carrying — read by computeCarryTransform,
+   * accumulated by onWheel, seeded from the pallet's own current rotation
+   * at the start of each pickUp(). */
+  private placementYaw = 0;
+
+  // --- Rope straps (spec四-八) ---
+  isRopeBound = false;
+  private boundCargoIds: string[] = [];
+  private cargoJointHandles: Map<string, RAPIER.ImpulseJointHandle> = new Map();
+  /** Cargo ids released/bound at the moment of a Q-throw, consumed once by
+   * onThrown() to give them the pallet's own post-impulse velocity. */
+  private pendingThrowCargoIds: string[] = [];
+  private ropeVisualX!: THREE.Mesh;
+  private ropeVisualZ!: THREE.Mesh;
 
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, cargoSystem: CargoSystem, interactables: Map<string, InteractableObject>,
-    playerData: PlayerInteractionData, hud: HUD, onFirstUse?: () => void, onFirstOrganized?: () => void
+    playerData: PlayerInteractionData, hud: HUD, pauseManager: PauseManager, upgradeSystem: UpgradeSystem,
+    onFirstUse?: () => void, onFirstOrganized?: () => void
   ) {
     this.scene = scene;
     this.physics = physics;
@@ -167,12 +215,17 @@ export class PalletSystem {
     this.interactables = interactables;
     this.playerData = playerData;
     this.hud = hud;
+    this.pauseManager = pauseManager;
+    this.upgradeSystem = upgradeSystem;
     this.onFirstUse = onFirstUse;
     this.onFirstOrganized = onFirstOrganized;
     this.homePos = new THREE.Vector3(PALLET_CONFIG.posX, 0, PALLET_CONFIG.posZ);
 
     this.topMesh = this.build();
     this.previewMesh = this.buildPreviewMesh();
+
+    document.addEventListener('wheel', (e) => this.onWheel(e));
+    document.addEventListener('keydown', (e) => this.onKeyDown(e));
   }
 
   private build(): THREE.Mesh {
@@ -183,8 +236,7 @@ export class PalletSystem {
 
     // The base board is the hierarchy root (see class doc comment for why
     // this is `topMesh` itself rather than a separate wrapper Group) — the
-    // ONLY object ever added to the scene for the whole pallet (spec一:
-    // "場景中只add一次[root]").
+    // ONLY object ever added to the scene for the whole pallet.
     const woodMat = new THREE.MeshStandardMaterial({ color: 0xa87a42 });
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), woodMat);
     mesh.position.set(posX, centerY, posZ);
@@ -192,9 +244,7 @@ export class PalletSystem {
     this.scene.add(mesh);
 
     // A few raised slat lines across the top — purely cosmetic, LOCAL
-    // offsets relative to the base board's own origin (previously each was
-    // independently `scene.add()`-ed at absolute world coordinates, which is
-    // exactly why they never moved with the pallet — spec一/二).
+    // offsets relative to the base board's own origin.
     const slatMat = new THREE.MeshStandardMaterial({ color: 0x8a6234 });
     for (let i = -1; i <= 1; i++) {
       const slat = new THREE.Mesh(new THREE.BoxGeometry(width * 0.9, 0.02, depth * 0.12), slatMat);
@@ -213,11 +263,26 @@ export class PalletSystem {
     this.floatingLabel = createFloatingLabel('整理托盤', { width: 0.7, bg: 'rgba(30,25,15,0.75)' });
     this.scene.add(this.floatingLabel);
 
+    // Rope strap visuals (spec六) — built ONCE here as children of the base
+    // board (so they follow every carry/rotate/place/throw for free, and
+    // never get recreated by repeated F presses — spec六: "不可每次按F都重
+    // 複生成新Mesh"), just hidden until bindRope() actually needs them.
+    const strapMat = new THREE.MeshStandardMaterial({ color: 0x4a3423 });
+    this.ropeVisualX = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), strapMat);
+    this.ropeVisualZ = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), strapMat);
+    this.ropeVisualX.visible = false;
+    this.ropeVisualZ.visible = false;
+    // Cosmetic only — never a valid raycast/pickup/hook target.
+    this.ropeVisualX.raycast = () => {};
+    this.ropeVisualZ.raycast = () => {};
+    mesh.add(this.ropeVisualX);
+    mesh.add(this.ropeVisualZ);
+
     // Kinematic body — immune to being knocked/tipped by cargo landing on
     // it while parked, only moves when this system explicitly drives it
-    // (carry-follow while held, or the end-of-day reset). Stays ENABLED at
-    // all times (including while held) so the collider always tracks
-    // `topMesh` 1:1 — see class doc comment on "single source of truth".
+    // (carry-follow while held, or the end-of-day reset). Temporarily
+    // switched to Dynamic for a Q-throw (see prepareForThrow) and switched
+    // back the next time it's picked up (see pickUp()).
     const bodyDesc = this.physics.createKinematicBodyDesc(posX, centerY, posZ);
     const body = this.physics.createKinematicBody(bodyDesc);
     this.physics.addColliderToBody(body, 0, 0, 0, width / 2, height / 2, depth / 2);
@@ -225,9 +290,6 @@ export class PalletSystem {
 
     const obj = createInteractableObject(this.palletId, '整理托盤', mesh, width, height, depth);
     obj.rigidBody = body;
-    // `noThrow` — read by pickup-system.ts's startCharge() guard (spec
-    // 十一: "托盤不需要支援Q蓄力投擲...不得讓整托貨物高速飛散").
-    mesh.userData.noThrow = true;
     this.interactables.set(this.palletId, obj);
     this.palletObj = obj;
 
@@ -237,10 +299,10 @@ export class PalletSystem {
   }
 
   /** Semi-transparent ghost representing the pallet+cargo union bounds at
-   * the current placement target (spec 八) — green when valid, red when
-   * not. Never raycast-hittable, never registered as an InteractableObject,
-   * no physics body, so it can never be picked up or block placement of
-   * itself. */
+   * the current placement target (spec 八 from an earlier round) — green
+   * when valid, red when not. Never raycast-hittable, never registered as
+   * an InteractableObject, no physics body, so it can never be picked up or
+   * block placement of itself. */
   private buildPreviewMesh(): THREE.Mesh {
     const geo = new THREE.BoxGeometry(1, 1, 1);
     const mat = new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.28, depthWrite: false });
@@ -253,20 +315,154 @@ export class PalletSystem {
   }
 
   /** Keeps the floating "整理托盤" label glued to `uiAnchor`'s LIVE world
-   * position every frame (spec三: "每幀讀取uiAnchor.getWorldPosition()...
-   * 不要保存建立時的固定世界座標"), hidden while held (spec三: "托盤被手持
-   * 期間隱藏互動UI...放下並重新可互動後才恢復顯示" — `isHeld` already IS
-   * "not yet placed/interactable again", so a plain visibility toggle on
-   * that flag satisfies both halves of this requirement) and ALSO hidden
-   * whenever the pallet itself isn't visible (e.g. riding away pinned to a
-   * departing vehicle, which sets `topMesh.visible = false` — see
-   * vehicle-system.ts's onDeparting — entirely outside this round's scope
-   * but worth not leaving an orphaned floating label behind for). */
+   * position every frame, hidden while held, and also hidden whenever the
+   * pallet itself isn't visible (e.g. riding away pinned to a departing
+   * vehicle, which sets `topMesh.visible = false` — see vehicle-system.ts's
+   * onDeparting — entirely outside this round's scope but worth not
+   * leaving an orphaned floating label behind for). */
   private updateLabelFollow(): void {
     this.floatingLabel.visible = !this.isHeld && this.palletObj.mesh.visible;
     if (!this.floatingLabel.visible) return;
     this.uiAnchor.getWorldPosition(this.labelWorldPosScratch);
     this.floatingLabel.position.copy(this.labelWorldPosScratch);
+  }
+
+  /** "Add placement rotation and pallet cargo straps" round spec一/二:
+   * rotates the pallet's own live placement preview 15° per notch while (and
+   * ONLY while) it's actually being carried — ToolSystem's own wheel
+   * handler gates itself off whenever `heldObjectId === PALLET_ID` (see
+   * tool-system.ts), so the two can never both react to the same event. */
+  private onWheel(event: WheelEvent): void {
+    if (this.pauseManager.isPaused) return;
+    if (!this.isHeld) return;
+    if (Math.abs(event.deltaY) < 1) return;
+    const dir = event.deltaY > 0 ? 1 : -1;
+    this.placementYaw += dir * PLACEMENT_YAW_STEP;
+  }
+
+  /** "Add placement rotation and pallet cargo straps" round spec五: F
+   * toggles rope-binding for whatever's currently pinned, gated on every
+   * listed precondition — a completely independent listener from
+   * InteractionSystem's own (matching cargo-hook-system.ts's established
+   * pattern), so it never intercepts F for anything else (spec五: "F只在上
+   * 述托盤放置狀態攔截，不影響其他既有F功能" — every guard below returns
+   * silently except the two explicit "not unlocked"/"nothing to bind"
+   * cases, which only ever fire once every OTHER guard has already passed,
+   * i.e. only while genuinely carrying the pallet with power gloves). */
+  private onKeyDown(event: KeyboardEvent): void {
+    if (event.repeat) return;
+    if (event.code !== 'KeyF') return;
+    if (this.pauseManager.isPaused) return;
+    if (!this.isHeld) return;
+    if (this.playerData.activeTool !== 'powerGloves') return;
+    if (!this.upgradeSystem.isRopeStrapUnlocked()) {
+      this.hud.showToast('尚未解鎖固定繩索');
+      return;
+    }
+    if (this.isRopeBound) {
+      this.unbindRope();
+      return;
+    }
+    if (this.pinned.length === 0) {
+      this.hud.showToast('托盤上沒有可固定的貨物');
+      return;
+    }
+    this.bindRope();
+  }
+
+  private bindRope(): void {
+    this.isRopeBound = true;
+    this.boundCargoIds = this.pinned.map((p) => p.obj.id);
+    this.updateRopeVisual();
+    this.hud.showToast('貨物已被固定繩綁住');
+  }
+
+  private unbindRope(): void {
+    this.removeAllCargoJoints();
+    this.isRopeBound = false;
+    this.boundCargoIds = [];
+    this.updateRopeVisual();
+    this.hud.showToast('已解除固定繩');
+  }
+
+  /** Positions the two crossed strap visuals to span the combined LOCAL
+   * bounds of every currently-bound item (spec六) — reuses whichever
+   * position source is fresh: the live `pinned` local transform while
+   * carrying, or the item's own current world position (converted into the
+   * pallet's local space) once placed. Hidden whenever nothing is bound. */
+  private updateRopeVisual(): void {
+    if (!this.isRopeBound || this.boundCargoIds.length === 0) {
+      this.ropeVisualX.visible = false;
+      this.ropeVisualZ.visible = false;
+      return;
+    }
+
+    const { width, height, depth } = PALLET_CONFIG;
+    let minX = -width / 2, maxX = width / 2;
+    let maxY = height / 2;
+    let minZ = -depth / 2, maxZ = depth / 2;
+
+    this.palletObj.mesh.updateMatrixWorld(true);
+    const matInv = new THREE.Matrix4().copy(this.palletObj.mesh.matrixWorld).invert();
+
+    for (const id of this.boundCargoIds) {
+      const obj = this.interactables.get(id);
+      if (!obj) continue;
+      const pinnedEntry = this.pinned.find((p) => p.obj.id === id);
+      const localPos = pinnedEntry ? pinnedEntry.localPos : obj.mesh.position.clone().applyMatrix4(matInv);
+      const hw = obj.width / 2, hh = obj.height / 2, hd = obj.depth / 2;
+      minX = Math.min(minX, localPos.x - hw); maxX = Math.max(maxX, localPos.x + hw);
+      maxY = Math.max(maxY, localPos.y + hh);
+      minZ = Math.min(minZ, localPos.z - hd); maxZ = Math.max(maxZ, localPos.z + hd);
+    }
+
+    const centerX = (minX + maxX) / 2;
+    const centerZ = (minZ + maxZ) / 2;
+    const sizeX = Math.max(maxX - minX, ROPE_STRAP_THICKNESS);
+    const sizeZ = Math.max(maxZ - minZ, ROPE_STRAP_THICKNESS);
+
+    // One strap spans the full X extent, one the full Z extent, crossing
+    // over each other at the top of the combined bounds (spec六: "一條沿X
+    // 方向、一條沿Z方向").
+    this.ropeVisualX.scale.set(sizeX, ROPE_STRAP_HEIGHT, ROPE_STRAP_THICKNESS);
+    this.ropeVisualX.position.set(centerX, maxY, centerZ);
+    this.ropeVisualZ.scale.set(ROPE_STRAP_THICKNESS, ROPE_STRAP_HEIGHT, sizeZ);
+    this.ropeVisualZ.position.set(centerX, maxY, centerZ);
+
+    this.ropeVisualX.visible = true;
+    this.ropeVisualZ.visible = true;
+  }
+
+  /** Creates a Rapier fixed joint between the pallet's body and one bound
+   * cargo body at a known pallet-local anchor/orientation — reused by both
+   * tryPlace() and prepareForThrow(), always fed a FRESH local transform
+   * (never stale) by its caller. */
+  private createCargoJoint(cargoId: string, localPos: THREE.Vector3, localQuat: THREE.Quaternion): void {
+    const obj = this.interactables.get(cargoId);
+    if (!obj || !obj.rigidBody) return;
+    if (this.cargoJointHandles.has(cargoId)) return;
+    const jointData = RAPIER.JointData.fixed(
+      { x: localPos.x, y: localPos.y, z: localPos.z },
+      { x: localQuat.x, y: localQuat.y, z: localQuat.z, w: localQuat.w },
+      { x: 0, y: 0, z: 0 },
+      { x: 0, y: 0, z: 0, w: 1 }
+    );
+    const joint = this.physics.world.createImpulseJoint(jointData, this.body, obj.rigidBody, true);
+    this.cargoJointHandles.set(cargoId, joint.handle);
+  }
+
+  /** Removes every currently-tracked cargo joint (spec七: "解除綁定：移除所
+   * 有fixed joints" — also reused defensively any time stale joints must
+   * not survive, spec八: day reset / a bound pallet swept away by a
+   * departing vehicle). Never touches `isRopeBound`/`boundCargoIds`
+   * itself — callers decide separately whether the BINDING intent should
+   * also be cleared. */
+  private removeAllCargoJoints(): void {
+    for (const handle of this.cargoJointHandles.values()) {
+      const joint = this.physics.world.getImpulseJoint(handle);
+      if (joint) this.physics.world.removeImpulseJoint(joint, true);
+    }
+    this.cargoJointHandles.clear();
   }
 
   update(deltaTime: number, cameraPosition?: THREE.Vector3, cameraForward?: THREE.Vector3): void {
@@ -276,12 +472,45 @@ export class PalletSystem {
       }
       this.pendingCargoRestore = [];
     }
+    // Runs strictly AFTER the setBodyEnabled(true) loop just above (same
+    // frame, later in the statement order) — see pendingJointsToCreate's
+    // own doc comment for why the body must already be enabled.
+    if (this.pendingJointsToCreate.length > 0) {
+      for (const j of this.pendingJointsToCreate) this.createCargoJoint(j.cargoId, j.localPos, j.localQuat);
+      this.pendingJointsToCreate = [];
+    }
+
+    // Safety net (spec八: "換日、重置或載具離場不能留下失效joint") — a bound
+    // pallet just swept away by a departing vehicle (vehicle-system.ts sets
+    // topMesh.visible=false and drags the mesh directly, entirely outside
+    // this round's scope) leaves this class's own joints referencing bodies
+    // that are no longer meaningfully carried together by anything this
+    // class still drives — clear them. The binding INTENT is left alone
+    // (isRopeBound/boundCargoIds), only the physics joints go.
+    if (this.cargoJointHandles.size > 0 && !this.palletObj.mesh.visible) {
+      this.removeAllCargoJoints();
+    }
 
     if (this.isHeld) {
       if (cameraPosition && cameraForward) this.updateCarry(cameraPosition, cameraForward);
       this.updateLabelFollow();
       return;
     }
+
+    // Bound-but-not-currently-carried cargo is genuinely simulating via its
+    // fixed joint (resting placed, or mid-flight after a throw) — its own
+    // isHeld=true deliberately skips the generic per-frame physics->mesh
+    // sync loop in game-app.ts (spec七: keeps it un-pickable/un-hookable),
+    // so this class syncs it itself instead.
+    if (this.isRopeBound) {
+      for (const id of this.boundCargoIds) {
+        const obj = this.interactables.get(id);
+        if (obj?.rigidBody && obj.rigidBody.isEnabled()) {
+          this.physics.syncMeshToBody(obj.mesh, obj.rigidBody);
+        }
+      }
+    }
+
     this.updateLabelFollow();
     this.updateOrganizeScan(deltaTime);
   }
@@ -353,49 +582,90 @@ export class PalletSystem {
 
   /** Called by InteractionSystem when the player targets the (unheld)
    * pallet and presses E. Finds every box/large daily-cargo item currently
-   * SUPPORTED by the pallet (center within the pallet's own footprint,
-   * resting at pallet-top height — not just "nearby" or "leaning on the
-   * side"), saves each one's transform relative to the pallet, pauses their
+   * SUPPORTED by the pallet (checked in the pallet's OWN local space, so a
+   * rotated pallet's footprint is still detected correctly — spec一/二),
+   * saves each one's transform relative to the pallet, pauses their
    * physics, and switches to world-space camera-follow carry — positioning
-   * it in front of the player on this very first held frame (spec 三-9). */
+   * it in front of the player on this very first held frame. */
   pickUp(cameraPosition: THREE.Vector3, cameraForward: THREE.Vector3): void {
     if (this.isHeld) return;
-    // "Add power gloves and refine cargo hook cooldown" round spec四: only
-    // powerGloves may pick up the pallet — bare-hands and cargoHook must
-    // not, checked here (the single place PalletSystem.pickUp() is ever
-    // called from — interaction-system.ts's Priority-1 E-handler) rather
-    // than requiring every caller to remember the gate.
+    // Only powerGloves may pick up the pallet — bare-hands and cargoHook
+    // must not, checked here (the single place PalletSystem.pickUp() is
+    // ever called from — interaction-system.ts's Priority-1 E-handler)
+    // rather than requiring every caller to remember the gate.
     if (this.playerData.activeTool !== 'powerGloves') {
       this.hud.showToast('需要裝備力量手套才能搬起托盤');
       return;
     }
     if (this.playerData.state !== 'empty-handed') return;
 
+    // Revert to a genuinely kinematic body in case a previous Q-throw left
+    // it Dynamic (see prepareForThrow) — carry logic always assumes a
+    // kinematic body it fully drives itself. Synced to wherever the mesh
+    // visually settled: while unheld and dynamic, the generic per-frame
+    // physics->mesh sync loop in game-app.ts already tracks the mesh from
+    // the body, so the mesh is the authoritative "where did it actually
+    // land" source here.
+    if (this.body.bodyType() !== RAPIER.RigidBodyType.KinematicPositionBased) {
+      const mp = this.palletObj.mesh.position, mq = this.palletObj.mesh.quaternion;
+      this.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+      this.body.setTranslation({ x: mp.x, y: mp.y, z: mp.z }, true);
+      this.body.setRotation({ x: mq.x, y: mq.y, z: mq.z, w: mq.w }, true);
+      this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    }
+
+    // Seed the manual placement yaw from whatever rotation it's currently
+    // resting at (spec一/二: wheel input adjusts FROM here, rather than
+    // snapping to a fixed default every pickup).
+    this.placementYaw = new THREE.Euler().setFromQuaternion(this.palletObj.mesh.quaternion, 'YXZ').y;
+
     this.palletObj.mesh.updateMatrixWorld(true);
     const matInv = new THREE.Matrix4().copy(this.palletObj.mesh.matrixWorld).invert();
     const quatInv = this.palletObj.mesh.quaternion.clone().invert();
 
-    const { posX, posZ, width, depth, height, detectHeight } = PALLET_CONFIG;
-    const floorY = BACK_AREA.floorY;
-    const topY = floorY + height;
+    const { width, depth, height, detectHeight } = PALLET_CONFIG;
     const innerHW = width / 2;
     const innerHD = depth / 2;
 
     this.pinned = [];
+
+    // Re-collect already-bound cargo FIRST — it deliberately stays
+    // isHeld=true while placed-and-bound (spec七), so the generic
+    // footprint scan below (which skips isHeld items, same as every other
+    // scan in this class) would never rediscover it on its own.
+    if (this.isRopeBound) {
+      this.removeAllCargoJoints();
+      for (const id of this.boundCargoIds) {
+        const obj = this.interactables.get(id);
+        if (!obj || !obj.rigidBody) continue;
+        const t = obj.rigidBody.translation();
+        const r = obj.rigidBody.rotation();
+        const localPos = new THREE.Vector3(t.x, t.y, t.z).applyMatrix4(matInv);
+        const localQuat = new THREE.Quaternion(r.x, r.y, r.z, r.w).premultiply(quatInv);
+        this.pinned.push({ obj, localPos, localQuat });
+        obj.rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        this.physics.setBodyEnabled(obj.rigidBody, false);
+      }
+    }
+
     for (const [id, obj] of this.interactables) {
       if (id === this.palletId) continue;
       if (obj.isHeld || !obj.mesh.visible) continue;
       const data = this.cargoSystem.getCargoData(id);
       if (!data || (data.shapeType !== 'box' && data.shapeType !== 'large')) continue;
 
-      const p = obj.mesh.position;
+      // Local-space footprint/height check — rotation-aware by construction
+      // (matInv/quatInv already fold in the pallet's current orientation),
+      // unlike a plain world-space AABB test.
+      const localPos = obj.mesh.position.clone().applyMatrix4(matInv);
       const supported =
-        p.x >= posX - innerHW && p.x <= posX + innerHW &&
-        p.z >= posZ - innerHD && p.z <= posZ + innerHD &&
-        p.y >= topY - 0.05 && p.y <= topY + detectHeight;
+        localPos.x >= -innerHW && localPos.x <= innerHW &&
+        localPos.z >= -innerHD && localPos.z <= innerHD &&
+        localPos.y >= height / 2 - 0.05 && localPos.y <= height / 2 + detectHeight;
       if (!supported) continue;
 
-      const localPos = obj.mesh.position.clone().applyMatrix4(matInv);
       const localQuat = obj.mesh.quaternion.clone().premultiply(quatInv);
       this.pinned.push({ obj, localPos, localQuat });
 
@@ -412,8 +682,9 @@ export class PalletSystem {
     this.palletObj.isHeld = true;
     this.playerData.state = 'holding-item';
     this.playerData.heldObjectId = this.palletId;
-    this.hud.showInteractionPrompt('整理托盤', 'E：放置整理托盤');
+    this.hud.showInteractionPrompt('整理托盤', '滾輪旋轉　E放置　Q丟出');
     this.updateLabelFollow();
+    this.updateRopeVisual();
 
     // Position it in front of the player immediately, not one frame late.
     this.updateCarry(cameraPosition, cameraForward);
@@ -455,23 +726,21 @@ export class PalletSystem {
     const forwardDist = Math.max(CARRY_BASE_FORWARD_DIST, MIN_CAMERA_CLEARANCE) + horizExtent;
     const targetX = cameraPosition.x + flat.x * forwardDist;
     const targetZ = cameraPosition.z + flat.z * forwardDist;
-    const yaw = Math.atan2(flat.x, flat.z);
-    const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0));
+    // "Add placement rotation and pallet cargo straps" round spec一/二: yaw
+    // is now player-controlled via mouse wheel (see onWheel) instead of
+    // auto-facing the camera direction — this.placementYaw only ever
+    // changes on a 15° wheel notch.
+    const quat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.placementYaw);
 
-    // THIS is the height computation that was the actual bug this round
-    // fixes: the previous version put the carried pallet at essentially its
+    // THIS is the height computation that was the actual bug an earlier
+    // round fixed: the old code put the carried pallet at essentially its
     // normal RESTING (floor-touching) height every frame — even while just
     // walking around holding it — which made the swept-collision shape
     // below start every single frame already touching/embedded in the
-    // floor's own static collider. Rapier's castShape reports an immediate
-    // time-of-impact (~0) for a shape that begins in contact, so
-    // castShapeMove() returned an allowed-movement fraction of 0 on every
-    // frame, freezing X/Z movement completely regardless of camera
-    // position — the pallet LOOKED stuck on the ground even though
-    // updateCarry() was genuinely running every frame and computing a
-    // nonzero desired delta. The fix: keep the WALKING height clear of the
-    // floor at all times; the floor-touching height is only ever computed
-    // separately, for the placement PREVIEW (see updatePlacementPreview).
+    // floor's own static collider, freezing X/Z movement completely. The
+    // fix: keep the WALKING height clear of the floor at all times; the
+    // floor-touching height is only ever computed separately, for the
+    // placement PREVIEW (see updatePlacementPreview).
     const desiredCenterY = cameraPosition.y - CARRY_DROP_BELOW_EYE;
     const minCenterY = BACK_AREA.floorY + CARRY_MIN_FLOOR_CLEARANCE + this.unionHalfExtents.y;
     const maxCenterY = cameraPosition.y + CARRY_MAX_ABOVE_EYE - this.unionHalfExtents.y;
@@ -484,10 +753,7 @@ export class PalletSystem {
   /** Swept-collision clamp against fixed scene geometry only (walls/
    * furniture — GROUP_STATIC), using the union bounds' own extent and local
    * center offset (rotated into world space) — same castShapeMove helper
-   * dolly-system.ts's push already uses. Now that the carry height is
-   * always clear of the floor (see computeCarryTransform), this correctly
-   * blocks movement into walls without ever self-blocking against the
-   * floor the pallet isn't touching anymore. */
+   * dolly-system.ts's push already uses. */
   private clampCarryMove(targetPos: THREE.Vector3, targetQuat: THREE.Quaternion): THREE.Vector3 {
     const oldPos = this.palletObj.mesh.position;
     const rotatedOffset = this.unionLocalCenterOffset.clone().applyQuaternion(targetQuat);
@@ -502,10 +768,10 @@ export class PalletSystem {
   }
 
   /** Writes ONE authoritative transform to both the kinematic body (so the
-   * collider tracks `topMesh` 1:1 — spec 二) and `topMesh` itself, from the
-   * exact same pos/quat — the ONLY place the pallet's transform is ever
-   * written while held (spec二: "拾取、手持、放置、旋轉時只更新[root]
-   * transform"). Every child (slats, uiAnchor) moves along for free via
+   * collider tracks `topMesh` 1:1) and `topMesh` itself, from the exact
+   * same pos/quat — the ONLY place the pallet's transform is ever written
+   * while held (spec二: "拾取、手持、放置、旋轉時只更新[root]transform").
+   * Every child (slats, uiAnchor, rope straps) moves along for free via
    * normal Three.js parent-child propagation. */
   private applyCarryTransform(pos: THREE.Vector3, quat: THREE.Quaternion): void {
     this.body.setNextKinematicTranslation({ x: pos.x, y: pos.y, z: pos.z });
@@ -535,6 +801,7 @@ export class PalletSystem {
       p.obj.mesh.position.copy(worldPos);
       p.obj.mesh.quaternion.copy(worldQuat);
     }
+    if (this.isRopeBound) this.updateRopeVisual();
 
     this.updatePlacementPreview(clampedPos, transform.quat);
   }
@@ -542,12 +809,10 @@ export class PalletSystem {
   /** Computes where the pallet would actually LAND if placed right now
    * (floor/vehicle-bed height under the current carry XZ, via a downward
    * raycast — distinct from the walking carry height above), checks its
-   * validity, and updates the ghost preview mesh (spec 八). */
+   * validity, and updates the ghost preview mesh. */
   private updatePlacementPreview(carryPos: THREE.Vector3, carryQuat: THREE.Quaternion): void {
-    // Excludes the WHOLE pallet subtree via the base board (slats/uiAnchor
-    // all walk up to it as their parent) — excluding only a single slat, or
-    // missing this entirely, would let this downward raycast hit the
-    // pallet's OWN top slats and mistake them for landing support.
+    // Excludes the WHOLE pallet subtree via the base board (slats/uiAnchor/
+    // straps all walk up to it as their parent).
     const excludeRoots: THREE.Object3D[] = [this.palletObj.mesh, this.previewMesh, ...this.pinned.map(p => p.obj.mesh)];
     this.downRaycaster.set(new THREE.Vector3(carryPos.x, carryPos.y + 3, carryPos.z), new THREE.Vector3(0, -1, 0));
     const hits = this.downRaycaster.intersectObjects(this.scene.children, true)
@@ -573,11 +838,21 @@ export class PalletSystem {
   /** Placement validity at the current placement target — excludes the
    * pallet's own collider/mesh, its currently-pinned cargo, the player
    * (never in `interactables` to begin with), and anything already
-   * isHeld/invisible; still blocks against walls (via the carry clamp
-   * above already having limited how far the target can be), world bounds,
-   * and any other real, resting object (spec 六). */
+   * isHeld/invisible; still blocks against walls, world bounds, and any
+   * other real, resting object. The AABB used here is the ENCLOSING box of
+   * the (possibly yawed) union bounds — "Add placement rotation and pallet
+   * cargo straps" round spec一: rotation must affect the collision check
+   * too, not just the visuals; this codebase's placement math is AABB-only
+   * throughout, so this uses the standard enclosing-AABB of the yawed
+   * rectangle rather than a genuine rotated-OBB test — never smaller than
+   * the true rotated footprint, so it can only ever be equally or more
+   * conservative. */
   private checkPlacementValidity(): boolean {
-    const halfW = this.unionHalfExtents.x, halfH = this.unionHalfExtents.y, halfD = this.unionHalfExtents.z;
+    const cos = Math.abs(Math.cos(this.placementYaw));
+    const sin = Math.abs(Math.sin(this.placementYaw));
+    const halfW = this.unionHalfExtents.x * cos + this.unionHalfExtents.z * sin;
+    const halfD = this.unionHalfExtents.x * sin + this.unionHalfExtents.z * cos;
+    const halfH = this.unionHalfExtents.y;
     const center = this.placementPos.clone().add(this.unionLocalCenterOffset.clone().applyQuaternion(this.placementQuat));
 
     if (center.x - halfW < WORLD_BOUNDS.minX || center.x + halfW > WORLD_BOUNDS.maxX ||
@@ -612,8 +887,7 @@ export class PalletSystem {
    * left-click flow other cargo uses, since a WHOLE GROUP's live validity
    * is already visible via the ghost preview every frame). Leaves
    * everything held/unchanged if the current placement target isn't valid,
-   * so the player can walk somewhere else and press E again — it can never
-   * get permanently stuck (spec 十). */
+   * so the player can walk somewhere else and press E again. */
   tryPlace(): boolean {
     if (!this.isHeld) return false;
     if (!this.previewValid) {
@@ -636,15 +910,25 @@ export class PalletSystem {
       const worldQuat = finalQuat.clone().multiply(p.localQuat);
       obj.mesh.position.copy(worldPos);
       obj.mesh.quaternion.copy(worldQuat);
-      obj.isHeld = false;
+
+      const isBound = this.isRopeBound && this.boundCargoIds.includes(obj.id);
+      // Bound cargo deliberately STAYS isHeld=true (spec七: "貨物不恢復自
+      // 由物理...玩家不可單獨拿取或用捕貨鉤勾走") — reuses the SAME
+      // isHeld-blocks-pickup/hook-targeting invariant every other system
+      // already respects, zero changes needed there.
+      obj.isHeld = isBound;
       if (obj.rigidBody) {
         obj.rigidBody.setTranslation({ x: worldPos.x, y: worldPos.y, z: worldPos.z }, true);
         obj.rigidBody.setRotation({ x: worldQuat.x, y: worldQuat.y, z: worldQuat.z, w: worldQuat.w }, true);
         obj.rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
         obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
-        // Collider re-enable is deferred one physics step — see
-        // pendingCargoRestore's doc comment (spec 九-7).
+        // Collider re-enable is deferred one physics step regardless of
+        // binding — see pendingCargoRestore's doc comment. The joint (if
+        // bound) is deferred to that SAME later step too, never created
+        // while the body is still disabled — see pendingJointsToCreate's
+        // own doc comment for why.
         this.pendingCargoRestore.push(obj);
+        if (isBound) this.pendingJointsToCreate.push({ cargoId: obj.id, localPos: p.localPos.clone(), localQuat: p.localQuat.clone() });
       }
     }
 
@@ -656,7 +940,76 @@ export class PalletSystem {
     this.playerData.heldObjectId = null;
     this.hud.hideInteractionPrompt();
     this.updateLabelFollow();
+    this.updateRopeVisual();
     return true;
+  }
+
+  // --- Q-throw (PalletThrowHooks — spec三/七) ---
+
+  isPallet(obj: InteractableObject): boolean {
+    return obj.id === this.palletId;
+  }
+
+  /** Called by pickup-system.ts's executeThrow() BEFORE it applies any
+   * impulse/velocity — the pallet's body is permanently kinematic while
+   * parked/carried, which silently ignores those calls, so it must become
+   * a real dynamic body first (spec三: "托盤成為dynamic物理物件"). If
+   * rope-bound, creates the fixed joints now (spec七: "在投擲前建立fixed
+   * joints，再對托盤施加投擲速度") so the solver carries the impulse into
+   * the jointed cargo over subsequent steps; if not bound, releases every
+   * currently-pinned item back to independent dynamic physics right now
+   * (spec三: "托盤上的Cargo立即解除pinned") — either way, `onThrown` below
+   * gives the affected cargo a starting velocity once the pallet's own
+   * actual post-impulse velocity is known. */
+  prepareForThrow(_obj: InteractableObject): void {
+    this.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+
+    if (this.isRopeBound) {
+      this.pendingThrowCargoIds = [...this.boundCargoIds];
+      for (const p of this.pinned) {
+        if (!this.boundCargoIds.includes(p.obj.id)) continue;
+        if (p.obj.rigidBody) this.physics.setBodyEnabled(p.obj.rigidBody, true);
+        this.createCargoJoint(p.obj.id, p.localPos, p.localQuat);
+      }
+    } else {
+      this.pendingThrowCargoIds = this.pinned.map((p) => p.obj.id);
+      for (const p of this.pinned) {
+        p.obj.isHeld = false;
+        p.obj.canPickUp = true;
+        if (p.obj.rigidBody) this.physics.setBodyEnabled(p.obj.rigidBody, true);
+      }
+    }
+
+    this.pinned = [];
+    this.isHeld = false;
+    this.palletObj.isHeld = false;
+    this.previewMesh.visible = false;
+    this.playerData.state = 'empty-handed';
+    this.playerData.heldObjectId = null;
+    this.hud.hideInteractionPrompt();
+    this.updateLabelFollow();
+  }
+
+  /** Called right after pickup-system.ts's executeThrow() has applied the
+   * throw impulse/torque — `linearVelocity`/`angularVelocity` are the
+   * pallet's own ACTUAL resulting velocity, read post-impulse. Gives every
+   * cargo item released/bound in prepareForThrow() a matching STARTING
+   * velocity (a one-time nudge, never per-frame tracking — spec七: "不要在
+   * 投擲期間每幀setTranslation硬追蹤"); bound cargo then stays with the
+   * pallet purely through its fixed joint from this point on, and unbound
+   * cargo scatters independently under normal physics from here (spec三:
+   * "依真實物理散落"). */
+  onThrown(_obj: InteractableObject, linearVelocity: THREE.Vector3, angularVelocity: THREE.Vector3): void {
+    for (const id of this.pendingThrowCargoIds) {
+      const cargo = this.interactables.get(id);
+      if (cargo?.rigidBody) {
+        cargo.rigidBody.setLinvel({ x: linearVelocity.x, y: linearVelocity.y, z: linearVelocity.z }, true);
+        cargo.rigidBody.setAngvel({ x: angularVelocity.x, y: angularVelocity.y, z: angularVelocity.z }, true);
+        cargo.rigidBody.wakeUp();
+      }
+    }
+    this.pendingThrowCargoIds = [];
+    this.updateRopeVisual();
   }
 
   /** Emergency safety net — NOT part of normal play, only invoked when
@@ -678,6 +1031,7 @@ export class PalletSystem {
     }
     this.pinned = [];
     this.pendingCargoRestore = [];
+    this.pendingJointsToCreate = [];
     this.isHeld = false;
     this.palletObj.isHeld = false;
     this.previewMesh.visible = false;
@@ -685,8 +1039,14 @@ export class PalletSystem {
     this.palletObj.mesh.position.copy(this.homePos);
     this.palletObj.mesh.quaternion.identity();
     this.palletObj.mesh.updateMatrixWorld(true);
+    if (this.body.bodyType() !== RAPIER.RigidBodyType.KinematicPositionBased) {
+      this.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+    }
     this.body.setTranslation({ x: this.homePos.x, y: this.homePos.y, z: this.homePos.z }, true);
     this.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+    this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.placementYaw = 0;
     this.updateLabelFollow();
 
     if (this.playerData.heldObjectId === this.palletId) {
@@ -700,15 +1060,23 @@ export class PalletSystem {
    * position/rotation, visible and with physics re-enabled, regardless of
    * where it currently is: sitting somewhere in the room, mid-carry
    * (forced-released first, including clearing playerData if it still
-   * points at the pallet — spec 十一: "每日重置時必須強制清除托盤手持狀
-   * 態"), or hidden after riding away with a departed vehicle
-   * (VehicleControlSystem sets mesh.visible=false for it instead of
-   * destroying it — see finishOneDeparture). */
+   * points at the pallet), or hidden after riding away with a departed
+   * vehicle (VehicleControlSystem sets mesh.visible=false for it instead
+   * of destroying it). Also unconditionally clears any rope-bind state and
+   * joints (spec八: "換日、重置或載具離場不能留下失效joint") — any bound
+   * cargo id this leaves behind is about to be swept by the same daily
+   * cargo-clear pass every other item goes through regardless. */
   resetToStart(): void {
     this.forceReleaseToSafePosition();
     this.stableTimers.clear();
     this.palletObj.canPickUp = true;
     this.palletObj.mesh.visible = true;
+
+    this.removeAllCargoJoints();
+    this.isRopeBound = false;
+    this.boundCargoIds = [];
+    this.pendingThrowCargoIds = [];
+    this.updateRopeVisual();
     this.updateLabelFollow();
   }
 }

@@ -2,7 +2,7 @@
 // upgrade-data.ts (the actual numbers) the same way settings-data.ts and
 // settings-manager.ts split shapes/defaults from the runtime owner.
 
-export type UpgradeId = 'multiCarry' | 'heavyHandling' | 'moveSpeed' | 'similarCargoSense';
+export type UpgradeId = 'multiCarry' | 'heavyHandling' | 'moveSpeed' | 'similarCargoSense' | 'ropeStrap';
 
 export interface UpgradeLevelEffect {
   level: number;

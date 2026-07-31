@@ -214,8 +214,11 @@ export class HUD {
     }, 2000);
   }
 
+  /** "Add placement rotation and pallet cargo straps" round spec一: updated
+   * to surface the new wheel-rotate control alongside the existing E/left-
+   * click placement and Q-throw hints (spec一's exact wording). */
   showPlacementPrompt(isValid: boolean): void {
-    this.promptEl.textContent = isValid ? '左鍵：放置\n右鍵：取消' : '此處無法放置\n右鍵：取消';
+    this.promptEl.textContent = isValid ? '滾輪旋轉　E放置　Q丟出\n右鍵：取消' : '此處無法放置\n右鍵：取消';
     this.promptEl.style.whiteSpace = 'pre-line';
     this.promptEl.classList.add('visible');
   }

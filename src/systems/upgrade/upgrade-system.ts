@@ -10,7 +10,7 @@ const UPGRADE_STORAGE_KEY = 'hp_manual_upgrades_v1';
 function createDefaultUpgradeSaveState(): UpgradeSaveState {
   return {
     availableSettlementScore: 0,
-    levels: { multiCarry: 0, heavyHandling: 0, moveSpeed: 0, similarCargoSense: 0 },
+    levels: { multiCarry: 0, heavyHandling: 0, moveSpeed: 0, similarCargoSense: 0, ropeStrap: 0 },
     settledDayId: null,
   };
 }
@@ -164,6 +164,15 @@ export class UpgradeSystem {
     return this.state.levels.similarCargoSense >= 1;
   }
 
+  /** "Add placement rotation and pallet cargo straps" round — read directly
+   * by pallet-system.ts's own F-key rope-bind gate, same pattern as
+   * isSimilarCargoSenseUnlocked() above (no setter to apply, since this
+   * upgrade unlocks a player ACTION rather than continuously modifying some
+   * other system's behavior). */
+  isRopeStrapUnlocked(): boolean {
+    return this.state.levels.ropeStrap >= 1;
+  }
+
   private applyEffect(id: UpgradeId): void {
     const level = this.state.levels[id];
     switch (id) {
@@ -182,6 +191,10 @@ export class UpgradeSystem {
       case 'similarCargoSense':
         // No setter to call — read directly via isSimilarCargoSenseUnlocked()
         // by whoever drives the highlight (see similar-cargo-highlight.ts).
+        break;
+      case 'ropeStrap':
+        // No setter to call — read directly via isRopeStrapUnlocked() by
+        // pallet-system.ts's own F-key handler.
         break;
     }
   }

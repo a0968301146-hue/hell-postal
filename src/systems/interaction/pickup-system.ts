@@ -29,6 +29,23 @@ export interface MailBoxCarryHooks {
   restoreForThrow(obj: InteractableObject, linearVelocity: THREE.Vector3, angularVelocity: THREE.Vector3): void;
 }
 
+/** "Add placement rotation and pallet cargo straps" round spec三: the same
+ * narrow-hook pattern as MailBoxCarryHooks above, for the ONE thing this
+ * file's generic executeThrow() can't do on its own — the pallet's own
+ * rigid body is PERMANENTLY kinematic (see pallet-system.ts) while
+ * parked/carried, which silently ignores the impulse/velocity calls
+ * executeThrow() is about to make, so `prepareForThrow` must flip it to a
+ * real dynamic body (and, if rope-bound, create the cargo fixed joints)
+ * BEFORE that happens. `onThrown` fires right after, once the pallet's own
+ * actual post-impulse velocity is known, so bound/just-released cargo can
+ * be given a matching starting velocity. Set once via setPalletThrowHooks()
+ * from create-game-systems.ts. */
+export interface PalletThrowHooks {
+  isPallet(obj: InteractableObject): boolean;
+  prepareForThrow(obj: InteractableObject): void;
+  onThrown(obj: InteractableObject, linearVelocity: THREE.Vector3, angularVelocity: THREE.Vector3): void;
+}
+
 /** Held-item camera-local anchor baseline ("Add sequential lost-found
  * visitors and held cargo feedback" round二: suggested starting values) —
  * local to viewModelCamera, which sits at the local origin looking down -Z
@@ -114,6 +131,13 @@ export class PickupSystem implements PickupPort {
    * every other placement surface (floor, tables, pallet, cargo) is
    * untouched, still confirmed by left-click only, exactly as before. */
   private previewIsLostFoundShelf = false;
+  /** "Add placement rotation and pallet cargo straps" round spec一: manual
+   * yaw offset (radians, world-Y-only) accumulated 15° per wheel notch
+   * while `state === 'placement-preview'` — read by updatePlacementPreview
+   * (preview mesh + collision check) and confirmPlacement (final rotation).
+   * Reset to 0 on cancel/confirm/entering a fresh preview (spec一: "取消放
+   * 置、換物品或成功放下後，清除本次placementYaw"). */
+  private placementYaw = 0;
 
   // Charge/throw
   private isCharging = false;
@@ -129,6 +153,14 @@ export class PickupSystem implements PickupPort {
 
   setMailBoxHooks(hooks: MailBoxCarryHooks): void {
     this.mailBoxHooks = hooks;
+  }
+
+  /** See the PalletThrowHooks doc comment above — null until
+   * setPalletThrowHooks() wires it up from create-game-systems.ts. */
+  private palletThrowHooks: PalletThrowHooks | null = null;
+
+  setPalletThrowHooks(hooks: PalletThrowHooks): void {
+    this.palletThrowHooks = hooks;
   }
 
   constructor(
@@ -168,6 +200,7 @@ export class PickupSystem implements PickupPort {
     document.addEventListener('mousedown', (e) => this.onMouseDown(e));
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
     document.addEventListener('keyup', (e) => this.onKeyUp(e));
+    document.addEventListener('wheel', (e) => this.onWheel(e));
     window.addEventListener('blur', () => this.cancelCharge());
   }
 
@@ -731,6 +764,10 @@ export class PickupSystem implements PickupPort {
     this.previewMesh = new THREE.Mesh(geo, previewMat);
     this.worldScene.add(this.previewMesh);
 
+    // "Add placement rotation and pallet cargo straps" round spec一: a
+    // fresh preview always starts unrotated — cleared again on cancel/
+    // confirm below, this is just the "entering a NEW preview" reset.
+    this.placementYaw = 0;
     this.playerData.state = 'placement-preview';
   }
 
@@ -742,6 +779,7 @@ export class PickupSystem implements PickupPort {
     if (!obj) return;
 
     this.removePreview();
+    this.placementYaw = 0;
     this.playerData.state = 'holding-item';
     this.hud.showInteractionPrompt(obj.displayName, this.holdActionHintText());
   }
@@ -765,9 +803,14 @@ export class PickupSystem implements PickupPort {
     // object — see cargo-system.ts spawnDailyRoller for the same tip quaternion.
     const isRoller = obj.mesh.userData.shapeType === 'roller';
     const rollerQuat = isRoller ? new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, Math.PI / 2)) : null;
+    // "Add placement rotation and pallet cargo straps" round spec一: the
+    // manual wheel-yaw the preview was showing becomes the ACTUAL placed
+    // rotation — applied on top of the roller's own tip (never replacing
+    // it), so "放下後方向與投影一致" holds for rollers too.
+    const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.placementYaw);
+    const finalQuat = rollerQuat ? yawQuat.clone().multiply(rollerQuat) : yawQuat;
     obj.mesh.position.copy(pos);
-    if (rollerQuat) obj.mesh.quaternion.copy(rollerQuat);
-    else obj.mesh.rotation.set(0, 0, 0);
+    obj.mesh.quaternion.copy(finalQuat);
     obj.mesh.visible = true;
 
     // Re-enable physics (same order as throw: enable FIRST, then set position)
@@ -777,12 +820,13 @@ export class PickupSystem implements PickupPort {
       const bodyY = isBottomOrigin ? pos.y + obj.height / 2 : pos.y;
       this.physics.setBodyEnabled(obj.rigidBody, true);
       obj.rigidBody.setTranslation({ x: pos.x, y: bodyY, z: pos.z }, true);
-      obj.rigidBody.setRotation(rollerQuat ?? { x: 0, y: 0, z: 0, w: 1 }, true);
+      obj.rigidBody.setRotation({ x: finalQuat.x, y: finalQuat.y, z: finalQuat.z, w: finalQuat.w }, true);
       obj.rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
       obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
     }
 
     this.removePreview();
+    this.placementYaw = 0;
 
     // Restore carried envelopes if this is a container
     const isContainer = obj.mesh.userData.sortingBoxId || obj.mesh.userData.crateId;
@@ -902,6 +946,12 @@ export class PickupSystem implements PickupPort {
     // Re-enable physics
     if (obj.rigidBody) {
       this.physics.setBodyEnabled(obj.rigidBody, true);
+      // The pallet's own rigid body is PERMANENTLY kinematic while parked/
+      // carried (see pallet-system.ts) — kinematic bodies silently ignore
+      // every setLinvel/applyImpulse call below, so it must be converted to
+      // a real dynamic body (and, if rope-bound, jointed to its cargo)
+      // BEFORE any of that happens (spec三: "托盤成為dynamic物理物件").
+      if (this.palletThrowHooks?.isPallet(obj)) this.palletThrowHooks.prepareForThrow(obj);
       obj.rigidBody.setTranslation({ x: spawnPos.x, y: spawnPos.y, z: spawnPos.z }, true);
       obj.rigidBody.setRotation(throwRollerQuat ?? { x: 0, y: 0, z: 0, w: 1 }, true);
       obj.rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -923,6 +973,17 @@ export class PickupSystem implements PickupPort {
 
       // Small angular impulse for rotation
       obj.rigidBody.applyTorqueImpulse({ x: ratio * 0.5, y: 0, z: ratio * -0.3 }, true);
+
+      // Hand the pallet's ACTUAL post-impulse velocity to any cargo it's
+      // taking with it (rope-bound, or just-released unbound cargo — see
+      // pallet-system.ts's own onThrown) — read AFTER the impulse/torque
+      // above, never the pre-impulse zero (spec七: "Cargo繼承托盤的線速度與
+      // 角速度").
+      if (this.palletThrowHooks?.isPallet(obj)) {
+        const lv = obj.rigidBody.linvel();
+        const av = obj.rigidBody.angvel();
+        this.palletThrowHooks.onThrown(obj, new THREE.Vector3(lv.x, lv.y, lv.z), new THREE.Vector3(av.x, av.y, av.z));
+      }
     }
 
     // Restore carried envelopes if this is a container
@@ -993,7 +1054,7 @@ export class PickupSystem implements PickupPort {
           // Use hit point directly — the plane IS at the correct interior height
           const previewY = hit.point.y + obj.height / 2 + 0.01;
           this.previewMesh.position.set(hit.point.x, previewY, hit.point.z);
-          this.previewMesh.rotation.set(0, 0, 0);
+          this.previewMesh.rotation.set(0, this.placementYaw, 0);
           this.previewMesh.visible = true;
           this.previewValid = true; // Inside container is always valid
           const mat = this.previewMesh.material as THREE.MeshStandardMaterial;
@@ -1060,7 +1121,7 @@ export class PickupSystem implements PickupPort {
     const isBottomOrigin = obj.mesh.userData.bottomOrigin || obj.mesh.userData.crateId;
     const previewY = isBottomOrigin ? supportY + 0.005 : supportY + obj.height / 2;
     this.previewMesh.position.set(hit.point.x, previewY, hit.point.z);
-    this.previewMesh.rotation.set(0, 0, 0);
+    this.previewMesh.rotation.set(0, this.placementYaw, 0);
     this.previewMesh.visible = true;
 
     this.previewValid = this.validatePlacement(this.previewMesh.position, obj);
@@ -1078,9 +1139,20 @@ export class PickupSystem implements PickupPort {
   }
 
   private validatePlacement(position: THREE.Vector3, obj: InteractableObject): boolean {
-    const halfW = obj.width / 2;
+    const rawHalfW = obj.width / 2;
     const halfH = obj.height / 2;
-    const halfD = obj.depth / 2;
+    const rawHalfD = obj.depth / 2;
+    // "Add placement rotation and pallet cargo straps" round spec一: the
+    // collision check must account for the preview's own yaw too, not just
+    // its visual mesh — rather than building a genuine rotated-OBB check
+    // (this codebase's placement/collision math is AABB-only throughout),
+    // this uses the standard enclosing-AABB of the yawed rectangle, which
+    // is never SMALLER than the true rotated footprint (so it can only ever
+    // be equally or more conservative, never permit an actual overlap).
+    const cos = Math.abs(Math.cos(this.placementYaw));
+    const sin = Math.abs(Math.sin(this.placementYaw));
+    const halfW = rawHalfW * cos + rawHalfD * sin;
+    const halfD = rawHalfW * sin + rawHalfD * cos;
 
     // World bounds (see logistics-layout-data.ts — the playable area is no
     // longer a single room centered at the origin, so this is a min/max box).
@@ -1169,6 +1241,20 @@ export class PickupSystem implements PickupPort {
       if (event.button === 0 && this.previewValid) this.confirmPlacement();
       else if (event.button === 2) this.cancelPlacement();
     }
+  }
+
+  /** "Add placement rotation and pallet cargo straps" round spec一: rotates
+   * the placement preview 15° per notch around world Y only, while (and
+   * ONLY while) actively in placement-preview — ToolSystem's own wheel
+   * handler gates itself off during this same state (see tool-system.ts),
+   * so the two can never both react to the same wheel event. */
+  private onWheel(event: WheelEvent): void {
+    if (this.pauseManager.isPaused) return;
+    if (this.playerData.state !== 'placement-preview') return;
+    if (Math.abs(event.deltaY) < 1) return;
+    const dir = event.deltaY > 0 ? 1 : -1;
+    this.placementYaw += dir * THREE.MathUtils.degToRad(15);
+    this.updatePlacementPreview();
   }
 
   private onKeyDown(event: KeyboardEvent): void {

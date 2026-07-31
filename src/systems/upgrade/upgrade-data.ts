@@ -71,6 +71,17 @@ export const UPGRADE_DEFINITIONS: UpgradeDefinition[] = [
       { level: 2, description: '最多同時持有 3 件' },
     ],
   },
+  {
+    id: 'ropeStrap',
+    displayName: '固定繩索',
+    description: '力量手套搬運托盤時，可在放置預覽狀態按F，將托盤上的貨物用固定繩綁住。綁住後即使丟出托盤，貨物也不會散落。',
+    maxLevel: 1,
+    costs: [60],
+    levelEffects: [
+      { level: 0, description: '未啟用' },
+      { level: 1, description: '搬運托盤時可按 F 綁定／解除固定繩，綁定後投擲托盤不會使貨物散落' },
+    ],
+  },
 ];
 
 export function getUpgradeDefinition(id: UpgradeId): UpgradeDefinition {
