@@ -277,9 +277,19 @@ export class GameApp {
     // before pause.
     s.cargoInspectionSystem.update();
     const inspectedCargo = s.cargoInspectionSystem.currentCargo;
-    // "同類感知" upgrade (spec五D) — reuses this SAME cargoInspectionSystem
-    // raycast result, never a second raycast of its own.
-    s.similarCargoHighlight.update(s.upgradeSystem.isSimilarCargoSenseUnlocked(), inspectedCargo, s.cargoSystem);
+    // "同類感知" upgrade ("Revise score upgrades and fix frog walkable
+    // colliders" round spec二D: 觸發方式改為手持一件貨物時啟用，不再要求準
+    // 心先對準貨物) — driven by the CURRENTLY HELD item instead of the
+    // crosshair raycast target. `cargoDataMap.get` returns undefined for
+    // anything that isn't real Cargo (envelopes/mail boxes/lost items/the
+    // pallet all live in separate registries), so those are excluded for
+    // free, with no extra type check needed here. Still reuses
+    // SimilarCargoHighlight's own existing radius search — no second scan
+    // or raycast of any kind is added.
+    const heldCargoData = this.context.playerData.heldObjectId
+      ? s.cargoSystem.getCargoData(this.context.playerData.heldObjectId) ?? null
+      : null;
+    s.similarCargoHighlight.update(s.upgradeSystem.isSimilarCargoSenseUnlocked(), heldCargoData, s.cargoSystem);
     if (inspectedCargo?.category && inspectedCargo.region) {
       // "Organize and expand cargo shape presets" round: the crosshair line
       // also shows the exact shape preset's own displayName + sizeClass

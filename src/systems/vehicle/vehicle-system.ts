@@ -57,6 +57,17 @@ const FROG_RAMP_RUN = 1.0;
 const FROG_RAMP_HALF_WIDTH = 0.8;
 const FROG_FRONT_THRESHOLD_HEIGHT = 0.15;
 
+/** Quaternion for a rotation of `angle` around world/local Y — used ONLY to
+ * keep the frog's physics body's rotation in sync with its visual
+ * vehicleGroup (see buildFrogVehicle/moveToward's own doc comments on why
+ * this sync is the actual fix for "玩家會穿過或無法站立"). A plain half-angle
+ * formula rather than THREE.Quaternion.setFromAxisAngle, since RAPIER wants
+ * a raw {x,y,z,w} object, not a THREE.Quaternion instance. */
+function frogBodyYQuaternion(angle: number): { x: number; y: number; z: number; w: number } {
+  const half = angle / 2;
+  return { x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) };
+}
+
 export interface CargoBayBounds {
   centerX: number;
   centerZ: number;
@@ -99,6 +110,7 @@ export class VehicleSystem {
   private frogHopDistanceAccum = 0;
   private frogUpperHeadShell: THREE.Group | null = null;
   private frogBasinFloor: THREE.Mesh | null = null;
+  private frogBasinFloorCollider: RAPIER.Collider | null = null;
   private frogRampMesh: THREE.Mesh | null = null;
   private frogRampCollider: RAPIER.Collider | null = null;
   private frogMouthAngle = 0;
@@ -347,7 +359,14 @@ export class VehicleSystem {
     basinFloor.position.set(0, basinFloorY, 0);
     basinFloor.visible = false;
     this.vehicleGroup.add(basinFloor);
-    this.physics.addColliderToBody(this.body, 0, basinFloorY, 0, mouthHalfX, 0.04, mouthHalfZ);
+    // Real solid collider (never a sensor), half-extents matching the
+    // visible mesh above exactly — this is what the player actually stands
+    // on (spec三: "斜坡與嘴腔底板使用真實實體Collider...Collider必須與可見
+    // Mesh位置、旋轉、寬度及長度一致"). Toggled alongside the mesh's own
+    // visibility (onArrived/onDeparting) so it's only walkable while the
+    // mouth is genuinely open.
+    this.frogBasinFloorCollider = this.physics.addColliderToBody(this.body, 0, basinFloorY, 0, mouthHalfX, 0.04, mouthHalfZ);
+    this.frogBasinFloorCollider.setEnabled(false);
     this.cargoBedTopMesh = basinFloor;
     this.frogBasinFloor = basinFloor;
 
@@ -446,6 +465,18 @@ export class VehicleSystem {
     // avoids a one-frame flash of the default (unrotated) orientation
     // before the first moveToward() call corrects it.
     this.vehicleGroup.rotation.y = Math.PI;
+    // "Revise score upgrades and fix frog walkable colliders" round — THE
+    // root cause of "玩家會穿過或無法站立": every frog collider (ramp/basin
+    // floor/walls/fixedBody) is a LOCAL offset on `this.body`, but nothing
+    // anywhere ever rotated that physics body to match — it sat at identity
+    // rotation forever while the VISUAL vehicleGroup above turned to face
+    // the dock. At rotation.y=π that's a full 180° mismatch: every walkable
+    // collider ends up exactly where the tail visually is, nowhere near the
+    // visible open mouth. Syncing the body's rotation here (construction)
+    // and in moveToward() below (every frame the frog turns) is the actual
+    // fix — not a second/duplicate collider body, just correcting the one
+    // that already exists so it actually matches what's on screen.
+    this.body.setRotation(frogBodyYQuaternion(Math.PI), true);
   }
 
   private addBedWall(material: THREE.Material, localX: number, localY: number, localZ: number, sx: number, sy: number, sz: number): void {
@@ -531,7 +562,13 @@ export class VehicleSystem {
         const hopPhase = this.frogHopDistanceAccum / FROG_HOP_DISTANCE;
         pos.y = Math.sin(hopPhase * Math.PI) * FROG_HOP_HEIGHT;
       }
-      this.vehicleGroup.rotation.y = Math.atan2(dx, dz);
+      const rotY = Math.atan2(dx, dz);
+      this.vehicleGroup.rotation.y = rotY;
+      // Keep the physics body's rotation in lockstep with the visual one —
+      // see buildFrogVehicle's own doc comment on this same fix (the body
+      // used to sit at identity rotation forever, silently detaching every
+      // collider from the visible mesh once the frog ever turned).
+      this.body.setNextKinematicRotation(frogBodyYQuaternion(rotY));
     }
 
     return arrived;
@@ -570,6 +607,7 @@ export class VehicleSystem {
     if (!this.isFrog) return;
     this.frogMouthTargetAngle = FROG_MOUTH_OPEN_ANGLE;
     if (this.frogBasinFloor) this.frogBasinFloor.visible = true;
+    if (this.frogBasinFloorCollider) this.frogBasinFloorCollider.setEnabled(true);
     if (this.frogRampMesh) this.frogRampMesh.visible = true;
     if (this.frogRampCollider) this.frogRampCollider.setEnabled(true);
   }
@@ -587,6 +625,7 @@ export class VehicleSystem {
     if (!this.isFrog) return;
     this.frogMouthTargetAngle = 0;
     if (this.frogBasinFloor) this.frogBasinFloor.visible = false;
+    if (this.frogBasinFloorCollider) this.frogBasinFloorCollider.setEnabled(false);
     if (this.frogRampMesh) this.frogRampMesh.visible = false;
     if (this.frogRampCollider) this.frogRampCollider.setEnabled(false);
     for (const obj of pinnedCargo) obj.mesh.visible = false;

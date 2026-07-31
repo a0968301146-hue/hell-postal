@@ -3,34 +3,32 @@ import { DepartureSettlement } from '../scoring';
 import { PickupSystem } from '../interaction/pickup-system';
 import { PlayerController } from '../player';
 import { UpgradeId, UpgradeSaveState, UpgradeDefinition } from './upgrade-types';
-import {
-  UPGRADE_DEFINITIONS, getUpgradeDefinition, UPGRADE_POINT_REWARD_PER_SHIPPED_ITEM,
-  TEST_STARTING_UPGRADE_POINTS, TEST_GRANT_VERSION, RESET_UPGRADES_ON_PAGE_LOAD,
-} from './upgrade-data';
+import { UPGRADE_DEFINITIONS, getUpgradeDefinition, UPGRADE_POINT_REWARD_PER_SHIPPED_ITEM } from './upgrade-data';
 
 const UPGRADE_STORAGE_KEY = 'hp_manual_upgrades_v1';
 
 function createDefaultUpgradeSaveState(): UpgradeSaveState {
   return {
-    // TEMPORARY TEST GRANT — remove before public demo (spec六: "新存檔／
-    // 清除存檔後，初始 upgradePoints 為 1000"). testGrantVersion is already
-    // current here, so applyTestGrantIfNeeded() below is a no-op for a
-    // brand-new save — it only ever does anything for a save that predates
-    // this field.
-    upgradePoints: TEST_STARTING_UPGRADE_POINTS,
+    availableSettlementScore: 0,
     levels: { multiCarry: 0, heavyHandling: 0, moveSpeed: 0, similarCargoSense: 0 },
     settledDayId: null,
-    testGrantVersion: TEST_GRANT_VERSION,
   };
 }
 
 /** Field-by-field fallback to defaults for any missing/corrupt field —
  * mirrors settings-manager.ts's own mergeProgress/mergeSettings pattern
- * exactly (spec六: "舊存檔沒有升級資料時，需以預設值安全fallback，不能報
- * 錯"). Levels are additionally clamped against each definition's own
- * maxLevel so a hand-edited or stale save can never apply an out-of-range
- * level. */
-function mergeUpgradeSaveState(saved: Partial<UpgradeSaveState> | null): UpgradeSaveState {
+ * (spec: "舊存檔沒有升級資料時，需以預設值安全fallback，不能報錯"). Levels
+ * are additionally clamped against each definition's own maxLevel so a
+ * hand-edited or stale save can never apply an out-of-range level.
+ *
+ * One-time migration ("Revise score upgrades and fix frog walkable
+ * colliders" round spec一: "舊存檔中的upgradePoints一次性遷移到
+ * availableSettlementScore"): a save written before this round has
+ * `upgradePoints` but no `availableSettlementScore` — `saved` is typed
+ * loosely enough to still read that old field for exactly this one-time
+ * carry-over, without ever writing a second storage key or resetting the
+ * player's already-purchased levels. */
+function mergeUpgradeSaveState(saved: (Partial<UpgradeSaveState> & { upgradePoints?: number }) | null): UpgradeSaveState {
   const base = createDefaultUpgradeSaveState();
   if (!saved) return base;
 
@@ -41,21 +39,29 @@ function mergeUpgradeSaveState(saved: Partial<UpgradeSaveState> | null): Upgrade
     levels[def.id] = typeof lvl === 'number' && lvl >= 0 && lvl <= def.maxLevel ? lvl : 0;
   }
 
+  let availableSettlementScore = base.availableSettlementScore;
+  if (typeof saved.availableSettlementScore === 'number' && saved.availableSettlementScore >= 0) {
+    availableSettlementScore = saved.availableSettlementScore;
+  } else if (typeof saved.upgradePoints === 'number' && saved.upgradePoints >= 0) {
+    // Pre-rename save — migrate the old currency value over exactly once;
+    // the very next save() call writes it back out under the new field
+    // name, so this branch never fires again for this save.
+    availableSettlementScore = saved.upgradePoints;
+  }
+
   return {
-    upgradePoints: typeof saved.upgradePoints === 'number' && saved.upgradePoints >= 0 ? saved.upgradePoints : base.upgradePoints,
+    availableSettlementScore,
     levels,
     settledDayId: typeof saved.settledDayId === 'number' ? saved.settledDayId : base.settledDayId,
-    // TEMPORARY TEST GRANT — remove before public demo. A save written
-    // before this field existed has `saved.testGrantVersion === undefined`,
-    // which falls through to null here — applyTestGrantIfNeeded() reads
-    // exactly that null as "not yet applied to this save".
-    testGrantVersion: typeof saved.testGrantVersion === 'number' ? saved.testGrantVersion : null,
   };
 }
 
 /**
- * Owns upgrade points, per-upgrade levels, purchasing, and their save state
- * (spec七: "UpgradeSystem 擁有點數/等級/購買/效果套用/存讀檔"). Applies each
+ * Owns available settlement score, per-upgrade levels, purchasing, and
+ * their save state ("UpgradeSystem 擁有分數/等級/購買/效果套用/存讀檔").
+ * There is no separate "upgrade points" currency — availableSettlementScore
+ * IS a day's own net settlement outcome, accumulated once per day (spec
+ * 一). Applies each
  * upgrade's gameplay effect ONLY through the narrow public setters
  * PickupSystem/PlayerController already expose for this purpose — never
  * reaches into their private state (spec三: "UI與升級系統都不得直接修改
@@ -77,36 +83,12 @@ export class UpgradeSystem {
   constructor(pickupSystem: PickupSystem, playerController: PlayerController) {
     this.pickupSystem = pickupSystem;
     this.playerController = playerController;
-    // TEMPORARY TEST RESET — remove before public demo. See
-    // RESET_UPGRADES_ON_PAGE_LOAD's own doc comment (upgrade-data.ts):
-    // discards whatever was on disk and starts fresh every load, without
-    // ever writing a new storage key — a purchase later in THIS session
-    // still calls this.save() normally and persists under the same
-    // UPGRADE_STORAGE_KEY as always.
-    this.state = RESET_UPGRADES_ON_PAGE_LOAD
-      ? createDefaultUpgradeSaveState()
-      : mergeUpgradeSaveState(this.storage.getJSON<UpgradeSaveState>(UPGRADE_STORAGE_KEY));
-    this.applyTestGrantIfNeeded();
+    this.state = mergeUpgradeSaveState(this.storage.getJSON<UpgradeSaveState>(UPGRADE_STORAGE_KEY));
     this.applyAllEffects();
   }
 
-  // TEMPORARY TEST GRANT — remove before public demo. One-time migration
-  // (spec六): a save that predates TEST_GRANT_VERSION gets bumped up to at
-  // least TEST_STARTING_UPGRADE_POINTS, exactly once — saved immediately so
-  // a later reload's testGrantVersion check already matches and skips this
-  // entirely (spec: "之後重新整理不得重複補點"; unrelated to settledDayId's
-  // own once-per-DAY gate, this is once-per-SAVE). A brand-new save is
-  // already at TEST_STARTING_UPGRADE_POINTS with testGrantVersion already
-  // current (see createDefaultUpgradeSaveState), so this is a no-op for it.
-  private applyTestGrantIfNeeded(): void {
-    if (this.state.testGrantVersion === TEST_GRANT_VERSION) return;
-    this.state.upgradePoints = Math.max(this.state.upgradePoints, TEST_STARTING_UPGRADE_POINTS);
-    this.state.testGrantVersion = TEST_GRANT_VERSION;
-    this.save();
-  }
-
-  get upgradePoints(): number {
-    return this.state.upgradePoints;
+  get availableSettlementScore(): number {
+    return this.state.availableSettlementScore;
   }
 
   getLevel(id: UpgradeId): number {
@@ -131,16 +113,17 @@ export class UpgradeSystem {
   }
 
   /** The ONLY way UpgradeMenuUI (or anything else) may change a level —
-   * deducts points, blocks on insufficient points or an already-maxed
-   * upgrade, and never touches any historical settlement record (spec四). */
+   * deducts available settlement score, blocks on insufficient score or an
+   * already-maxed upgrade, and never touches any historical settlement
+   * record (spec一: "歷史每日結算紀錄保留，不因購買而被修改"). */
   purchaseUpgrade(id: UpgradeId): boolean {
     const def = getUpgradeDefinition(id);
     const level = this.state.levels[id];
     if (level >= def.maxLevel) return false;
     const cost = def.costs[level];
-    if (this.state.upgradePoints < cost) return false;
+    if (this.state.availableSettlementScore < cost) return false;
 
-    this.state.upgradePoints -= cost;
+    this.state.availableSettlementScore -= cost;
     this.state.levels[id] = level + 1;
     this.applyEffect(id);
     this.save();
@@ -159,18 +142,19 @@ export class UpgradeSystem {
   }
 
   /** Wired to DailyFlowSystem's own onDayCompleted(finishedDay) hook —
-   * converts this.pendingDayScore into points exactly once per finishedDay
-   * (spec四: "每日結算後只發放一次，重新整理頁面不能重複發放"), guarded by
+   * converts this.pendingDayScore into availableSettlementScore exactly
+   * once per finishedDay (spec一: "每個dayId只能加入一次"), guarded by
    * state.settledDayId so a stale/duplicate fire for a day already
    * processed is a no-op. Actual increase is max(0, dayScore) — a bad day
-   * never deducts previously-earned points (spec四). */
+   * never deducts previously-earned score (spec一: "availableSettlementScore
+   * += max(0, dayFinalScore)"). */
   settleDay(finishedDay: number): void {
     if (this.state.settledDayId === finishedDay) {
       this.pendingDayScore = 0;
       return;
     }
     const awarded = Math.max(0, this.pendingDayScore);
-    this.state.upgradePoints += awarded;
+    this.state.availableSettlementScore += awarded;
     this.state.settledDayId = finishedDay;
     this.pendingDayScore = 0;
     this.save();

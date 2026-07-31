@@ -1,14 +1,14 @@
 import { UpgradeDefinition, UpgradeId } from './upgrade-types';
 
 /** Point value awarded per successfully shipped item (regular cargo or
- * mail) when converting a day's departure settlement into upgrade points
- * (spec四). Deliberately the SAME numeric scale as the existing per-item
+ * mail) when converting a day's departure settlement into spendable score
+ * (spec一). Deliberately the SAME numeric scale as the existing per-item
  * shipping penalties (UNSHIPPED_PENALTY_PER_ITEM etc., scoring-data.ts) so
- * a day's net "upgrade score" — shippedTotal * this constant minus that
+ * a day's net settlement score — shippedTotal * this constant minus that
  * SAME departure's penalty total — reads naturally against those existing
  * numbers instead of inventing an unrelated second scale. This is never
  * applied to the real running settingsManager.progress.score; it only
- * drives UpgradeSystem's own point award (see upgrade-system.ts
+ * drives UpgradeSystem's own settlement-score award (see upgrade-system.ts
  * recordDepartureSettlement/settleDay), computed purely from the
  * DepartureSettlement numbers ScoringSystem already produced for that
  * departure (spec: "不得自行掃描場景，只讀取Scoring/Vehicle System提供的狀
@@ -18,29 +18,9 @@ import { UpgradeDefinition, UpgradeId } from './upgrade-types';
  * daily-flow-data.ts DAILY_CARGO_CONFIG.total / mail-data.ts
  * DAILY_ENVELOPE_COUNT) — a solidly-played day shipping most of that with
  * modest penalties nets roughly 40-90 points at this reward rate, which is
- * the scale the prices below are tuned against (spec四: "第一個便宜升級：約
- * 半天至一天正常分數；高級升級：約一至兩天正常分數"). */
+ * the scale the prices below are tuned against (unchanged this round —
+ * spec: "升級價格維持目前數值，不在本回合重新平衡"). */
 export const UPGRADE_POINT_REWARD_PER_SHIPPED_ITEM = 1;
-
-// TEMPORARY TEST GRANT — remove before public demo. One-time starting
-// upgrade-points grant for testing ("Add sequential lost-found visitors and
-// held cargo feedback" round六: "起始測試點數1000...這是暫時的測試設定").
-// TEST_GRANT_VERSION is the guard upgrade-system.ts's applyTestGrantIfNeeded
-// checks against a save's own `testGrantVersion` — bumping this number is
-// the ONLY way to ever re-grant the points to a save that already has them,
-// so a normal page refresh can never re-apply it.
-export const TEST_STARTING_UPGRADE_POINTS = 1000;
-export const TEST_GRANT_VERSION = 1;
-
-// TEMPORARY TEST RESET — remove before public demo. When true, every page
-// load/game restart discards whatever upgrade save state is on disk and
-// starts fresh at TEST_STARTING_UPGRADE_POINTS with every level at 0 (spec:
-// "每次網頁重新整理／重新啟動遊戲時...忽略上一次保存的技能點數與等級") —
-// see upgrade-system.ts's constructor, the ONE place this is read. Purchases
-// made during a session still save normally (spec: "同一次遊戲期間玩家仍可
-// 正常購買與測試技能"); this only overrides what gets LOADED at startup, and
-// reuses the SAME UPGRADE_STORAGE_KEY rather than introducing a new one.
-export const RESET_UPGRADES_ON_PAGE_LOAD = true;
 
 export const UPGRADE_DEFINITIONS: UpgradeDefinition[] = [
   {

@@ -182,6 +182,11 @@ export class CargoSystem {
     // plain mesh.add() child with no id of its own, so resolveCargoFromObject()
     // walks the parent chain up to THIS mesh to find it (spec 五).
     mesh.userData.cargoId = id;
+    // "Revise score upgrades and fix frog walkable colliders" round spec二A:
+    // multiCarry now only stacks sizeClass='small' cargo — pickup-system.ts's
+    // isExclusiveItem() reads this directly rather than looking up
+    // CargoData through a new cross-system dependency.
+    mesh.userData.cargoSizeClass = preset.sizeClass;
     this.scene.add(mesh);
 
     const data = createDailyCargoData(id, preset, region);
@@ -219,6 +224,7 @@ export class CargoSystem {
     mesh.quaternion.copy(rot);
     mesh.userData.shapeType = 'roller';
     mesh.userData.cargoId = id;
+    mesh.userData.cargoSizeClass = preset.sizeClass;
     this.scene.add(mesh);
 
     const data = createDailyCargoData(id, preset, region);

@@ -10,17 +10,19 @@ interface ActiveMarker {
 }
 
 /**
- * "同類感知" upgrade's own visual (spec五D) — driven ENTIRELY from
- * CargoInspectionSystem's own crosshair raycast result (`currentCargo`,
- * passed in each frame), never a second raycast of its own (spec: "必須沿
- * 用CargoInspectionSystem既有的準心raycast結果，不能新增第二套raycast").
+ * "同類感知" upgrade's own visual — driven by whatever CargoData game-app.ts
+ * passes in as `currentCargo` each frame. "Revise score upgrades and fix
+ * frog walkable colliders" round: that source switched from
+ * CargoInspectionSystem's crosshair raycast target to the player's
+ * CURRENTLY HELD item (spec二D: "手持一件貨物時啟用，不再要求準心先對準貨
+ * 物") — this class itself is unchanged, still no raycast/scan of its own.
  * Ground-marker rings only (spec: "簡單outline/glow/ground marker即可，不
  * 要使用昂貴的粒子系統，不需要複雜動畫") — added directly to the main world
- * scene and cleared after ~2.5s or the instant the crosshair target
- * changes. Only ever matches other CargoSystem entries (same category +
- * region) — envelopes/lost items/mail bags/vehicles live in entirely
- * separate registries this class never reads, so they can never be
- * highlighted by construction, not by an extra filter check.
+ * scene and cleared after ~2.5s or the instant the held item changes. Only
+ * ever matches other CargoSystem entries (same category + region) —
+ * envelopes/lost items/mail bags/vehicles live in entirely separate
+ * registries this class never reads, so they can never be highlighted by
+ * construction, not by an extra filter check.
  */
 export class SimilarCargoHighlight {
   private scene: THREE.Scene;

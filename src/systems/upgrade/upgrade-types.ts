@@ -26,23 +26,25 @@ export interface UpgradeDefinition {
   levelEffects: UpgradeLevelEffect[];
 }
 
-/** Persisted shape (spec六) — reuses the EXISTING LocalStorageAdapter
+/** Persisted shape ("Revise score upgrades and fix frog walkable colliders"
+ * round: 升級資源改為累積結算分數, replacing the old separate "upgrade
+ * points" currency) — reuses the EXISTING LocalStorageAdapter
  * (adapters/local-storage/local-storage-adapter.ts), just under its own
  * key, the same way settings/progress already live under two separate keys
  * through that one adapter class rather than a second incompatible save
  * mechanism. */
 export interface UpgradeSaveState {
-  upgradePoints: number;
+  /** Accumulated, spendable daily-settlement score (spec一: "每日取得的結算
+   * 分數，就是可消耗的升級資源") — the ONE currency upgrades cost against.
+   * Never a second currency alongside score/money; purchases deduct
+   * directly from this. */
+  availableSettlementScore: number;
   levels: Record<UpgradeId, number>;
   /** The day number (DailyFlowSystem's own day id, as it was WHILE that day
    * was still current — i.e. `finishedDay` from DailyFlowSystem's
    * onDayCompleted hook) whose settlement has already been converted into
-   * points. Guards against a page refresh re-awarding the same day's
-   * points twice (spec四). `null` before any day has ever completed. */
+   * score. Guards against a page refresh re-awarding the same day's score
+   * twice (spec一: "每個dayId只能加入一次"). `null` before any day has ever
+   * completed. */
   settledDayId: number | null;
-  // TEMPORARY TEST GRANT — remove before public demo. null for any save
-  // that predates the test-points grant (upgrade-system.ts's
-  // applyTestGrantIfNeeded uses this to apply it exactly once — see
-  // upgrade-data.ts's TEST_GRANT_VERSION doc comment).
-  testGrantVersion: number | null;
 }

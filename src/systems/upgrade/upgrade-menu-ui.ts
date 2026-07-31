@@ -31,7 +31,7 @@ export class UpgradeMenuUI {
       <div class="upgrade-menu-panel">
         <button id="upgrade-menu-close-btn" aria-label="關閉公告欄">✕</button>
         <h2 class="upgrade-menu-title">物流中心公告欄</h2>
-        <p class="upgrade-menu-points">可用升級點數：<span id="upgrade-points-value">0</span></p>
+        <p class="upgrade-menu-points">可用結算分數：<span id="upgrade-points-value">0</span></p>
         <div class="upgrade-menu-list"></div>
       </div>
     `;
@@ -97,13 +97,13 @@ export class UpgradeMenuUI {
   }
 
   private render(): void {
-    this.pointsEl.textContent = String(this.upgradeSystem.upgradePoints);
+    this.pointsEl.textContent = String(this.upgradeSystem.availableSettlementScore);
 
     const rows = this.upgradeSystem.getDefinitions().map((def) => {
       const level = this.upgradeSystem.getLevel(def.id);
       const maxed = this.upgradeSystem.isMaxed(def.id);
       const nextCost = this.upgradeSystem.getNextCost(def.id);
-      const affordable = nextCost !== null && this.upgradeSystem.upgradePoints >= nextCost;
+      const affordable = nextCost !== null && this.upgradeSystem.availableSettlementScore >= nextCost;
       const nextEffect = !maxed ? def.levelEffects[level + 1].description : '';
 
       return `
@@ -118,7 +118,7 @@ export class UpgradeMenuUI {
             ? '<p class="upgrade-row-maxed">已滿級</p>'
             : `
               <p class="upgrade-row-next">下一級效果：${nextEffect}</p>
-              <button class="upgrade-buy-btn" data-buy-upgrade="${def.id}" ${affordable ? '' : 'disabled'}>升級（花費 ${nextCost}）</button>
+              <button class="upgrade-buy-btn" data-buy-upgrade="${def.id}" ${affordable ? '' : 'disabled'}>升級（消耗 ${nextCost} 分）</button>
             `}
         </div>`;
     }).join('');

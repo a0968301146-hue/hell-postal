@@ -82,8 +82,8 @@ export class PickupSystem implements PickupPort {
    * visually overlap/jitter against each other ("Add bulletin board upgrade
    * system" round spec五A: "手持物品之間不能互相碰撞或抖動") — a fixed,
    * simple layout rather than a collision-aware one, adequate since
-   * multi-carry-eligible items are always small/medium (large/live cargo
-   * is exclusive — see isExclusiveItem). */
+   * multi-carry-eligible items are always small cargo (everything else is
+   * exclusive — see isExclusiveItem). */
   private readonly HELD_SLOT_OFFSETS: THREE.Vector3[] = [
     new THREE.Vector3(0, 0, 0),
     new THREE.Vector3(0.34, -0.06, 0.2),
@@ -194,14 +194,16 @@ export class PickupSystem implements PickupPort {
     this.maxCarryCapacity_ = Math.max(1, n);
   }
 
-  /** shapeType is only ever 'large' or 'cage' for daily cargo (see
-   * cargo-system.ts spawnDailyBox/spawnDailyRoller) — both occupy the FULL
-   * carry capacity exclusively (spec五A: "大型貨物與活體鐵籠佔滿容量，不可
-   * 與其他物品同時持有"), never combinable with anything else in either
-   * direction. */
+  /** "Revise score upgrades and fix frog walkable colliders" round spec二A:
+   * multiCarry now ONLY stacks sizeClass='small' Cargo — every other object
+   * occupies the FULL carry capacity exclusively, never combinable with
+   * anything else in either direction: medium/large cargo, live cages,
+   * envelopes, mail boxes, lost items, and the sorting pallet (none of
+   * those set `mesh.userData.cargoSizeClass`, since only cargo-system.ts's
+   * spawnDailyBox/spawnDailyRoller ever do — so this same single check
+   * naturally covers all of them without listing each one by name). */
   private isExclusiveItem(obj: InteractableObject): boolean {
-    const shapeType = obj.mesh.userData.shapeType;
-    return shapeType === 'large' || shapeType === 'cage';
+    return obj.mesh.userData.cargoSizeClass !== 'small';
   }
 
   private isCurrentHoldExclusive(): boolean {
