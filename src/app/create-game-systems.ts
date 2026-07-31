@@ -368,7 +368,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   const toolSystem = new ToolSystem(playerData, hud, pauseManager, () => playerController.isLocked);
   const cargoHookSystem = new CargoHookSystem(
     camera, scene, pickupSystem.viewModelScene, physics, interactables, cargoSystem,
-    playerData, hud, pauseManager, dailyFlowSystem, () => playerController.isLocked
+    playerData, hud, pauseManager, dailyFlowSystem, pickupSystem, toolSystem, () => playerController.isLocked
   );
 
   // Interaction system

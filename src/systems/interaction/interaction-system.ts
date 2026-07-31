@@ -133,6 +133,11 @@ export class InteractionSystem {
     if (event.button !== 2) return;
     if (!this.isLocked()) return;
     if (this.pauseManager.isPaused) return;
+    // "Improve cargo hook aerial pickup" round spec一: right-click is now
+    // the cargo hook's own fire trigger (see cargo-hook-system.ts's own
+    // separate mousedown listener) — this existing mail-bag-envelope-take
+    // action must not also fire while it's selected.
+    if (this.playerData.activeTool === 'cargoHook') return;
     if (this.playerData.state !== 'empty-handed' && this.playerData.state !== 'holding-item') return;
     if (!this.currentTarget || !this.mailBagSystem.isBag(this.currentTarget.id)) return;
     const bagId = this.currentTarget.id;
@@ -166,11 +171,9 @@ export class InteractionSystem {
     // or (legacy, dead while ENABLE_LEGACY_MAIL_FLOW is false) take an
     // envelope from the old crate.
     if (event.code === 'KeyF') {
-      // "Add tool hotbar and cargo hook" round spec三: while the cargo hook
-      // is the selected tool, F ONLY fires the hook (see
-      // cargo-hook-system.ts's own separate KeyF listener) — this legacy
-      // mail-bag-cycle/envelope-crate action must not also fire.
-      if (this.playerData.activeTool === 'cargoHook') return;
+      // "Improve cargo hook aerial pickup" round spec一: the cargo hook's
+      // trigger moved to right-click — F is fully restored to this existing
+      // handler regardless of which tool is selected.
       if (this.playerData.state !== 'empty-handed') return;
       if (this.currentTarget && this.mailBagSystem.isBag(this.currentTarget.id)) {
         this.mailBagSystem.cyclePattern(this.currentTarget.id);
