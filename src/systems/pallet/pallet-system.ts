@@ -249,6 +249,14 @@ export class PalletSystem implements PalletThrowHooks {
     for (let i = -1; i <= 1; i++) {
       const slat = new THREE.Mesh(new THREE.BoxGeometry(width * 0.9, 0.02, depth * 0.12), slatMat);
       slat.position.set(0, height / 2 + 0.01, i * depth * 0.3);
+      // "Fix cargo placement on pallet surface" round: tagged the same as
+      // the base board — PickupSystem's placement raycast is recursive, so
+      // a ray aimed at the pallet's top very often hits one of these raised
+      // slats FIRST rather than the board underneath it. Without this tag,
+      // that hit was silently falling through every 'pallet-top' special
+      // case (support-pallet collider/box3 exclusion, the edge-containment
+      // check) exactly as if the player had aimed at open floor.
+      slat.userData.surfaceType = 'pallet-top';
       mesh.add(slat);
     }
 
@@ -295,6 +303,12 @@ export class PalletSystem implements PalletThrowHooks {
 
     mesh.updateMatrixWorld(true);
     this.updateLabelFollow();
+    // "Fix cargo placement on pallet surface" round: establishes the
+    // rope straps' correct near-zero initial scale immediately (see
+    // updateRopeVisual's own doc comment for why this matters) — without
+    // this, they'd sit at BoxGeometry(1,1,1)'s literal default 1x1x1m scale
+    // until the player picks the pallet up at least once.
+    this.updateRopeVisual();
     return mesh;
   }
 
@@ -389,11 +403,40 @@ export class PalletSystem implements PalletThrowHooks {
    * bounds of every currently-bound item (spec六) — reuses whichever
    * position source is fresh: the live `pinned` local transform while
    * carrying, or the item's own current world position (converted into the
-   * pallet's local space) once placed. Hidden whenever nothing is bound. */
+   * pallet's local space) once placed. Hidden whenever nothing is bound.
+   *
+   * "Fix cargo placement on pallet surface" round — ROOT CAUSE of the
+   * regression this fixes: whenever hidden, this must ALSO shrink `.scale`
+   * to near-zero, not just toggle `.visible`. THREE.Box3.setFromObject()
+   * (used by PickupSystem.validatePlacement()'s overlap check against every
+   * OTHER interactable, including the pallet) traverses ALL descendants
+   * regardless of `.visible` — the straps are `topMesh`'s children (spec六:
+   * "繩索為托盤主Mesh的子物件"), built from a literal `BoxGeometry(1,1,1)`
+   * and left at THREE's default (1,1,1) scale until the FIRST bind actually
+   * sizes them. Before that (a pallet the player hasn't touched yet, or one
+   * that's just been unbound) they were still contributing a full 1×1×1m
+   * bounding volume to the pallet's own computed Box3, inflating it far
+   * beyond the pallet's real footprint and making ANY nearby placement
+   * preview read as overlapping it, unconditionally.
+   *
+   * Also reset `.position` back to the pallet's own local origin here — a
+   * pallet that's been bound (and thus had its straps repositioned to span
+   * the bound cargo, e.g. up near a stacked item's height) and then unbound
+   * left the now-tiny-scaled straps sitting at that STALE off-center
+   * position. Even shrunk to near-zero size, a box still displaced that far
+   * from the board still drags the union Box3 out to include that point,
+   * reproducing the same inflated-bounds bug one level down (confirmed via
+   * a headless test: box3 Y-size stayed inflated to ~0.54m, matching the
+   * strap's leftover y-position near the last bound cargo's height, even
+   * though its size alone was already negligible). */
   private updateRopeVisual(): void {
     if (!this.isRopeBound || this.boundCargoIds.length === 0) {
       this.ropeVisualX.visible = false;
       this.ropeVisualZ.visible = false;
+      this.ropeVisualX.scale.set(0.001, 0.001, 0.001);
+      this.ropeVisualZ.scale.set(0.001, 0.001, 0.001);
+      this.ropeVisualX.position.set(0, 0, 0);
+      this.ropeVisualZ.position.set(0, 0, 0);
       return;
     }
 
@@ -948,6 +991,13 @@ export class PalletSystem implements PalletThrowHooks {
 
   isPallet(obj: InteractableObject): boolean {
     return obj.id === this.palletId;
+  }
+
+  /** PalletThrowHooks — "Fix cargo placement on pallet surface" round
+   * spec五: lets PickupSystem refuse new cargo placement onto an already
+   * rope-bound pallet with the specific "請先解除固定繩" toast. */
+  isPalletRopeBound(obj: InteractableObject): boolean {
+    return obj.id === this.palletId && this.isRopeBound;
   }
 
   /** Called by pickup-system.ts's executeThrow() BEFORE it applies any

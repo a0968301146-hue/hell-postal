@@ -265,14 +265,20 @@ export class PhysicsSystem implements PhysicsWorldPort {
    * (PickupSystem's throw-spot-blocked check, UnloadingSystem's spawn-
    * clearance check) outside this round's scope — this one is used ONLY by
    * PickupSystem.validatePlacement's new static-geometry check. */
-  castShapeAgainstStaticAndBox(position: THREE.Vector3, halfExtents: THREE.Vector3): boolean {
+  castShapeAgainstStaticAndBox(position: THREE.Vector3, halfExtents: THREE.Vector3, excludeRigidBody?: RAPIER.RigidBody): boolean {
     if (!this.initialized) return false;
     const shape = new RAPIER.Cuboid(halfExtents.x - 0.01, halfExtents.y - 0.01, halfExtents.z - 0.01);
     const shapePos = { x: position.x, y: position.y, z: position.z };
     const shapeRot = { x: 0, y: 0, z: 0, w: 1 };
+    // "Fix cargo placement on pallet surface" round: optional exclude, used
+    // ONLY so a pallet being placed onto doesn't block its own supporting
+    // surface (spec二: "托盤本身是本次放置的支撐物，不可被判定為阻擋碰撞...
+    // 只忽略目前命中的支撐托盤Collider") — every other GROUP_BOX/static
+    // collider (other cargo, walls, shelves) is still checked normally.
     const hit = this.world.intersectionWithShape(
       shapePos, shapeRot, shape, undefined,
-      (GROUP_BOX << 16) | (GROUP_STATIC | GROUP_BOX)
+      (GROUP_BOX << 16) | (GROUP_STATIC | GROUP_BOX),
+      undefined, excludeRigidBody
     );
     return hit !== null;
   }

@@ -42,6 +42,13 @@ export interface MailBoxCarryHooks {
  * from create-game-systems.ts. */
 export interface PalletThrowHooks {
   isPallet(obj: InteractableObject): boolean;
+  /** "Fix cargo placement on pallet surface" round spec五: an already
+   * rope-bound pallet must refuse any NEW cargo placed on it (bound cargo's
+   * relative arrangement is the whole point of the rope) until the player
+   * unbinds it again — checked once per placement-preview frame so
+   * updatePlacementPreview can short-circuit straight to invalid+the
+   * dedicated toast, without needing its own isRopeBound-shaped field. */
+  isPalletRopeBound(obj: InteractableObject): boolean;
   prepareForThrow(obj: InteractableObject): void;
   onThrown(obj: InteractableObject, linearVelocity: THREE.Vector3, angularVelocity: THREE.Vector3): void;
 }
@@ -56,6 +63,12 @@ export interface PalletThrowHooks {
 const HELD_ANCHOR_X = 0;
 const HELD_ANCHOR_Y = -0.35;
 const HELD_ANCHOR_Z = -0.85;
+
+/** "Fix cargo placement on pallet surface" round spec三: how far a placed
+ * item's rotated enclosing footprint may hang past the supporting pallet's
+ * own edge and still be allowed ("小幅貼近邊緣可允許") — see
+ * validatePlacement's pallet-containment check. */
+const PALLET_EDGE_TOLERANCE = 0.12;
 
 /** A medium item's own rough footprint (matches cargo-shape-presets.ts's
  * 'medium-box', ~0.4m) — distanceForSize()'s own reference point: items
@@ -138,6 +151,12 @@ export class PickupSystem implements PickupPort {
    * Reset to 0 on cancel/confirm/entering a fresh preview (spec一: "取消放
    * 置、換物品或成功放下後，清除本次placementYaw"). */
   private placementYaw = 0;
+  /** "Fix cargo placement on pallet surface" round spec五: set true for the
+   * one frame updatePlacementPreview finds the aimed-at support surface is
+   * an already rope-bound pallet — confirmPlacement checks this FIRST (ahead
+   * of the generic previewValid gate) so it can show the specific "請先解除
+   * 固定繩" toast instead of silently doing nothing. */
+  private previewBlockedByBoundPallet = false;
 
   // Charge/throw
   private isCharging = false;
@@ -786,6 +805,13 @@ export class PickupSystem implements PickupPort {
 
   confirmPlacement(): void {
     if (this.playerData.state !== 'placement-preview') return;
+    // "Fix cargo placement on pallet surface" round spec五: checked ahead of
+    // the generic previewValid gate below so the player gets the specific
+    // reason ("請先解除固定繩") instead of the placement silently no-oping.
+    if (this.previewBlockedByBoundPallet) {
+      this.hud.showToast('請先解除固定繩');
+      return;
+    }
     if (!this.previewValid || !this.previewMesh) return;
     if (!this.playerData.heldObjectId) return;
 
@@ -1036,6 +1062,7 @@ export class PickupSystem implements PickupPort {
     if (!obj) return;
 
     this.previewIsLostFoundShelf = false;
+    this.previewBlockedByBoundPallet = false;
 
     const direction = new THREE.Vector3();
     this.camera.getWorldDirection(direction);
@@ -1096,6 +1123,25 @@ export class PickupSystem implements PickupPort {
     // prompt/confirm-input below can special-case it — every other surface
     // (floor, tables, pallet, cargo) leaves this false, unaffected.
     this.previewIsLostFoundShelf = !!hit.object.userData.lostFoundShelf;
+
+    // "Fix cargo placement on pallet surface" round spec二/五: identify the
+    // pallet as the CURRENTLY-HIT support (via its own 'pallet-top' tag —
+    // see pallet-system.ts build()) so it can be (a) excluded from blocking
+    // its own placement in validatePlacement, and (b) checked for an
+    // already-bound state that should refuse new cargo outright.
+    let supportPalletObj: InteractableObject | null = null;
+    if (hit.object.userData.surfaceType === 'pallet-top') {
+      for (const other of this.interactables.values()) {
+        // The raycast hit is often one of the pallet's own decorative slat
+        // children (tagged the same way, see pallet-system.ts build()),
+        // not the base board mesh itself — match either.
+        if (other.mesh === hit.object || hit.object.parent === other.mesh) { supportPalletObj = other; break; }
+      }
+    }
+    this.previewBlockedByBoundPallet = !!(
+      supportPalletObj && this.palletThrowHooks?.isPalletRopeBound(supportPalletObj)
+    );
+
     let worldNormal = new THREE.Vector3(0, 1, 0);
     if (hit.face) {
       worldNormal = hit.face.normal.clone();
@@ -1124,7 +1170,9 @@ export class PickupSystem implements PickupPort {
     this.previewMesh.rotation.set(0, this.placementYaw, 0);
     this.previewMesh.visible = true;
 
-    this.previewValid = this.validatePlacement(this.previewMesh.position, obj);
+    this.previewValid = this.previewBlockedByBoundPallet
+      ? false
+      : this.validatePlacement(this.previewMesh.position, obj, supportPalletObj);
     const mat = this.previewMesh.material as THREE.MeshStandardMaterial;
     mat.color.setHex(this.previewValid ? 0x00ff00 : 0xff0000);
     // "Fix hollow lost found cabinet placement" round 二: a dedicated
@@ -1138,7 +1186,7 @@ export class PickupSystem implements PickupPort {
     }
   }
 
-  private validatePlacement(position: THREE.Vector3, obj: InteractableObject): boolean {
+  private validatePlacement(position: THREE.Vector3, obj: InteractableObject, supportObj?: InteractableObject | null): boolean {
     const rawHalfW = obj.width / 2;
     const halfH = obj.height / 2;
     const rawHalfD = obj.depth / 2;
@@ -1159,6 +1207,33 @@ export class PickupSystem implements PickupPort {
     if (position.x - halfW < WORLD_BOUNDS.minX || position.x + halfW > WORLD_BOUNDS.maxX ||
         position.z - halfD < WORLD_BOUNDS.minZ || position.z + halfD > WORLD_BOUNDS.maxZ) return false;
 
+    // "Fix cargo placement on pallet surface" round spec三: since the
+    // supporting pallet is now excluded from the generic obstruction checks
+    // below (it's the surface being placed ON, not a blocker), nothing else
+    // was left to stop cargo from being placed hanging halfway off the
+    // pallet's own edge whenever no OTHER object happens to be in the way.
+    // Converts the planned position into the pallet's own local space
+    // (accounting for its current Y rotation) and checks the placed item's
+    // rotated enclosing footprint against the pallet's real half-extents
+    // (supportObj.width/depth — the same values PALLET_CONFIG built its
+    // collider from). PALLET_EDGE_TOLERANCE allows a small near-edge
+    // overhang rather than demanding the full enclosing-AABB fit inside
+    // (spec三: "小幅貼近邊緣可允許，不要要求整個旋轉外接AABB必須過度內縮") —
+    // only a CLEAR overshoot past that tolerance is rejected.
+    if (supportObj) {
+      const palletYaw = new THREE.Euler().setFromQuaternion(supportObj.mesh.quaternion, 'YXZ').y;
+      const dx = position.x - supportObj.mesh.position.x;
+      const dz = position.z - supportObj.mesh.position.z;
+      const cosP = Math.cos(-palletYaw);
+      const sinP = Math.sin(-palletYaw);
+      const localX = dx * cosP - dz * sinP;
+      const localZ = dx * sinP + dz * cosP;
+      const palletHalfW = supportObj.width / 2;
+      const palletHalfD = supportObj.depth / 2;
+      if (Math.abs(localX) + halfW - PALLET_EDGE_TOLERANCE > palletHalfW) return false;
+      if (Math.abs(localZ) + halfD - PALLET_EDGE_TOLERANCE > palletHalfD) return false;
+    }
+
     // Player overlap
     const dx = position.x - this.camera.position.x;
     const dz = position.z - this.camera.position.z;
@@ -1173,6 +1248,11 @@ export class PickupSystem implements PickupPort {
 
     for (const other of this.interactables.values()) {
       if (other.id === obj.id || other.isHeld || !other.mesh.visible) continue;
+      // "Fix cargo placement on pallet surface" round spec二: the pallet
+      // currently being placed ONTO is this placement's own support, not an
+      // obstruction — every OTHER interactable (other cargo already on the
+      // pallet, walls, shelves) is still checked normally below.
+      if (supportObj && other.id === supportObj.id) continue;
       const otherBox = new THREE.Box3().setFromObject(other.mesh);
       if (placementBox.intersectsBox(otherBox)) return false;
     }
@@ -1193,7 +1273,9 @@ export class PickupSystem implements PickupPort {
     // margin both methods share keeps that "resting exactly on top of X"
     // case from ever being misread as overlap — this only ever catches a
     // genuine collision with solid geometry.
-    if (this.physics.castShapeAgainstStaticAndBox(position, new THREE.Vector3(halfW, halfH, halfD))) return false;
+    if (this.physics.castShapeAgainstStaticAndBox(
+      position, new THREE.Vector3(halfW, halfH, halfD), supportObj?.rigidBody ?? undefined
+    )) return false;
 
     return true;
   }
