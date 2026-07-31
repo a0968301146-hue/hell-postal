@@ -151,35 +151,40 @@ const LAND_VEHICLE_BASE_CONFIGS: VehicleConfig[] = [
     id: FROG_VEHICLE_CONFIG_ID,
     vehicleType: 'land',
     displayName: '青蛙',
-    // "Enlarge frog cargo mouth and route clearance" round: the basin was
-    // too small to physically hold the daily domestic quota (10 一般 + 10
-    // 易碎 = 20 real items, cargo-manifest-data.ts's DAILY_CARGO_REGION_QUOTA)
-    // — grown almost entirely via WIDTH/DEPTH, height barely touched (spec
-    // 一: "不要大幅增加高度"; final cargoAreaHeight 1.2, up from 0.9). Width
-    // is hard-capped by the 石頭巨人 neighbor slot (vehicle-dock-data.ts:
-    // rockgiant spans x -1.95..1.95) — this config's final cargoAreaWidth
-    // 2.8 (half 1.4) plus buildFrogVehicle's own wall/lid outer-face margin
-    // (0.04) reaches a real half-width of 1.44, leaving the frog's right
-    // edge at -3.7+1.44=-2.26, a 0.31m gap to rockgiant's -1.95 edge (spec
-    // 三: "每側保留約0.3m"). Depth has far more headroom (the south wall's
-    // LAND_GATE opening spans the whole -6..6, fully open at this X — see
-    // buildFrogVehicle's own doc comment) so it's the primary capacity
-    // lever. final cargoAreaLength 7.6 (2.8×7.6=21.28m² basin footprint) was
-    // arrived at empirically, not just by average-footprint arithmetic: a
-    // real 20-item stress spawn (4 medium-box + 3 wooden-barrel + 3 spool +
-    // 3 medium-fragile-box + 3 alchemy-glassware-crate + 2 ceramic-crate + 2
-    // magic-lamp-crate, biased toward each category's LARGEST presets, real
-    // Rapier box/cylinder colliders, no shrinking) settled with every item
-    // resting stably inside cargoBayBounds using a width-first best-fit
-    // layout needing ~6.5m of packed depth — 7.6m leaves real slack above
-    // that (both for "裝滿後仍保留基本整理空間" and for a less-favorable
-    // random daily draw than this deliberately large-biased test).
+    // "Rebuild frog vehicle from concept sketch" round: mesh completely
+    // rebuilt as a rounded creature (see vehicle-system.ts's own
+    // buildFrogVehicle — frogRoot/fixedBody/lowerHeadAndJaw/upperHeadShell/
+    // eyes/legs, no more flat box walls), but the FOOTPRINT budget reasoning
+    // carries over unchanged from the previous round: width is still
+    // hard-capped by the 石頭巨人 neighbor slot (vehicle-dock-data.ts:
+    // rockgiant spans x -1.95..1.95) — final cargoAreaWidth 2.8 (half 1.4)
+    // plus buildFrogVehicle's own shell-wall outer-face margin (0.04)
+    // reaches a real half-width of 1.44, leaving the frog's right edge at
+    // -3.7+1.44=-2.26, a 0.31m gap to rockgiant's -1.95 edge (spec九: "每側
+    // 至少保留0.3m"). This is DELIBERATELY narrower than this round's own
+    // suggested "寬約6.0m" starting point (spec五) — a 6.0m-wide frog
+    // centered at x=-3.7 would span into x=-0.7, physically overlapping
+    // rockgiant's own -1.95..1.95 footprint by 1.25m once both are docked
+    // simultaneously (all six vehicles dock at once, vehicle-control-
+    // system.ts) — spec五 itself invites "依實際測試調整", and this is the
+    // adjustment. cargoAreaLength is set to 4.4 (close to this round's own
+    // suggested depth of ~4.0m, not inflated for capacity) -- an earlier
+    // attempt at this round reused 7.6 from the previous round's flat-wall
+    // basin to guarantee single-layer capacity, but at this width budget
+    // that produces a badly elongated slug/tube silhouette, failing the
+    // sketch's round-head requirement. 4.4 keeps the head's own aspect
+    // ratio close to the sketch (roughly 1.5-1.6x longer than wide, not
+    // 2.7x); the resulting single-layer footprint shortfall is absorbed by
+    // cargoAreaHeight (1.7, this round's own suggested figure), giving
+    // genuine room for stacking -- verified empirically against a real
+    // 20-item spawn. Overall exterior height stays low (final 2.4) -- no
+    // capacity is bought by making the CREATURE taller, only its cavity.
     width: 1.9333,
-    length: 5.6,
-    height: 1.2667,
+    length: 4.1333,
+    height: 1.6,
     cargoAreaWidth: 1.8667,
-    cargoAreaLength: 5.0667,
-    cargoAreaHeight: 0.8,
+    cargoAreaLength: 2.9333,
+    cargoAreaHeight: 1.1333,
     dockPosition: LAND_DOCK_SLOTS['land-frog-01'].dockPosition,
     spawnPosition: LAND_DOCK_SLOTS['land-frog-01'].spawnPosition,
     exitPosition: LAND_DOCK_SLOTS['land-frog-01'].exitPosition,
