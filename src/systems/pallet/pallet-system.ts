@@ -33,6 +33,11 @@ const CARRY_MAX_ABOVE_EYE = 0.35;
  * the natural clearance CARRY_BASE_FORWARD_DIST already provides. */
 const MIN_CAMERA_CLEARANCE = 0.6;
 
+/** How high above the pallet's local top surface `uiAnchor` sits ("Fix
+ * pallet visual and interaction UI following" round spec三: "uiAnchor位於
+ * 托盤中心上方約0.3～0.5m"). */
+const UI_ANCHOR_HEIGHT_ABOVE_TOP = 0.4;
+
 /** Stable id for the one pallet this round — exported so other systems that
  * need to recognize "is this the pallet" (VehicleControlSystem's departure
  * logic, PickupSystem's no-throw guard) can do so with a plain string
@@ -53,14 +58,43 @@ interface PinnedCargoEntry {
  * Priority-1 branch — see interaction-system.ts), NOT a second independent
  * input system.
  *
+ * SINGLE MODEL HIERARCHY ("Fix pallet visual and interaction UI following"
+ * round) — `topMesh` (the base board) IS the hierarchy root: the three
+ * decorative top slats and `uiAnchor` are its CHILDREN at fixed LOCAL
+ * offsets, added once in build() and never re-added or re-parented again.
+ * `topMesh` itself is deliberately kept as the ONLY THREE.Object3D ever
+ * added to the scene for the whole pallet (spec一: "場景中只add一次
+ * [root]") and the ONLY one whose position/rotation this class ever writes
+ * (spec二: "拾取、手持、放置、旋轉時只更新[root]transform") — moving it
+ * carries the slats and uiAnchor along for free via normal Three.js
+ * parent-child propagation, which is the ROOT FIX for the bug this round
+ * addresses (previously the three slats were each independently
+ * `scene.add()`-ed at absolute world coordinates and never touched again
+ * after that, so they visibly stayed behind at the pallet's original spawn
+ * position while `topMesh` moved away during carry).
+ *
+ * A separate wrapper THREE.Group was deliberately NOT used here even though
+ * the spec names one "palletRoot": `InteractableObject.mesh` is typed as a
+ * concrete THREE.Mesh (with a `.material`) that vehicle-control-system.ts's
+ * departure flow — completely out of this round's scope — directly
+ * translates via `cargo.mesh.position.x/z +=` while the pallet rides along
+ * pinned to a departing vehicle (see vehicle-system.ts's moveToward()).
+ * Swapping in a Group there would have silently broken that unrelated,
+ * untouched code path. Parenting the slats/uiAnchor under `topMesh` itself
+ * satisfies every one of this round's own requirements (single object added
+ * to the scene, children at local offsets, one authoritative transform
+ * update site) while staying fully compatible with it — moveToward()'s
+ * direct mesh.position mutation now correctly carries the slats along too,
+ * for the same structural reason the player-carry path does.
+ *
  * SINGLE SOURCE OF TRUTH while held ("Fix pallet pickup and placement
  * state" round): every frame, updateCarry() computes ONE authoritative
  * target transform and writes it to BOTH the kinematic rigid body (via
- * setNextKinematicTranslation/Rotation, so the collider tracks the mesh —
- * spec 二) and the Three.js mesh, from the exact same numbers. Nothing else
- * ever touches obj.mesh.position/quaternion for the pallet or its pinned
- * cargo while isHeld is true — the generic per-frame physics-to-mesh sync
- * loop in game.ts already skips any InteractableObject with isHeld=true.
+ * setNextKinematicTranslation/Rotation, so the collider tracks `topMesh` —
+ * spec 二) and `topMesh` itself, from the exact same numbers. Nothing else
+ * ever touches `topMesh`'s position/quaternion (or any of its children's)
+ * while isHeld is true — the generic per-frame physics-to-mesh sync loop in
+ * game.ts already skips any InteractableObject with isHeld=true.
  *
  * This class also owns `playerData.state`/`heldObjectId` directly for its
  * own pickup/place transitions (rather than InteractionSystem juggling
@@ -84,6 +118,16 @@ export class PalletSystem {
   private palletObj!: InteractableObject;
   private body!: RAPIER.RigidBody;
   private homePos: THREE.Vector3;
+
+  /** Local-only reference point ~0.3-0.5m above the pallet's own top
+   * surface, a child of `topMesh` (spec三) — never itself moved after
+   * construction; the floating "整理托盤" label reads its LIVE world
+   * position from this every frame instead (see updateLabelFollow()) rather
+   * than being parented directly, so hiding it while held/not-visible is a
+   * plain visibility toggle rather than a reparent/unparent dance. */
+  private uiAnchor!: THREE.Object3D;
+  private floatingLabel!: THREE.Sprite;
+  private labelWorldPosScratch = new THREE.Vector3();
 
   private stableTimers: Map<string, number> = new Map();
   private hasFiredUse = false;
@@ -137,29 +181,43 @@ export class PalletSystem {
     const centerY = floorY + height / 2;
     this.homePos.y = centerY;
 
+    // The base board is the hierarchy root (see class doc comment for why
+    // this is `topMesh` itself rather than a separate wrapper Group) — the
+    // ONLY object ever added to the scene for the whole pallet (spec一:
+    // "場景中只add一次[root]").
     const woodMat = new THREE.MeshStandardMaterial({ color: 0xa87a42 });
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), woodMat);
     mesh.position.set(posX, centerY, posZ);
-    this.scene.add(mesh);
     mesh.userData.surfaceType = 'pallet-top';
+    this.scene.add(mesh);
 
-    // A few raised slat lines across the top — purely cosmetic.
+    // A few raised slat lines across the top — purely cosmetic, LOCAL
+    // offsets relative to the base board's own origin (previously each was
+    // independently `scene.add()`-ed at absolute world coordinates, which is
+    // exactly why they never moved with the pallet — spec一/二).
     const slatMat = new THREE.MeshStandardMaterial({ color: 0x8a6234 });
     for (let i = -1; i <= 1; i++) {
       const slat = new THREE.Mesh(new THREE.BoxGeometry(width * 0.9, 0.02, depth * 0.12), slatMat);
-      slat.position.set(posX, centerY + height / 2 + 0.01, posZ + i * depth * 0.3);
-      this.scene.add(slat);
+      slat.position.set(0, height / 2 + 0.01, i * depth * 0.3);
+      mesh.add(slat);
     }
 
-    const label = createFloatingLabel('整理托盤', { width: 0.7, bg: 'rgba(30,25,15,0.75)' });
-    label.position.set(posX, centerY + 0.9, posZ);
-    this.scene.add(label);
+    this.uiAnchor = new THREE.Object3D();
+    this.uiAnchor.position.set(0, height / 2 + UI_ANCHOR_HEIGHT_ABOVE_TOP, 0);
+    mesh.add(this.uiAnchor);
+
+    // The floating "整理托盤" label stays a top-level scene object (spec三:
+    // read uiAnchor's WORLD position every frame — see updateLabelFollow()
+    // — rather than being parented under the base board directly), so
+    // hiding it is a plain visibility toggle.
+    this.floatingLabel = createFloatingLabel('整理托盤', { width: 0.7, bg: 'rgba(30,25,15,0.75)' });
+    this.scene.add(this.floatingLabel);
 
     // Kinematic body — immune to being knocked/tipped by cargo landing on
     // it while parked, only moves when this system explicitly drives it
     // (carry-follow while held, or the end-of-day reset). Stays ENABLED at
-    // all times (including while held) so the collider always tracks the
-    // mesh 1:1 — see class doc comment on "single source of truth".
+    // all times (including while held) so the collider always tracks
+    // `topMesh` 1:1 — see class doc comment on "single source of truth".
     const bodyDesc = this.physics.createKinematicBodyDesc(posX, centerY, posZ);
     const body = this.physics.createKinematicBody(bodyDesc);
     this.physics.addColliderToBody(body, 0, 0, 0, width / 2, height / 2, depth / 2);
@@ -172,6 +230,9 @@ export class PalletSystem {
     mesh.userData.noThrow = true;
     this.interactables.set(this.palletId, obj);
     this.palletObj = obj;
+
+    mesh.updateMatrixWorld(true);
+    this.updateLabelFollow();
     return mesh;
   }
 
@@ -191,6 +252,23 @@ export class PalletSystem {
     return mesh;
   }
 
+  /** Keeps the floating "整理托盤" label glued to `uiAnchor`'s LIVE world
+   * position every frame (spec三: "每幀讀取uiAnchor.getWorldPosition()...
+   * 不要保存建立時的固定世界座標"), hidden while held (spec三: "托盤被手持
+   * 期間隱藏互動UI...放下並重新可互動後才恢復顯示" — `isHeld` already IS
+   * "not yet placed/interactable again", so a plain visibility toggle on
+   * that flag satisfies both halves of this requirement) and ALSO hidden
+   * whenever the pallet itself isn't visible (e.g. riding away pinned to a
+   * departing vehicle, which sets `topMesh.visible = false` — see
+   * vehicle-system.ts's onDeparting — entirely outside this round's scope
+   * but worth not leaving an orphaned floating label behind for). */
+  private updateLabelFollow(): void {
+    this.floatingLabel.visible = !this.isHeld && this.palletObj.mesh.visible;
+    if (!this.floatingLabel.visible) return;
+    this.uiAnchor.getWorldPosition(this.labelWorldPosScratch);
+    this.floatingLabel.position.copy(this.labelWorldPosScratch);
+  }
+
   update(deltaTime: number, cameraPosition?: THREE.Vector3, cameraForward?: THREE.Vector3): void {
     if (this.pendingCargoRestore.length > 0) {
       for (const obj of this.pendingCargoRestore) {
@@ -201,8 +279,10 @@ export class PalletSystem {
 
     if (this.isHeld) {
       if (cameraPosition && cameraForward) this.updateCarry(cameraPosition, cameraForward);
+      this.updateLabelFollow();
       return;
     }
+    this.updateLabelFollow();
     this.updateOrganizeScan(deltaTime);
   }
 
@@ -333,6 +413,7 @@ export class PalletSystem {
     this.playerData.state = 'holding-item';
     this.playerData.heldObjectId = this.palletId;
     this.hud.showInteractionPrompt('整理托盤', 'E：放置整理托盤');
+    this.updateLabelFollow();
 
     // Position it in front of the player immediately, not one frame late.
     this.updateCarry(cameraPosition, cameraForward);
@@ -421,9 +502,11 @@ export class PalletSystem {
   }
 
   /** Writes ONE authoritative transform to both the kinematic body (so the
-   * collider tracks the mesh 1:1 — spec 二) and the mesh itself, from the
-   * exact same pos/quat. This is the ONLY place the pallet's transform is
-   * ever written while held. */
+   * collider tracks `topMesh` 1:1 — spec 二) and `topMesh` itself, from the
+   * exact same pos/quat — the ONLY place the pallet's transform is ever
+   * written while held (spec二: "拾取、手持、放置、旋轉時只更新[root]
+   * transform"). Every child (slats, uiAnchor) moves along for free via
+   * normal Three.js parent-child propagation. */
   private applyCarryTransform(pos: THREE.Vector3, quat: THREE.Quaternion): void {
     this.body.setNextKinematicTranslation({ x: pos.x, y: pos.y, z: pos.z });
     this.body.setNextKinematicRotation({ x: quat.x, y: quat.y, z: quat.z, w: quat.w });
@@ -461,6 +544,10 @@ export class PalletSystem {
    * raycast — distinct from the walking carry height above), checks its
    * validity, and updates the ghost preview mesh (spec 八). */
   private updatePlacementPreview(carryPos: THREE.Vector3, carryQuat: THREE.Quaternion): void {
+    // Excludes the WHOLE pallet subtree via the base board (slats/uiAnchor
+    // all walk up to it as their parent) — excluding only a single slat, or
+    // missing this entirely, would let this downward raycast hit the
+    // pallet's OWN top slats and mistake them for landing support.
     const excludeRoots: THREE.Object3D[] = [this.palletObj.mesh, this.previewMesh, ...this.pinned.map(p => p.obj.mesh)];
     this.downRaycaster.set(new THREE.Vector3(carryPos.x, carryPos.y + 3, carryPos.z), new THREE.Vector3(0, -1, 0));
     const hits = this.downRaycaster.intersectObjects(this.scene.children, true)
@@ -568,6 +655,7 @@ export class PalletSystem {
     this.playerData.state = 'empty-handed';
     this.playerData.heldObjectId = null;
     this.hud.hideInteractionPrompt();
+    this.updateLabelFollow();
     return true;
   }
 
@@ -596,8 +684,10 @@ export class PalletSystem {
 
     this.palletObj.mesh.position.copy(this.homePos);
     this.palletObj.mesh.quaternion.identity();
+    this.palletObj.mesh.updateMatrixWorld(true);
     this.body.setTranslation({ x: this.homePos.x, y: this.homePos.y, z: this.homePos.z }, true);
     this.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+    this.updateLabelFollow();
 
     if (this.playerData.heldObjectId === this.palletId) {
       this.playerData.state = 'empty-handed';
@@ -619,5 +709,6 @@ export class PalletSystem {
     this.stableTimers.clear();
     this.palletObj.canPickUp = true;
     this.palletObj.mesh.visible = true;
+    this.updateLabelFollow();
   }
 }
