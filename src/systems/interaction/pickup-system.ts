@@ -217,6 +217,11 @@ export class PickupSystem implements PickupPort {
    * multi-carry pickup-targeting (aiming at a new item while already
    * holding something, spec五A), so the two can never diverge. */
   canAddToHeld(obj: InteractableObject | null | undefined): boolean {
+    // "Add tool hotbar and cargo hook" round spec三: the cargo hook must be
+    // used empty-handed — blocking pickup for the WHOLE time it's selected
+    // (not just mid-sequence) keeps that invariant true continuously,
+    // rather than only enforcing it at the moment of switching tools.
+    if (this.playerData.activeTool === 'cargoHook') return false;
     if (!obj || !obj.mesh || !obj.canPickUp || obj.isHeld) return false;
     if (this.playerData.state !== 'empty-handed' && this.playerData.state !== 'holding-item') return false;
     if (this.heldStack.length === 0) return true;

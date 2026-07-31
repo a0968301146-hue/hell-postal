@@ -74,6 +74,107 @@ canvas {
   color: #44ff44;
 }
 
+/* Cargo hook's own crosshair "can-hook" indicator — a distinct class/color
+ * from .active above (see hud.ts's setCargoHookReady doc comment), placed
+ * after .active so it visually wins on the rare frame both would apply. */
+#crosshair.hook-ready {
+  color: #ffb347;
+}
+
+/* Bottom-center hotbar ("Add tool hotbar and cargo hook" round 一) — plain
+ * DOM/CSS built for this game, not any Minecraft asset. */
+#hotbar {
+  position: absolute;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.hotbar-slot {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-family: sans-serif;
+  color: #ffffff;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+  user-select: none;
+  transition: transform 0.1s ease-out;
+}
+
+.hotbar-slot .hotbar-key {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  font-size: 10px;
+  color: #cccccc;
+}
+
+.hotbar-slot .hotbar-icon {
+  font-size: 20px;
+  line-height: 1.1;
+}
+
+.hotbar-slot .hotbar-name {
+  font-size: 9px;
+  line-height: 1.2;
+  margin-top: 1px;
+}
+
+.hotbar-slot.selected {
+  border-color: #ffcc44;
+  transform: scale(1.12);
+}
+
+.hotbar-slot.locked {
+  opacity: 0.45;
+}
+
+.hotbar-slot .hotbar-lock {
+  display: none;
+  font-size: 16px;
+}
+
+.hotbar-slot.locked .hotbar-icon,
+.hotbar-slot.locked .hotbar-name {
+  display: none;
+}
+
+.hotbar-slot.locked .hotbar-lock {
+  display: block;
+}
+
+/* Transient tool-name popup shown just below the crosshair on switch
+ * (spec一: "工具切換後，在準心下方短暫顯示工具名稱") — same visual language
+ * as #interaction-prompt (sans-serif, white, drop shadow) but its own
+ * element so it doesn't fight InteractionSystem's own prompt for content. */
+#tool-name-popup {
+  position: absolute;
+  top: 58%;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #ffffff;
+  font-family: sans-serif;
+  font-size: 15px;
+  text-align: center;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+  user-select: none;
+  display: none;
+}
+
+#tool-name-popup.visible {
+  display: block;
+}
+
 /* Interaction Prompt */
 #interaction-prompt {
   position: absolute;

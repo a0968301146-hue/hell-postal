@@ -24,6 +24,8 @@ import { MailBagSystem } from '../systems/mail/mail-bag-system';
 import { UpgradeSystem, UpgradeMenuUI, SimilarCargoHighlight } from '../systems/upgrade';
 import { MediaPlayerSystem } from '../systems/media-player/media-player-system';
 import { MediaPlayerUI } from '../systems/media-player/media-player-ui';
+import { ToolSystem } from '../systems/tool';
+import { CargoHookSystem } from '../systems/cargo-hook';
 
 /** Every gameplay system GameApp constructs once at startup and keeps for
  * the rest of the session (Phase 6: "系統建立、建構子注入、註冊" moved out of
@@ -66,6 +68,9 @@ export interface GameSystems {
   similarCargoHighlight: SimilarCargoHighlight;
   /** "Add television media playlist" round. */
   mediaPlayerSystem: MediaPlayerSystem;
+  /** "Add tool hotbar and cargo hook" round. */
+  toolSystem: ToolSystem;
+  cargoHookSystem: CargoHookSystem;
 }
 
 /** Back-references into GameApp's own small orchestration methods — the
@@ -354,6 +359,18 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   const cargoInspectionSystem = new CargoInspectionSystem(camera, scene, cargoSystem, pauseManager);
   const cargoInspectionUI = new CargoInspectionUI();
 
+  // Tool hotbar + cargo hook ("Add tool hotbar and cargo hook" round) —
+  // built after playerController/pickupSystem/cargoSystem/dailyFlowSystem
+  // all already exist since CargoHookSystem reads all four. ToolSystem
+  // deliberately has no reference to CargoHookSystem at all — see
+  // tool-system.ts's own doc comment on why no callback wiring is needed in
+  // either direction (CargoHookSystem watches playerData.activeTool itself).
+  const toolSystem = new ToolSystem(playerData, hud, pauseManager, () => playerController.isLocked);
+  const cargoHookSystem = new CargoHookSystem(
+    camera, scene, pickupSystem.viewModelScene, physics, interactables, cargoSystem,
+    playerData, hud, pauseManager, dailyFlowSystem, () => playerController.isLocked
+  );
+
   // Interaction system
   const interactionSystem = new InteractionSystem(
     camera, interactables, playerData, pickupSystem, hud,
@@ -391,5 +408,6 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     unloadingSystem, palletSystem, cargoInspectionSystem, cargoInspectionUI,
     lostFoundSystem, lostFoundUI, mailSystem, mailBagSystem,
     upgradeSystem, similarCargoHighlight, mediaPlayerSystem,
+    toolSystem, cargoHookSystem,
   };
 }

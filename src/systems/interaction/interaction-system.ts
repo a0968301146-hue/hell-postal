@@ -166,6 +166,11 @@ export class InteractionSystem {
     // or (legacy, dead while ENABLE_LEGACY_MAIL_FLOW is false) take an
     // envelope from the old crate.
     if (event.code === 'KeyF') {
+      // "Add tool hotbar and cargo hook" round spec三: while the cargo hook
+      // is the selected tool, F ONLY fires the hook (see
+      // cargo-hook-system.ts's own separate KeyF listener) — this legacy
+      // mail-bag-cycle/envelope-crate action must not also fire.
+      if (this.playerData.activeTool === 'cargoHook') return;
       if (this.playerData.state !== 'empty-handed') return;
       if (this.currentTarget && this.mailBagSystem.isBag(this.currentTarget.id)) {
         this.mailBagSystem.cyclePattern(this.currentTarget.id);

@@ -1,4 +1,5 @@
 export class HUD {
+  private hudRoot: HTMLElement;
   private crosshairEl: HTMLElement;
   private promptEl: HTMLElement;
   private instructionsEl: HTMLElement;
@@ -19,6 +20,7 @@ export class HUD {
     const hud = document.createElement('div');
     hud.id = 'hud';
     document.body.appendChild(hud);
+    this.hudRoot = hud;
 
     this.crosshairEl = document.createElement('div');
     this.crosshairEl.id = 'crosshair';
@@ -87,6 +89,16 @@ export class HUD {
     this.heldCountEl = document.createElement('div');
     this.heldCountEl.id = 'held-count-panel';
     hud.appendChild(this.heldCountEl);
+  }
+
+  /** "Add tool hotbar and cargo hook" round spec九: "工具欄UI可接入既有HUD容
+   * 器" — ToolSystem/CargoHookSystem build and own their own DOM (hotbar,
+   * tool-name popup, viewmodel hook prop's world-space rope/head) but append
+   * it here rather than to document.body directly, so it lives inside the
+   * same #hud stacking context/z-index as everything else instead of
+   * becoming a second overlay root. */
+  getContainer(): HTMLElement {
+    return this.hudRoot;
   }
 
   /** Daily flow status panel — updated every frame from game.ts's loop
@@ -167,6 +179,30 @@ export class HUD {
 
   setCrosshairActive(active: boolean): void {
     this.crosshairEl.classList.toggle('active', active);
+  }
+
+  /** Cargo hook's own crosshair state ("Add tool hotbar and cargo hook"
+   * round spec七: "瞄準有效Cargo時，捕貨鉤準心顯示可勾取狀態") — a SEPARATE
+   * CSS class from setCrosshairActive's 'active' above, so cargo-hook's own
+   * per-frame indicator never fights over the same class with
+   * InteractionSystem's unrelated (and untouched) targeting highlight. */
+  setCargoHookReady(ready: boolean): void {
+    this.crosshairEl.classList.toggle('hook-ready', ready);
+  }
+
+  /** Single-line transient prompt, reusing the SAME #interaction-prompt
+   * element InteractionSystem already owns (spec九: no second prompt
+   * system) — cargo-hook-system.ts calls this every frame it's the active
+   * tool, running AFTER InteractionSystem.update() each frame (see
+   * game-app.ts), so it always has the final say on the prompt's content
+   * while selected; once the player switches away, this simply stops being
+   * called and InteractionSystem's own untouched per-frame logic (which
+   * still runs regardless of the active tool) resumes owning the element
+   * from the very next frame with no explicit hand-back needed. */
+  showToolPrompt(text: string): void {
+    this.promptEl.textContent = text;
+    this.promptEl.style.whiteSpace = 'normal';
+    this.promptEl.classList.add('visible');
   }
 
   showTooFar(): void {

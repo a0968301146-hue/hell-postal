@@ -277,6 +277,14 @@ export class GameApp {
     // before pause.
     s.cargoInspectionSystem.update();
     const inspectedCargo = s.cargoInspectionSystem.currentCargo;
+    // "Add tool hotbar and cargo hook" round: runs unconditionally (not
+    // inside the isPaused block above) for the same reason
+    // cargoInspectionSystem does — CargoHookSystem checks
+    // pauseManager.isPaused/activeTool internally and self-cancels rather
+    // than the caller gating it (spec八). Reuses inspectedCargo, computed
+    // just above, for the crosshair "can-hook" indicator instead of a
+    // second raycast (spec七).
+    s.cargoHookSystem.update(deltaTime, inspectedCargo);
     // "同類感知" upgrade ("Revise score upgrades and fix frog walkable
     // colliders" round spec二D: 觸發方式改為手持一件貨物時啟用，不再要求準
     // 心先對準貨物) — driven by the CURRENTLY HELD item instead of the
