@@ -5,7 +5,7 @@ import { PlayerController } from '../player';
 import { UpgradeId, UpgradeSaveState, UpgradeDefinition } from './upgrade-types';
 import {
   UPGRADE_DEFINITIONS, getUpgradeDefinition, UPGRADE_POINT_REWARD_PER_SHIPPED_ITEM,
-  TEST_STARTING_UPGRADE_POINTS, TEST_GRANT_VERSION,
+  TEST_STARTING_UPGRADE_POINTS, TEST_GRANT_VERSION, RESET_UPGRADES_ON_PAGE_LOAD,
 } from './upgrade-data';
 
 const UPGRADE_STORAGE_KEY = 'hp_manual_upgrades_v1';
@@ -77,7 +77,15 @@ export class UpgradeSystem {
   constructor(pickupSystem: PickupSystem, playerController: PlayerController) {
     this.pickupSystem = pickupSystem;
     this.playerController = playerController;
-    this.state = mergeUpgradeSaveState(this.storage.getJSON<UpgradeSaveState>(UPGRADE_STORAGE_KEY));
+    // TEMPORARY TEST RESET — remove before public demo. See
+    // RESET_UPGRADES_ON_PAGE_LOAD's own doc comment (upgrade-data.ts):
+    // discards whatever was on disk and starts fresh every load, without
+    // ever writing a new storage key — a purchase later in THIS session
+    // still calls this.save() normally and persists under the same
+    // UPGRADE_STORAGE_KEY as always.
+    this.state = RESET_UPGRADES_ON_PAGE_LOAD
+      ? createDefaultUpgradeSaveState()
+      : mergeUpgradeSaveState(this.storage.getJSON<UpgradeSaveState>(UPGRADE_STORAGE_KEY));
     this.applyTestGrantIfNeeded();
     this.applyAllEffects();
   }

@@ -39,6 +39,24 @@ const FROG_MOUTH_CLOSE_EPS = 0.02; // rad — "fully closed" tolerance that gate
  * not one that should drift if config.height is ever retuned. */
 const FROG_BASIN_FLOOR_Y_OFFSET = 0.45;
 
+/** "Resize cargo and improve frog mouth access" round — the mouth-entrance
+ * ramp/threshold tuning. FROG_RAMP_RUN is the ramp's horizontal run; with
+ * FROG_BASIN_FLOOR_Y_OFFSET (0.45) as its rise, the resulting slope
+ * (~24°) is comfortably walkable without jumping and well under the
+ * character controller's own autostep ceiling (physics-system.ts:
+ * enableAutostep(0.3, ...) — a bare 0.45m ledge would NOT be climbable by
+ * autostep alone, which is exactly why a true sloped collider is used here
+ * instead of just shrinking the old front wall). FROG_RAMP_HALF_WIDTH
+ * comfortably exceeds the player capsule's own radius (physics-system.ts
+ * createPlayer: 0.35) with real margin on both sides (spec: "斜坡寬度至少
+ * 能容納玩家Collider並保留左右安全距離"). FROG_FRONT_THRESHOLD_HEIGHT
+ * replaces the previous round's proportional (mouthHalfY*0.7) front wall —
+ * a small FIXED lip instead, low enough for autostep to cross without
+ * blocking entry, matching spec三's "降低正面嘴唇高度". */
+const FROG_RAMP_RUN = 1.0;
+const FROG_RAMP_HALF_WIDTH = 0.8;
+const FROG_FRONT_THRESHOLD_HEIGHT = 0.15;
+
 export interface CargoBayBounds {
   centerX: number;
   centerZ: number;
@@ -81,6 +99,8 @@ export class VehicleSystem {
   private frogHopDistanceAccum = 0;
   private frogUpperHeadShell: THREE.Group | null = null;
   private frogBasinFloor: THREE.Mesh | null = null;
+  private frogRampMesh: THREE.Mesh | null = null;
+  private frogRampCollider: RAPIER.Collider | null = null;
   private frogMouthAngle = 0;
   private frogMouthTargetAngle = 0;
 
@@ -295,7 +315,7 @@ export class VehicleSystem {
     const frontThetaStart = -frontSpan / 2; // centered on local +Z (theta=0 in CylinderGeometry)
     const sideBackThetaStart = frontSpan / 2;
     const sideBackSpan = Math.PI * 2 - frontSpan;
-    const frontLipHeight = mouthHalfY * 0.7; // front lip is lower
+    const frontLipHeight = FROG_FRONT_THRESHOLD_HEIGHT; // spec三: "降低正面嘴唇高度" — a small fixed threshold, not proportional to cavity height
     const sideBackHeight = mouthHalfY * 2; // sides/back match the full cavity height, i.e. cargoBounds top exactly
 
     const buildShellArc = (thetaStart: number, thetaLength: number, height: number, innerLinerScale: number): THREE.Group => {
@@ -340,6 +360,34 @@ export class VehicleSystem {
     this.physics.addColliderToBody(this.body, 0, basinFloorY + sideBackHeight / 2, -mouthHalfZ + wallT / 2, mouthHalfX, sideBackHeight / 2, wallT); // back
     this.physics.addColliderToBody(this.body, -mouthHalfX + wallT / 2, basinFloorY + sideBackHeight / 2, 0, wallT, sideBackHeight / 2, mouthHalfZ); // left
     this.physics.addColliderToBody(this.body, mouthHalfX - wallT / 2, basinFloorY + sideBackHeight / 2, 0, wallT, sideBackHeight / 2, mouthHalfZ); // right
+
+    // Entrance ramp/tongue ("Resize cargo and improve frog mouth access"
+    // round spec三): bridges ground level up to the basin floor right at
+    // the front threshold, so the player can walk straight in without
+    // jumping. Runs from local Z=mouthHalfZ (basin floor height, right
+    // where the low front threshold sits) out to Z=mouthHalfZ+FROG_RAMP_RUN
+    // (ground level) — the two ends land exactly on those two heights (see
+    // this round's own derivation of the rotation angle below). Pink cavity
+    // material (spec三: "斜坡使用粉紅色嘴腔材質"). Both mesh and collider
+    // start hidden/disabled — only enabled while docked with the mouth open
+    // (onArrived/onDeparting below), so the ramp can never be walked while
+    // closed (spec三: "青蛙未停靠或嘴巴閉合時，斜坡/入口不可使用").
+    const rampRise = FROG_BASIN_FLOOR_Y_OFFSET;
+    const rampSlopeLength = Math.sqrt(FROG_RAMP_RUN * FROG_RAMP_RUN + rampRise * rampRise);
+    const rampAngle = Math.atan2(rampRise, FROG_RAMP_RUN);
+    const rampCenterY = floorY + rampRise / 2;
+    const rampCenterZ = mouthHalfZ + FROG_RAMP_RUN / 2;
+    const rampGeo = new THREE.BoxGeometry(FROG_RAMP_HALF_WIDTH * 2, 0.1, rampSlopeLength);
+    const rampMesh = new THREE.Mesh(rampGeo, cavityMat);
+    rampMesh.position.set(0, rampCenterY, rampCenterZ);
+    rampMesh.rotation.x = rampAngle;
+    rampMesh.visible = false;
+    this.vehicleGroup.add(rampMesh);
+    this.frogRampMesh = rampMesh;
+    this.frogRampCollider = this.physics.addColliderToBodyRotatedX(
+      this.body, 0, rampCenterY, rampCenterZ, FROG_RAMP_HALF_WIDTH, 0.05, rampSlopeLength / 2, rampAngle
+    );
+    this.frogRampCollider.setEnabled(false);
 
     // upperHeadShell: the ONLY moving part -- outer dome + inner lining +
     // both eyes, all hinged together so the eyes swing back with the shell
@@ -522,6 +570,8 @@ export class VehicleSystem {
     if (!this.isFrog) return;
     this.frogMouthTargetAngle = FROG_MOUTH_OPEN_ANGLE;
     if (this.frogBasinFloor) this.frogBasinFloor.visible = true;
+    if (this.frogRampMesh) this.frogRampMesh.visible = true;
+    if (this.frogRampCollider) this.frogRampCollider.setEnabled(true);
   }
 
   /** Fires once, the moment this slot transitions into 'departing' (spec
@@ -537,7 +587,35 @@ export class VehicleSystem {
     if (!this.isFrog) return;
     this.frogMouthTargetAngle = 0;
     if (this.frogBasinFloor) this.frogBasinFloor.visible = false;
+    if (this.frogRampMesh) this.frogRampMesh.visible = false;
+    if (this.frogRampCollider) this.frogRampCollider.setEnabled(false);
     for (const obj of pinnedCargo) obj.mesh.visible = false;
+  }
+
+  /** Frog-only ("Resize cargo and improve frog mouth access" round spec三:
+   * "若玩家仍在青蛙嘴腔內，出發流程開始時先將玩家移到青蛙正前方的安全地面
+   * 點"). Checks whether `playerPos` falls anywhere inside the mouth cavity
+   * OR on the entrance ramp (a slightly more generous box than
+   * cargoBayBounds alone, so a player still walking down the ramp is caught
+   * too) — if so, returns a safe world-space ground point just beyond the
+   * ramp's own base, clear of every collider, for the caller
+   * (VehicleControlSystem.pressDepartButton) to teleport the player's
+   * physics body to BEFORE this vehicle's mouth starts closing. Returns
+   * null for every other vehicle, or if the player isn't actually inside —
+   * the caller only acts on a non-null result, so this never nudges a
+   * player who's nowhere near the frog. */
+  getSafeExitPointIfPlayerInside(playerPos: { x: number; y: number; z: number }): { x: number; y: number; z: number } | null {
+    if (!this.isFrog) return null;
+    const mouthHalfX = this.config.cargoAreaWidth / 2;
+    const mouthHalfZ = this.config.cargoAreaLength / 2;
+    this.vehicleGroup.updateMatrixWorld(true);
+    const local = this.vehicleGroup.worldToLocal(new THREE.Vector3(playerPos.x, playerPos.y, playerPos.z));
+    const insideX = Math.abs(local.x) <= mouthHalfX + 0.2;
+    const insideZ = local.z >= -mouthHalfZ - 0.3 && local.z <= mouthHalfZ + FROG_RAMP_RUN + 0.3;
+    if (!insideX || !insideZ) return null;
+    const exitLocal = new THREE.Vector3(0, 0, mouthHalfZ + FROG_RAMP_RUN + 0.6);
+    const exitWorld = this.vehicleGroup.localToWorld(exitLocal);
+    return { x: exitWorld.x, y: BACK_AREA.floorY + 1.0, z: exitWorld.z };
   }
 
   /** Removes this vehicle entirely — mesh, materials/geometry, physics body. */

@@ -32,6 +32,16 @@ export const UPGRADE_POINT_REWARD_PER_SHIPPED_ITEM = 1;
 export const TEST_STARTING_UPGRADE_POINTS = 1000;
 export const TEST_GRANT_VERSION = 1;
 
+// TEMPORARY TEST RESET — remove before public demo. When true, every page
+// load/game restart discards whatever upgrade save state is on disk and
+// starts fresh at TEST_STARTING_UPGRADE_POINTS with every level at 0 (spec:
+// "每次網頁重新整理／重新啟動遊戲時...忽略上一次保存的技能點數與等級") —
+// see upgrade-system.ts's constructor, the ONE place this is read. Purchases
+// made during a session still save normally (spec: "同一次遊戲期間玩家仍可
+// 正常購買與測試技能"); this only overrides what gets LOADED at startup, and
+// reuses the SAME UPGRADE_STORAGE_KEY rather than introducing a new one.
+export const RESET_UPGRADES_ON_PAGE_LOAD = true;
+
 export const UPGRADE_DEFINITIONS: UpgradeDefinition[] = [
   {
     id: 'moveSpeed',

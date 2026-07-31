@@ -457,6 +457,15 @@ export class VehicleControlSystem {
 
     for (const slot of this.slots) {
       this.pinCargoPhysics(slot.pinnedCargo);
+      // A no-op for every vehicle except the frog ("Resize cargo and
+      // improve frog mouth access" round spec三: "若玩家仍在青蛙嘴腔內，出
+      // 發流程開始時先將玩家移到青蛙正前方的安全地面點，再關閉嘴巴並跳著離
+      // 開，不可把玩家關在嘴內或一起載走") — checked BEFORE onDeparting()
+      // below closes the mouth, using the player's CURRENT physics position
+      // each time (never a stale cached one).
+      const playerPos = this.physics.playerBody.translation();
+      const safeExit = slot.vehicle?.getSafeExitPointIfPlayerInside(playerPos);
+      if (safeExit) this.physics.playerBody.setTranslation(safeExit, true);
       // A no-op for every vehicle except the frog, which starts closing its
       // mouth and hides its own pinned cargo here ("Rebuild frog vehicle as
       // hopping mouth cargo carrier" round spec五/六 — see VehicleSystem.

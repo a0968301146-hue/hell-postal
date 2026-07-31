@@ -85,6 +85,23 @@ export class PhysicsSystem implements PhysicsWorldPort {
     return this.world.createCollider(colliderDesc, body);
   }
 
+  /** Same as addColliderToBody but also tilted around the LOCAL X axis —
+   * for a walkable sloped surface attached to a moving body (e.g. the
+   * frog vehicle's mouth-entrance ramp), where the translation-only version
+   * above can't express the tilt. Same collision groups/friction as
+   * addColliderToBody, so the player collides with (and can walk on) it
+   * exactly the same way. */
+  addColliderToBodyRotatedX(body: RAPIER.RigidBody, localX: number, localY: number, localZ: number, hx: number, hy: number, hz: number, rotX: number): RAPIER.Collider {
+    const quat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), rotX);
+    const colliderDesc = RAPIER.ColliderDesc.cuboid(hx, hy, hz)
+      .setTranslation(localX, localY, localZ)
+      .setRotation({ x: quat.x, y: quat.y, z: quat.z, w: quat.w })
+      .setCollisionGroups((GROUP_BOX << 16) | (GROUP_STATIC | GROUP_PLAYER | GROUP_BOX))
+      .setFriction(0.7)
+      .setRestitution(0.05);
+    return this.world.createCollider(colliderDesc, body);
+  }
+
   /** Create a dynamic body descriptor */
   createDynamicBodyDesc(x: number, y: number, z: number, _density: number): RAPIER.RigidBodyDesc {
     return RAPIER.RigidBodyDesc.dynamic()

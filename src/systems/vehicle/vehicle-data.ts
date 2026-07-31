@@ -175,16 +175,21 @@ const LAND_VEHICLE_BASE_CONFIGS: VehicleConfig[] = [
     // sketch's round-head requirement. 4.4 keeps the head's own aspect
     // ratio close to the sketch (roughly 1.5-1.6x longer than wide, not
     // 2.7x); the resulting single-layer footprint shortfall is absorbed by
-    // cargoAreaHeight (1.7, this round's own suggested figure), giving
-    // genuine room for stacking -- verified empirically against a real
-    // 20-item spawn. Overall exterior height stays low (final 2.4) -- no
-    // capacity is bought by making the CREATURE taller, only its cavity.
+    // cargoAreaHeight, giving genuine room for stacking -- verified
+    // empirically against a real 20-item spawn. cargoAreaHeight raised
+    // again this round (final 2.1, up from 1.7) — "Resize cargo and improve
+    // frog mouth access" round spec三 requires the cavity's clear height to
+    // exceed the player's own capsule (physics-system.ts createPlayer:
+    // radius 0.35 + halfHeight 0.55, total 1.8m), so 2.1m leaves genuine
+    // headroom rather than clipping the player's head. Overall exterior
+    // height stays low (final 2.4, unchanged) -- no capacity is bought by
+    // making the CREATURE taller, only its cavity.
     width: 1.9333,
     length: 4.1333,
     height: 1.6,
     cargoAreaWidth: 1.8667,
     cargoAreaLength: 2.9333,
-    cargoAreaHeight: 1.1333,
+    cargoAreaHeight: 1.4,
     dockPosition: LAND_DOCK_SLOTS['land-frog-01'].dockPosition,
     spawnPosition: LAND_DOCK_SLOTS['land-frog-01'].spawnPosition,
     exitPosition: LAND_DOCK_SLOTS['land-frog-01'].exitPosition,

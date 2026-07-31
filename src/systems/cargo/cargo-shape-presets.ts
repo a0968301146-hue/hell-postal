@@ -93,47 +93,49 @@ export interface CargoShapePreset {
 
 // --- A. Normal (4 confirmed) -------------------------------------------
 //
-// "Enlarge small and medium cargo and add NPC dialogue stages" round一: every
-// sizeClass 'small'/'medium' preset's dimensions doubled on all 3 axes
-// (large stays untouched) — dimensions are the ONE place this happens,
-// never re-multiplied anywhere downstream (mesh/collider/pickup bounds/
-// placement preview/held-item distance/shelf sizing/spawn clearance all
-// derive from preset.dimensions already, see cargo-visuals.ts
-// buildCargoShapeMesh and cargo-system.ts spawnDailyBox/spawnDailyRoller).
-// `mass` is capped at exactly 2x the PRE-doubling value (spec: "重量最多調為
-// 原本2倍，不要依體積變成8倍") — it's documentation/Unity-port metadata only
-// (never drives the fixed-density Rapier collider, see its own doc comment
-// above), so this is purely about not writing a misleading 8x number, not a
-// physics change. `sizeClass` itself is left exactly as-is on every preset
+// "Resize cargo and improve frog mouth access" round: every sizeClass
+// 'small'/'medium' preset's dimensions shrunk to ×0.75 of what they were
+// (large stays untouched) — the ORIGINAL pre-"Enlarge small and medium
+// cargo" round values were themselves ×0.5 of what's below, so the two
+// rounds combined net out to ×1.5 of the true original size (spec: "目前尺
+// 寸原本是初始值×2，因此修改後應等於初始尺寸×1.5"). Dimensions are the ONE
+// place this happens, never re-multiplied anywhere downstream (mesh/
+// collider/pickup bounds/placement preview/held-item distance/shelf sizing/
+// spawn clearance all derive from preset.dimensions already, see
+// cargo-visuals.ts buildCargoShapeMesh and cargo-system.ts
+// spawnDailyBox/spawnDailyRoller). `mass` is left exactly as the previous
+// round set it (spec: "保留原mass與搬運規則") — it's documentation/
+// Unity-port metadata only (never drives the fixed-density Rapier collider,
+// see its own doc comment above), so a shape shrinking implies no mass
+// change here. `sizeClass` itself is left exactly as-is on every preset
 // (still 'small'/'medium') — nothing anywhere classifies "large" from raw
-// dimensions, only from this field, so a bigger small/medium item can never
-// misread as large-category cargo.
+// dimensions, only from this field.
 export const NORMAL_CARGO_SHAPE_PRESETS: CargoShapePreset[] = [
   {
     id: 'small-box', displayName: '小型紙箱', category: 'normal', sizeClass: 'small',
-    dimensions: { width: 0.56, height: 0.52, depth: 0.56 }, mass: 8, stackable: true, throwable: true,
+    dimensions: { width: 0.42, height: 0.39, depth: 0.42 }, mass: 8, stackable: true, throwable: true,
     palletAllowed: true, uprightRequired: false, spawnWeight: 1, visualKind: 'closed-box', colliderKind: 'box', color: 0x9a7a4a,
   },
   {
-    // Dimensions doubled like every other medium preset this round — BUT
-    // mail-layout-data.ts's MAIL_BAG_EXTERIOR no longer reads this preset's
-    // dimensions live (see cargo-data.ts's CARGO_BOX_PRESETS, now a frozen
-    // snapshot of the ORIGINAL pre-doubling {0.42,0.38,0.40}), so mail bags
-    // stay their existing size — explicitly out of scope for this round
-    // (spec: "不要修改...信封箱").
+    // Dimensions shrunk ×0.75 like every other small/medium preset this
+    // round — BUT mail-layout-data.ts's MAIL_BAG_EXTERIOR no longer reads
+    // this preset's dimensions live (see cargo-data.ts's CARGO_BOX_PRESETS,
+    // a frozen snapshot of the ORIGINAL pre-doubling {0.42,0.38,0.40}), so
+    // mail bags stay their existing size — explicitly out of scope for this
+    // round (spec: "不要修改...信封箱").
     id: 'medium-box', displayName: '中型紙箱', category: 'normal', sizeClass: 'medium',
-    dimensions: { width: 0.84, height: 0.76, depth: 0.80 }, mass: 16, stackable: true, throwable: true,
+    dimensions: { width: 0.63, height: 0.57, depth: 0.60 }, mass: 16, stackable: true, throwable: true,
     palletAllowed: true, uprightRequired: false, spawnWeight: 1, visualKind: 'closed-box', colliderKind: 'box', color: 0xa8824f,
   },
   {
     id: 'wooden-barrel', displayName: '木桶', category: 'normal', sizeClass: 'medium',
     // width=length along roll axis, height=depth=diameter (roller convention).
-    dimensions: { width: 1.04, height: 0.80, depth: 0.80 }, mass: 20, stackable: false, throwable: true,
+    dimensions: { width: 0.78, height: 0.60, depth: 0.60 }, mass: 20, stackable: false, throwable: true,
     palletAllowed: false, uprightRequired: false, spawnWeight: 1, visualKind: 'barrel', colliderKind: 'cylinder', color: 0x7a5730,
   },
   {
     id: 'spool', displayName: '線軸貨物', category: 'normal', sizeClass: 'medium',
-    dimensions: { width: 0.72, height: 1.00, depth: 1.00 }, mass: 18, stackable: false, throwable: true,
+    dimensions: { width: 0.54, height: 0.75, depth: 0.75 }, mass: 18, stackable: false, throwable: true,
     palletAllowed: false, uprightRequired: false, spawnWeight: 1, visualKind: 'spool', colliderKind: 'cylinder', color: 0x5a6a4a,
   },
 ];
@@ -143,42 +145,42 @@ export const NORMAL_CARGO_SHAPE_PRESETS: CargoShapePreset[] = [
 export const FRAGILE_CARGO_SHAPE_PRESETS: CargoShapePreset[] = [
   {
     id: 'small-fragile-box', displayName: '小型易碎紙箱', category: 'fragile', sizeClass: 'small',
-    dimensions: { width: 0.52, height: 0.48, depth: 0.52 }, mass: 6, stackable: true, throwable: false,
+    dimensions: { width: 0.39, height: 0.36, depth: 0.39 }, mass: 6, stackable: true, throwable: false,
     palletAllowed: true, uprightRequired: false, spawnWeight: 1, visualKind: 'closed-box-fragile', colliderKind: 'box', color: 0xb8b0a0,
   },
   {
     id: 'medium-fragile-box', displayName: '中型易碎紙箱', category: 'fragile', sizeClass: 'medium',
-    dimensions: { width: 0.80, height: 0.72, depth: 0.76 }, mass: 12, stackable: true, throwable: false,
+    dimensions: { width: 0.60, height: 0.54, depth: 0.57 }, mass: 12, stackable: true, throwable: false,
     palletAllowed: true, uprightRequired: false, spawnWeight: 1, visualKind: 'closed-box-fragile', colliderKind: 'box', color: 0xb0a890,
   },
   {
     id: 'potion-crate', displayName: '魔法藥劑瓶木箱', category: 'fragile', sizeClass: 'medium',
-    dimensions: { width: 0.68, height: 0.72, depth: 0.68 }, mass: 14, stackable: true, throwable: false,
+    dimensions: { width: 0.51, height: 0.54, depth: 0.51 }, mass: 14, stackable: true, throwable: false,
     palletAllowed: true, uprightRequired: false, spawnWeight: 1, visualKind: 'hollow-crate-potion', colliderKind: 'box', color: 0x8a6a3a,
   },
   {
     id: 'milk-bottle-crate', displayName: '牛奶玻璃瓶木箱', category: 'fragile', sizeClass: 'medium',
-    dimensions: { width: 0.72, height: 0.68, depth: 0.72 }, mass: 14, stackable: true, throwable: false,
+    dimensions: { width: 0.54, height: 0.51, depth: 0.54 }, mass: 14, stackable: true, throwable: false,
     palletAllowed: true, uprightRequired: false, spawnWeight: 1, visualKind: 'hollow-crate-milk', colliderKind: 'box', color: 0x8f7248,
   },
   {
     id: 'alchemy-glassware-crate', displayName: '煉金玻璃器皿木箱', category: 'fragile', sizeClass: 'medium',
-    dimensions: { width: 0.76, height: 0.76, depth: 0.68 }, mass: 14, stackable: true, throwable: false,
+    dimensions: { width: 0.57, height: 0.57, depth: 0.51 }, mass: 14, stackable: true, throwable: false,
     palletAllowed: true, uprightRequired: false, spawnWeight: 1, visualKind: 'hollow-crate-alchemy', colliderKind: 'box', color: 0x7a5f3a,
   },
   {
     id: 'magic-lamp-crate', displayName: '魔法玻璃燈木箱', category: 'fragile', sizeClass: 'medium',
-    dimensions: { width: 0.68, height: 0.84, depth: 0.68 }, mass: 14, stackable: true, throwable: false,
+    dimensions: { width: 0.51, height: 0.63, depth: 0.51 }, mass: 14, stackable: true, throwable: false,
     palletAllowed: true, uprightRequired: false, spawnWeight: 1, visualKind: 'hollow-crate-lamp', colliderKind: 'box', color: 0x8a6a3a,
   },
   {
     id: 'ceramic-crate', displayName: '陶瓷器皿木箱', category: 'fragile', sizeClass: 'medium',
-    dimensions: { width: 0.76, height: 0.64, depth: 0.76 }, mass: 14, stackable: true, throwable: false,
+    dimensions: { width: 0.57, height: 0.48, depth: 0.57 }, mass: 14, stackable: true, throwable: false,
     palletAllowed: true, uprightRequired: false, spawnWeight: 1, visualKind: 'hollow-crate-ceramic', colliderKind: 'box', color: 0x93733f,
   },
   {
     id: 'perfume-crate', displayName: '香水／魔法精油瓶木箱', category: 'fragile', sizeClass: 'small',
-    dimensions: { width: 0.52, height: 0.48, depth: 0.48 }, mass: 8, stackable: true, throwable: false,
+    dimensions: { width: 0.39, height: 0.36, depth: 0.36 }, mass: 8, stackable: true, throwable: false,
     palletAllowed: true, uprightRequired: false, spawnWeight: 1, visualKind: 'hollow-crate-perfume', colliderKind: 'box', color: 0x9c7c48,
   },
 ];
@@ -223,22 +225,22 @@ export const LARGE_CARGO_SHAPE_PRESETS: CargoShapePreset[] = [
 export const FROZEN_CARGO_SHAPE_PRESETS: CargoShapePreset[] = [
   {
     id: 'ice-cooler-crate', displayName: '冰晶保冷木箱', category: 'frozen', sizeClass: 'medium',
-    dimensions: { width: 0.76, height: 0.72, depth: 0.76 }, mass: 18, stackable: true, throwable: false,
+    dimensions: { width: 0.57, height: 0.54, depth: 0.57 }, mass: 18, stackable: true, throwable: false,
     palletAllowed: true, uprightRequired: false, spawnWeight: 1, visualKind: 'frost-crate', colliderKind: 'box', color: 0x9fc3d9,
   },
   {
     id: 'frozen-fish-crate', displayName: '冷凍魚貨木箱', category: 'frozen', sizeClass: 'medium',
-    dimensions: { width: 0.68, height: 0.60, depth: 1.04 }, mass: 20, stackable: true, throwable: false,
+    dimensions: { width: 0.51, height: 0.45, depth: 0.78 }, mass: 20, stackable: true, throwable: false,
     palletAllowed: true, uprightRequired: false, spawnWeight: 1, visualKind: 'frost-crate-fish', colliderKind: 'box', color: 0x8fb8d0,
   },
   {
     id: 'frost-metal-box', displayName: '霜封金屬箱', category: 'frozen', sizeClass: 'medium',
-    dimensions: { width: 0.80, height: 0.72, depth: 0.76 }, mass: 24, stackable: true, throwable: false,
+    dimensions: { width: 0.60, height: 0.54, depth: 0.57 }, mass: 24, stackable: true, throwable: false,
     palletAllowed: true, uprightRequired: false, spawnWeight: 1, visualKind: 'frost-metal-box', colliderKind: 'box', color: 0x8a97a0,
   },
   {
     id: 'frozen-herb-box', displayName: '冷凍藥草箱', category: 'frozen', sizeClass: 'small',
-    dimensions: { width: 0.52, height: 0.48, depth: 0.52 }, mass: 8, stackable: true, throwable: false,
+    dimensions: { width: 0.39, height: 0.36, depth: 0.39 }, mass: 8, stackable: true, throwable: false,
     palletAllowed: true, uprightRequired: false, spawnWeight: 1, visualKind: 'frost-herb-box', colliderKind: 'box', color: 0x7fae8a,
   },
 ];
@@ -248,22 +250,22 @@ export const FROZEN_CARGO_SHAPE_PRESETS: CargoShapePreset[] = [
 export const LIVE_CARGO_SHAPE_PRESETS: CargoShapePreset[] = [
   {
     id: 'standard-cage', displayName: '標準活物鐵籠', category: 'live', sizeClass: 'medium',
-    dimensions: { width: 0.88, height: 0.88, depth: 0.88 }, mass: 28, stackable: false, throwable: false,
+    dimensions: { width: 0.66, height: 0.66, depth: 0.66 }, mass: 28, stackable: false, throwable: false,
     palletAllowed: false, uprightRequired: true, spawnWeight: 1, visualKind: 'cage', colliderKind: 'box', color: 0x707070,
   },
   {
     id: 'small-cage', displayName: '小型活物鐵籠', category: 'live', sizeClass: 'small',
-    dimensions: { width: 0.60, height: 0.60, depth: 0.60 }, mass: 16, stackable: false, throwable: false,
+    dimensions: { width: 0.45, height: 0.45, depth: 0.45 }, mass: 16, stackable: false, throwable: false,
     palletAllowed: false, uprightRequired: true, spawnWeight: 1, visualKind: 'cage', colliderKind: 'box', color: 0x707070,
   },
   {
     id: 'tall-cage', displayName: '高型活物鐵籠', category: 'live', sizeClass: 'medium',
-    dimensions: { width: 0.72, height: 1.24, depth: 0.72 }, mass: 32, stackable: false, throwable: false,
+    dimensions: { width: 0.54, height: 0.93, depth: 0.54 }, mass: 32, stackable: false, throwable: false,
     palletAllowed: false, uprightRequired: true, spawnWeight: 1, visualKind: 'cage', colliderKind: 'box', color: 0x707070,
   },
   {
     id: 'wide-cage', displayName: '寬型活物鐵籠', category: 'live', sizeClass: 'medium',
-    dimensions: { width: 1.20, height: 0.72, depth: 0.84 }, mass: 32, stackable: false, throwable: false,
+    dimensions: { width: 0.90, height: 0.54, depth: 0.63 }, mass: 32, stackable: false, throwable: false,
     palletAllowed: false, uprightRequired: true, spawnWeight: 1, visualKind: 'cage', colliderKind: 'box', color: 0x707070,
   },
 ];
