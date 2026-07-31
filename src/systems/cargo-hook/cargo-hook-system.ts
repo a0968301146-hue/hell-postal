@@ -18,28 +18,28 @@ import {
 type HookState = 'idle' | 'extending' | 'attached' | 'retracting';
 type AttachedPhase = 'lift' | 'arc';
 
-/** The cargo hook tool. "Improve cargo hook aerial pickup" round changes
- * ONLY this tool's own trigger key, catch behavior, flight choreography,
- * obstruction check, and cooldown — no other system is touched beyond the
- * two narrow integration points this feature has always needed
- * (InteractionSystem's F/right-click guards, PickupSystem's activeTool
- * pickup guard from the previous round).
+/** The cargo hook tool. "Improve cargo hook aerial pickup" round introduced
+ * the right-click trigger and lift+arc catch flow; "Add power gloves and
+ * refine cargo hook cooldown" round narrows WHEN the 3s cooldown actually
+ * applies and stops auto-switching back to bare-hands on a catch — no other
+ * system is touched beyond the narrow integration points this tool has
+ * always needed (InteractionSystem's right-click guard, PickupSystem's
+ * activeTool pickup guard).
  *
- * Trigger moved from F to right-click (spec一) — F is fully released back
- * to InteractionSystem's existing handler.
+ * Trigger is right-click; F is fully owned by InteractionSystem's existing
+ * handler and never touched here.
  *
- * On a hit, the cargo no longer drags along the ground: it lifts straight
- * up for ~0.2s (spec三), then flies a smooth aerial arc toward a catch point
- * ~1.1m in front of the player, and — once it arrives — is handed to the
- * player through the REAL `PickupSystem.pickUp()` (spec二), never by
- * directly writing playerObjectId or cloning a viewmodel mesh by hand. On
- * success the tool auto-switches back to bare-hands via
- * `ToolSystem.trySelect('empty')` (spec二/五 requires the hotbar to stay in
- * sync, which trySelect already does for free). On failure (pickUp()
- * silently no-ops if canAddToHeld() rejects it) the cargo is simply
- * released — force stops, gravity/damping resume on its own since it was
- * never made kinematic or had its collider disabled — and nothing is
- * deleted.
+ * On a hit, the cargo lifts straight up for ~0.2s by a per-size height, then
+ * flies a smooth aerial arc toward a catch point ~1.1m in front of the
+ * player, and — once it arrives — is handed to the player through the REAL
+ * `PickupSystem.pickUp()`, never by directly writing heldObjectId or
+ * cloning a viewmodel mesh by hand. The tool stays selected (cargoHook)
+ * whether the catch succeeds or fails — see attemptCatch()'s own doc
+ * comment ("Add power gloves..." round spec二: "勾到貨物後不要切回徒手").
+ * On failure (pickUp() silently no-ops if canAddToHeld() rejects it) the
+ * cargo is simply released — force stops, gravity/damping resume on their
+ * own since it was never made kinematic or had its collider disabled — and
+ * nothing is deleted.
  *
  * Every frame in flight, the path to the NEXT position (this frame's
  * intended step, not the final destination) is swept with the cargo's own
@@ -52,13 +52,17 @@ type AttachedPhase = 'lift' | 'arc';
  * convention `castShapeMove` already established — no second collision
  * system.
  *
- * Cooldown (3s, spec五) is tracked in its own `cooldownTimer` field,
- * decremented every frame regardless of `state`/tool selection, so
- * switching tools away and back can never bypass a cooldown that's already
- * counting down — cancel() (tool-switch/pause/UI/day-change) also starts a
- * fresh cooldown if it interrupts an in-progress sequence, closing the
- * "fire, immediately switch tools to dodge the miss/block cooldown"
- * loophole. */
+ * Cooldown (3s) is tracked in its own `cooldownTimer` field, decremented
+ * every frame regardless of `state`/tool selection so switching tools away
+ * and back can never bypass a cooldown that's already counting down — but
+ * ("Add power gloves..." round spec一) it is ONLY ever started once the
+ * hook has genuinely LATCHED ONTO a valid Cargo (entered 'attached'),
+ * whether that sequence then succeeds or fails. A pure miss — nothing valid
+ * at the hit point, or the target invalidated before the hook even arrives
+ * — retracts through extending → retracting → idle with NO cooldown at
+ * all, so `beginRetract()` (the miss/never-attached path) never touches
+ * `cooldownTimer`; only `finishSequence()` (every attached-phase exit) and
+ * `cancel()` (guarded to only apply while `state === 'attached'`) do. */
 export class CargoHookSystem {
   private camera: THREE.PerspectiveCamera;
   private scene: THREE.Scene;
@@ -238,6 +242,10 @@ export class CargoHookSystem {
     if (!this.isLocked()) return;
     if (this.pauseManager.isPaused) return;
     if (this.playerData.activeTool !== 'cargoHook') return;
+    // "Add power gloves and refine cargo hook cooldown" round spec二: "手上
+    // 有物品時右鍵不可再次發射" — the tool stays selected after a catch, so
+    // this can no longer rely on activeTool switching away to block re-fire.
+    if (this.playerData.state !== 'empty-handed') return;
     if (this.state !== 'idle') return;
     if (this.cooldownTimer > 0) return;
     this.fire();
@@ -391,21 +399,29 @@ export class CargoHookSystem {
     if (t >= 1) this.attemptCatch(obj);
   }
 
-  /** Hands the caught item to the REAL PickupSystem (spec二: never directly
-   * writes heldObjectId, never clones a mesh by hand) — pickUp() itself is
-   * the single source of truth for whether the catch actually succeeds
+  /** Hands the caught item to the REAL PickupSystem (never directly writes
+   * heldObjectId, never clones a mesh by hand) — pickUp() itself is the
+   * single source of truth for whether the catch actually succeeds
    * (canAddToHeld() may still reject it, e.g. capacity already full from
-   * some other source), so success is read back off `obj.isHeld` rather
-   * than assumed. On success the tool auto-switches back to bare-hands
-   * through ToolSystem.trySelect (spec二: "工具欄同步選中第1格" — trySelect
-   * already updates the hotbar UI as part of switching, no separate sync
-   * call needed). On failure the cargo is simply released, never deleted —
-   * pickUp() never touched its rigidBody in that case, so it keeps
-   * whatever velocity this frame's arc math last gave it and gravity/
-   * damping take over exactly as if the hook had just let go mid-air. */
+   * some other source); nothing here needs to branch on success vs failure
+   * since both paths end the same way. The tool deliberately stays selected
+   * on cargoHook either way ("Add power gloves and refine cargo hook
+   * cooldown" round spec二: "勾到貨物後不要切回徒手...移除
+   * ToolSystem.trySelect('empty')") — E-place/Q-throw of whatever ends up
+   * held work regardless of activeTool (see pickup-system.ts's own
+   * placement/throw paths, neither of which is gated on it), and
+   * onMouseDown above already blocks re-firing while anything is held. On
+   * failure the cargo is simply released, never deleted — pickUp() never
+   * touched its rigidBody in that case, so it keeps whatever velocity this
+   * frame's arc math last gave it and gravity/damping take over exactly as
+   * if the hook had just let go mid-air. */
   private attemptCatch(obj: InteractableObject): void {
-    this.toolSystem.trySelect('empty');
-    this.pickupSystem.pickUp(obj);
+    // bypassToolGate=true: PickupSystem.canAddToHeld() would otherwise
+    // reject this hand-off since activeTool is still 'cargoHook' at this
+    // exact moment (the tool deliberately stays selected through a catch —
+    // see class doc comment) — see pickup-system.ts's own doc comment on
+    // why this parameter exists ONLY for this call.
+    this.pickupSystem.pickUp(obj, true);
     this.finishSequence();
   }
 
@@ -423,9 +439,14 @@ export class CargoHookSystem {
     this.hookHeadMesh.position.addScaledVector(toCamera.normalize(), step);
   }
 
+  /** Miss / never-attached path ONLY — a target that was never valid to
+   * begin with, or stopped being valid before the hook head even arrived.
+   * "Add power gloves and refine cargo hook cooldown" round spec一:
+   * "extending → retracting → idle...不可設定cooldownTimer" — deliberately
+   * does NOT touch cooldownTimer, unlike finishSequence()/cancel() below,
+   * both of which only ever fire once the hook has genuinely attached. */
   private beginRetract(): void {
     if (this.state === 'retracting' || this.state === 'idle') return;
-    this.cooldownTimer = CARGO_HOOK_COOLDOWN;
     this.targetId = null;
     this.state = 'retracting';
   }
@@ -436,10 +457,14 @@ export class CargoHookSystem {
     this.ropeLine.visible = false;
   }
 
-  /** Instant terminal cleanup for every attached-phase outcome (spec五:
-   * success / wall-block / target-invalidated / timeout — all enter
-   * cooldown immediately, no animated retract since the cargo may be
-   * anywhere in mid-air). Idempotent-safe to call from 'attached' only. */
+  /** Instant terminal cleanup for every ATTACHED-phase outcome (success /
+   * wall-block / target-invalidated / timeout-while-attached) — all enter
+   * cooldown immediately (this round's spec一: "成功附著有效Cargo後，不論
+   * 成功手持或途中失敗：進入3秒冷卻"), no animated retract since the cargo
+   * may be anywhere in mid-air. Only ever called once `state === 'attached'`
+   * has already been reached, so unconditionally setting cooldownTimer here
+   * is always correct — this is the ONE place a successful/failed catch
+   * itself starts the cooldown. */
   private finishSequence(): void {
     this.cooldownTimer = CARGO_HOOK_COOLDOWN;
     this.state = 'idle';
@@ -449,15 +474,18 @@ export class CargoHookSystem {
     this.ropeLine.visible = false;
   }
 
-  /** Immediate cancel + full visual cleanup (spec八, prior round) — safe to
-   * call from any state, including 'idle' (no-op). Also starts a fresh
-   * cooldown whenever it interrupts a genuinely in-progress sequence
-   * (spec五: "切換工具不能繞過" — without this, firing then instantly
-   * switching tools away would dodge the cooldown a miss/wall-block/timeout
-   * would otherwise have imposed). */
+  /** Immediate cancel + full visual cleanup (tool-switch/pause/UI/day-change
+   * mid-sequence) — safe to call from any state, including 'idle' (no-op).
+   * Only starts a fresh cooldown if it interrupts a sequence that had
+   * ALREADY latched onto valid Cargo (`state === 'attached'`) — spec一: "尚
+   * 未附著Cargo：不進冷卻" applies here too, so cancelling out of
+   * 'extending'/'retracting' (never attached, or already miss-retracting
+   * with no cooldown pending) stays cooldown-free, while cancelling out of
+   * 'attached' still can't be used to dodge the cooldown a normal
+   * finishSequence() would have imposed. */
   private cancel(): void {
     if (this.state === 'idle') return;
-    this.cooldownTimer = CARGO_HOOK_COOLDOWN;
+    if (this.state === 'attached') this.cooldownTimer = CARGO_HOOK_COOLDOWN;
     this.state = 'idle';
     this.attachedPhase = 'lift';
     this.targetId = null;
@@ -489,7 +517,14 @@ export class CargoHookSystem {
     if (this.cooldownTimer > 0) this.cooldownTimer = Math.max(0, this.cooldownTimer - deltaTime);
     this.toolSystem.setCooldown(this.cooldownTimer, CARGO_HOOK_COOLDOWN);
 
-    if (isSelected) {
+    // While something is held, PickupSystem/InteractionSystem already own
+    // the prompt every frame (the "按 E 選擇放置位置\n按住 Q 蓄力丟出" hint,
+    // same as any other held item — "Add power gloves..." round spec二: E/Q
+    // must keep working normally on a caught item) — this tool's own prompt
+    // would otherwise stomp it every frame purely because cargoHook stays
+    // selected through a catch now. Only override the prompt while genuinely
+    // empty-handed, i.e. actually able to fire.
+    if (isSelected && this.playerData.state === 'empty-handed') {
       this.hud.showToolPrompt(
         this.cooldownTimer > 0 ? `冷卻中 ${this.cooldownTimer.toFixed(1)}s` : '右鍵 發射捕貨鉤'
       );

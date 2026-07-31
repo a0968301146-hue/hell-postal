@@ -1,23 +1,28 @@
 import { PlayerInteractionData, ActiveTool } from '../../core/game-state';
 import { HUD } from '../hud';
 import { PauseManager } from '../../core/pause-manager';
+import { PALLET_ID } from '../pallet';
 
 const TOOL_NAME: Record<ActiveTool, string> = {
   empty: '徒手',
+  powerGloves: '力量手套',
   cargoHook: '捕貨鉤',
 };
 
-/** Bottom-center 4-slot hotbar ("Add tool hotbar and cargo hook" round 一) —
- * owns ONLY tool-selection state/input/UI. Slots 2 (搬運手套) and 4 (預留)
- * are permanently locked this round — there is no unlock mechanism anywhere
- * yet, so they're hardcoded dead ends (digit press / wheel never reaches
- * them, matching spec: "數字鍵2、4：不切換，只顯示尚未解鎖").
+/** Bottom-center 4-slot hotbar ("Add tool hotbar and cargo hook" round 一,
+ * slot 2 unlocked by "Add power gloves and refine cargo hook cooldown"
+ * round 三) — owns ONLY tool-selection state/input/UI. Slot 4 (預留) stays
+ * permanently locked this round — there is no unlock mechanism for it yet,
+ * so digit press / wheel never reach it (spec: "第4格保持鎖定").
  *
- * Deliberately does NOT know about CargoHookSystem at all — switching AWAY
- * from cargoHook only ever needs to flip `playerData.activeTool` back to
- * 'empty'; CargoHookSystem watches that same field itself every frame and
- * self-cancels the instant it stops being 'cargoHook' (spec八), so no
- * callback/import wiring between the two is needed in either direction. */
+ * Deliberately does NOT know about CargoHookSystem at all — CargoHookSystem
+ * watches `playerData.activeTool` itself every frame and self-cancels the
+ * instant it stops being 'cargoHook', so no callback/import wiring is
+ * needed in either direction. It DOES need `PALLET_ID` (a plain exported
+ * string constant, not a PalletSystem class reference — see pallet-
+ * system.ts's own doc comment on why that constant exists) purely to block
+ * switching tools while the pallet is held (spec四: "搬著托盤時不可切換工
+ * 具，提示「請先放下托盤」"). */
 export class ToolSystem {
   private playerData: PlayerInteractionData;
   private hud: HUD;
@@ -25,11 +30,16 @@ export class ToolSystem {
   private isLocked: () => boolean;
 
   private slot1El: HTMLElement;
+  private slot2El: HTMLElement;
   private slot3El: HTMLElement;
   private slot3CooldownOverlay: HTMLElement;
   private slot3CooldownText: HTMLElement;
   private toolNamePopup: HTMLElement;
   private toolNameTimer: number | null = null;
+
+  /** Wheel-cycle order matches the visible slot order left-to-right —
+   * spec三: "滾輪在1→2→3之間循環". */
+  private readonly WHEEL_CYCLE: ActiveTool[] = ['empty', 'powerGloves', 'cargoHook'];
 
   constructor(playerData: PlayerInteractionData, hud: HUD, pauseManager: PauseManager, isLockedFn: () => boolean) {
     this.playerData = playerData;
@@ -43,7 +53,7 @@ export class ToolSystem {
     hotbar.id = 'hotbar';
 
     this.slot1El = this.buildSlot('1', '✋', '徒手', false);
-    const slot2El = this.buildSlot('2', '🧤', '搬運手套', true);
+    this.slot2El = this.buildSlot('2', '🧤', '力量手套', false);
     this.slot3El = this.buildSlot('3', '🪝', '捕貨鉤', false);
     const slot4El = this.buildSlot('4', '', '', true);
 
@@ -60,7 +70,7 @@ export class ToolSystem {
     this.slot3El.appendChild(this.slot3CooldownText);
 
     hotbar.appendChild(this.slot1El);
-    hotbar.appendChild(slot2El);
+    hotbar.appendChild(this.slot2El);
     hotbar.appendChild(this.slot3El);
     hotbar.appendChild(slot4El);
     container.appendChild(hotbar);
@@ -92,6 +102,7 @@ export class ToolSystem {
 
   private updateSelectionUI(): void {
     this.slot1El.classList.toggle('selected', this.playerData.activeTool === 'empty');
+    this.slot2El.classList.toggle('selected', this.playerData.activeTool === 'powerGloves');
     this.slot3El.classList.toggle('selected', this.playerData.activeTool === 'cargoHook');
   }
 
@@ -105,21 +116,25 @@ export class ToolSystem {
     }, 1200);
   }
 
-  /** Shared select attempt for both digit-key/wheel input AND
-   * CargoHookSystem's own auto-switch-back-to-bare-hands on a successful
-   * catch ("Improve cargo hook aerial pickup" round spec二: "工具欄同步選中
-   * 第1格" — reusing this method rather than a separate sync path means that
-   * requirement is satisfied automatically, since this already updates the
-   * hotbar UI as part of switching). Public for that cross-call; enforces
-   * spec三's (prior round) "捕貨鉤必須空手使用...若玩家正在持有任何物品：
-   * 不可切換至捕貨鉤" (Pallet/dolly holds also set state away from
-   * 'empty-handed', so this one check covers every kind of "currently
-   * holding something" case, not just PickupSystem's own heldObjectId).
-   * Does NOT gate on cooldown — a cooldown only blocks FIRING (see
-   * CargoHookSystem.onMouseDown), the tool can still be selected/deselected
-   * freely while it counts down. */
+  /** Shared select attempt for digit-key/wheel input — public so
+   * CargoHookSystem could in principle still call it, though it no longer
+   * does (the tool stays selected through a catch — see cargo-hook-
+   * system.ts's own doc comment). Enforces:
+   * - "搬著托盤時不可切換工具" (spec四, this round) — checked FIRST since it
+   *   applies regardless of which tool is being switched TO or FROM.
+   * - "捕貨鉤必須空手使用...若玩家正在持有任何物品：不可切換至捕貨鉤"
+   *   (prior round; Pallet/dolly holds also set state away from
+   *   'empty-handed', so this one check covers every kind of "currently
+   *   holding something" case, not just PickupSystem's own heldObjectId).
+   * Does NOT gate on cargo-hook cooldown — a cooldown only blocks FIRING
+   * (see CargoHookSystem.onMouseDown), the tool can still be selected/
+   * deselected freely while it counts down. */
   trySelect(tool: ActiveTool): void {
     if (this.playerData.activeTool === tool) return;
+    if (this.playerData.heldObjectId === PALLET_ID) {
+      this.hud.showToast('請先放下托盤');
+      return;
+    }
     if (tool === 'cargoHook' && this.playerData.state !== 'empty-handed') {
       this.hud.showToast('請先放下手上的物品');
       return;
@@ -129,9 +144,9 @@ export class ToolSystem {
     this.showToolNamePopup(tool);
   }
 
-  /** Called every frame by CargoHookSystem (spec五) regardless of which
-   * tool is currently selected, so the cooldown mask on slot 3 stays
-   * visible even if the player switches away mid-cooldown. */
+  /** Called every frame by CargoHookSystem regardless of which tool is
+   * currently selected, so the cooldown mask on slot 3 stays visible even
+   * if the player switches away mid-cooldown. */
   setCooldown(remainingSeconds: number, totalSeconds: number): void {
     if (remainingSeconds <= 0) {
       this.slot3CooldownOverlay.style.height = '0%';
@@ -151,8 +166,9 @@ export class ToolSystem {
     if (this.pauseManager.isPaused) return;
 
     if (event.code === 'Digit1') { this.trySelect('empty'); return; }
+    if (event.code === 'Digit2') { this.trySelect('powerGloves'); return; }
     if (event.code === 'Digit3') { this.trySelect('cargoHook'); return; }
-    if (event.code === 'Digit2' || event.code === 'Digit4') {
+    if (event.code === 'Digit4') {
       this.hud.showToast('尚未解鎖');
     }
   }
@@ -161,8 +177,12 @@ export class ToolSystem {
     if (!this.isLocked()) return;
     if (this.pauseManager.isPaused) return;
     if (Math.abs(event.deltaY) < 1) return;
-    // Only ever cycles between the two usable slots (spec一: "滑鼠滾輪：只在
-    // 目前可用的1與3之間循環") — slots 2/4 are never a wheel destination.
-    this.trySelect(this.playerData.activeTool === 'empty' ? 'cargoHook' : 'empty');
+    // Cycles through the three usable slots in visible left-to-right order
+    // (spec三: "滾輪在1→2→3之間循環"), direction-aware so scrolling back
+    // reverses it — slot 4 is never a wheel destination.
+    const currentIndex = this.WHEEL_CYCLE.indexOf(this.playerData.activeTool);
+    const dir = event.deltaY > 0 ? 1 : -1;
+    const nextIndex = (currentIndex + dir + this.WHEEL_CYCLE.length) % this.WHEEL_CYCLE.length;
+    this.trySelect(this.WHEEL_CYCLE[nextIndex]);
   }
 }

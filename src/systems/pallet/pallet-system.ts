@@ -280,6 +280,15 @@ export class PalletSystem {
    * it in front of the player on this very first held frame (spec 三-9). */
   pickUp(cameraPosition: THREE.Vector3, cameraForward: THREE.Vector3): void {
     if (this.isHeld) return;
+    // "Add power gloves and refine cargo hook cooldown" round spec四: only
+    // powerGloves may pick up the pallet — bare-hands and cargoHook must
+    // not, checked here (the single place PalletSystem.pickUp() is ever
+    // called from — interaction-system.ts's Priority-1 E-handler) rather
+    // than requiring every caller to remember the gate.
+    if (this.playerData.activeTool !== 'powerGloves') {
+      this.hud.showToast('需要裝備力量手套才能搬起托盤');
+      return;
+    }
     if (this.playerData.state !== 'empty-handed') return;
 
     this.palletObj.mesh.updateMatrixWorld(true);

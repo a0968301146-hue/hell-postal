@@ -215,13 +215,31 @@ export class PickupSystem implements PickupPort {
   /** Shared "may this specific object be added to the held set right now"
    * check — used by both pickUp() itself and InteractionSystem's own
    * multi-carry pickup-targeting (aiming at a new item while already
-   * holding something, spec五A), so the two can never diverge. */
-  canAddToHeld(obj: InteractableObject | null | undefined): boolean {
-    // "Add tool hotbar and cargo hook" round spec三: the cargo hook must be
-    // used empty-handed — blocking pickup for the WHOLE time it's selected
-    // (not just mid-sequence) keeps that invariant true continuously,
-    // rather than only enforcing it at the moment of switching tools.
-    if (this.playerData.activeTool === 'cargoHook') return false;
+   * holding something, spec五A), so the two can never diverge.
+   *
+   * `bypassToolGate` ("Add power gloves and refine cargo hook cooldown"
+   * round) exists ONLY for CargoHookSystem's own catch — the tool
+   * deliberately stays selected on cargoHook through a successful catch
+   * (spec二: "移除ToolSystem.trySelect('empty')"), so its own
+   * `pickupSystem.pickUp()` call would otherwise get rejected by the very
+   * tool-gate check below that its catch is supposed to satisfy. Every
+   * OTHER caller (the generic E-key pickup path in interaction-system.ts,
+   * left untouched) always calls this with the default `false`, so the
+   * "only bare-hands may pick up an individual item" rule keeps applying to
+   * everything except the hook's own hand-off. */
+  canAddToHeld(obj: InteractableObject | null | undefined, bypassToolGate = false): boolean {
+    // "Add tool hotbar and cargo hook" round spec三 / "Add power gloves and
+    // refine cargo hook cooldown" round spec四: generic E-pickup of an
+    // individual Cargo/envelope/lost item/mail box only ever works in bare-
+    // hands mode — cargoHook catches cargo through its own aerial flow (see
+    // cargo-hook-system.ts) and powerGloves only ever picks up the pallet
+    // (see pallet-system.ts's own dedicated pickUp()), neither goes through
+    // this generic path. This only ever blocks picking up something NEW —
+    // placing/throwing whatever is ALREADY held goes through entirely
+    // different methods that never call canAddToHeld, so a cargo-hook catch
+    // that stays held while the tool stays selected can still be placed/
+    // thrown normally (spec二: "只阻止再次拾取其他物品").
+    if (!bypassToolGate && this.playerData.activeTool !== 'empty') return false;
     if (!obj || !obj.mesh || !obj.canPickUp || obj.isHeld) return false;
     if (this.playerData.state !== 'empty-handed' && this.playerData.state !== 'holding-item') return false;
     if (this.heldStack.length === 0) return true;
@@ -246,8 +264,8 @@ export class PickupSystem implements PickupPort {
   }
 
   // --- PICK UP ---
-  pickUp(obj: InteractableObject): void {
-    if (!this.canAddToHeld(obj)) return;
+  pickUp(obj: InteractableObject, bypassToolGate = false): void {
+    if (!this.canAddToHeld(obj, bypassToolGate)) return;
 
     // "Add sequential lost-found visitors and held cargo feedback" round三:
     // "切換物品...時，也必須立即清除震動" — a multi-carry pickup while

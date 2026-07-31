@@ -5,13 +5,16 @@
 export type PlayerInteractionState = 'empty-handed' | 'holding-item' | 'placement-preview' | 'stamping-minigame' | 'vehicle-settlement' | 'pushing-dolly';
 
 /** "Add tool hotbar and cargo hook" round: which bottom-hotbar tool is
- * currently selected — only the two USABLE slots (徒手/捕貨鉤) have a value
- * here; slots 2/4 stay locked and are never represented in this union (see
- * tool-system.ts). Read by InteractionSystem (suppress the legacy F action
- * while the hook owns F) and PickupSystem (block E-pickup entirely while
- * the hook is selected, keeping "捕貨鉤必須空手使用" true for the WHOLE time
- * it's selected, not just at the moment of switching to it). */
-export type ActiveTool = 'empty' | 'cargoHook';
+ * currently selected — 'powerGloves' added by "Add power gloves and refine
+ * cargo hook cooldown" round (slot 4 stays locked, still never represented
+ * here — see tool-system.ts). Read by PickupSystem (block generic E-pickup
+ * of individual cargo/envelopes/lost items/mail boxes unless
+ * activeTool==='empty' — cargoHook and powerGloves each have their own
+ * dedicated pickup path instead, keeping the "must be empty-handed to
+ * target a NEW item" invariant true for the whole time either is selected,
+ * not just at the moment of switching to it) and by PalletSystem (only
+ * powerGloves may pick up the pallet). */
+export type ActiveTool = 'empty' | 'cargoHook' | 'powerGloves';
 
 export interface PlayerInteractionData {
   state: PlayerInteractionState;
