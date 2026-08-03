@@ -20,7 +20,7 @@ import { ScoringSystem, DepartureSettlement, LostFoundSettlementInput } from '..
 import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/world-label-system';
 import { HUD } from '../hud';
 import { DailyFlowSystem } from '../daily-flow';
-import { PALLET_ID } from '../pallet';
+import { ALL_PALLET_IDS, isPalletId } from '../pallet';
 import { SettingsManager } from '../settings';
 
 /** A daily cargo item's EFFECTIVE cargo kind for vehicle-compatibility
@@ -405,16 +405,21 @@ export class VehicleControlSystem {
       if (data.correctlyShipped) shippedCorrect++; else unshipped++;
     }
 
-    // The sorting pallet itself is never in dailyCargoIds (spec: "托盤本身
-    // 不計入dailyCargoIds") so it needs its own bay-membership check — if
-    // it's still sitting inside a docked vehicle's cargo bay at departure
+    // The sorting pallets themselves are never in dailyCargoIds (spec: "托盤
+    // 本身不計入dailyCargoIds") so each needs its own bay-membership check —
+    // if it's still sitting inside a docked vehicle's cargo bay at departure
     // time, it rides along the SAME way as any other pinned cargo
     // (vehicle.moveToward() below just translates every entry in the list
     // by the same per-frame delta, so the pallet and whatever cargo is
     // still resting on it stay visually together with zero extra code).
     // Never part of the score settlement either way (not daily cargo).
-    const palletObj = this.interactables.get(PALLET_ID);
-    if (palletObj && palletObj.mesh.visible && !palletObj.isHeld) {
+    // "Rebuild pallet storage and reset upgrade progression" round三: now
+    // three separate pallet ids (small/medium/large) — each independently
+    // checked, since more than one could in principle be sitting in a bay
+    // (or even the same bay) at once.
+    for (const palletId of ALL_PALLET_IDS) {
+      const palletObj = this.interactables.get(palletId);
+      if (!palletObj || !palletObj.mesh.visible || palletObj.isHeld) continue;
       for (const slot of this.slots) {
         if (slot.vehicle && slot.vehicle.isInCargoBay(palletObj.mesh.position)) {
           slot.pinnedCargo.push(palletObj);
@@ -648,11 +653,11 @@ export class VehicleControlSystem {
     if (!vehicle) return;
 
     for (const obj of slot.pinnedCargo) {
-      // The pallet itself is never destroyed like shipped cargo is — it
-      // just leaves the play space along with the vehicle for the rest of
-      // today; PalletSystem.resetToStart() (called from DailyFlowSystem's
-      // daily reset) makes it visible again at its home position next day.
-      if (obj.id === PALLET_ID) { obj.mesh.visible = false; continue; }
+      // A pallet is never destroyed like shipped cargo is — it just leaves
+      // the play space along with the vehicle for the rest of today;
+      // PalletSystem.resetToStart() (called from DailyFlowSystem's daily
+      // reset) makes it visible again, back on its own wall rack, next day.
+      if (isPalletId(obj.id)) { obj.mesh.visible = false; continue; }
       // Mail bags aren't CargoData — route their teardown through
       // MailBagSystem itself so its own bag registry doesn't keep a stale
       // entry pointing at an already-destroyed InteractableObject.

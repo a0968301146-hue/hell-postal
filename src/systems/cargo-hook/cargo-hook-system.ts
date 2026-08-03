@@ -88,6 +88,11 @@ export class CargoHookSystem {
   private activeDuration = 0;
   private cooldownTimer = 0;
   private lastKnownDay: number;
+  /** "Rebuild pallet storage and reset upgrade progression" round二: tracks
+   * whether THIS tool owned the shared #interaction-prompt element last
+   * frame, purely to fire a one-shot hideInteractionPrompt() the instant it
+   * stops (see update()'s own doc comment for why). */
+  private wasSelectedLastFrame = false;
 
   private attachedPhase: AttachedPhase = 'lift';
   private liftTargetY = 0;
@@ -558,7 +563,23 @@ export class CargoHookSystem {
       this.hud.setCargoHookReady(this.cooldownTimer <= 0 && this.state === 'idle' && this.isValidHookTarget(inspectedCargo));
     } else {
       this.hud.setCargoHookReady(false);
+      // "Rebuild pallet storage and reset upgrade progression" round二: this
+      // tool's own showToolPrompt() above writes into the SAME shared
+      // #interaction-prompt element InteractionSystem owns (see hud.ts's own
+      // doc comment on showToolPrompt — its "hand-back" assumption only
+      // holds if InteractionSystem's raycast-detected currentTarget CHANGES
+      // on some later frame, which never happens for a purely proximity-
+      // gated target like the lost-found NPC counter). Without this, the
+      // last text this tool wrote (e.g. "冷卻中 2.5s") stayed stuck on
+      // screen after switching tools away, even though the underlying E
+      // interaction still worked — reading to the player as "can't
+      // interact". Firing exactly once on the isSelected->false transition
+      // (not every frame while deselected) hands the element back cleanly
+      // without fighting any OTHER system that might show its own prompt
+      // later this same frame.
+      if (this.wasSelectedLastFrame) this.hud.hideInteractionPrompt();
     }
+    this.wasSelectedLastFrame = isSelected && this.playerData.state === 'empty-handed';
 
     if (this.dailyFlowSystem.currentDay !== this.lastKnownDay) {
       this.lastKnownDay = this.dailyFlowSystem.currentDay;

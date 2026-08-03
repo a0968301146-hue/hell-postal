@@ -349,10 +349,14 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // implements the interface directly, so no separate adapter object.
   pickupSystem.setPalletThrowHooks(palletSystem);
   // Still registered as a normal PickupSystem placement surface — a
-  // single cargo item can still be manually placed onto the pallet's top
+  // single cargo item can still be manually placed onto any pallet's top
   // the normal way (spec: this round only adds the ABILITY to also pick
   // up the whole pallet, it doesn't remove normal single-item placement).
-  pickupSystem.addPlacementSurface(palletSystem.topMesh);
+  // "Rebuild pallet storage and reset upgrade progression" round三: now
+  // three separate pallet meshes (small/medium/large), each registered.
+  for (const mesh of palletSystem.getAllTopMeshes()) {
+    pickupSystem.addPlacementSurface(mesh);
+  }
   // RollerRackSystem removed entirely ("移除滾筒架" round) — roller-shaped
   // cargo is now just a normal special-shape item like 'large', freely
   // placeable/loadable with no dedicated fixture or organizing step of its

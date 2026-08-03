@@ -4,13 +4,25 @@ import { PickupSystem } from '../interaction/pickup-system';
 import { PlayerController } from '../player';
 import { UpgradeId, UpgradeSaveState, UpgradeDefinition } from './upgrade-types';
 import { UPGRADE_DEFINITIONS, getUpgradeDefinition, UPGRADE_POINT_REWARD_PER_SHIPPED_ITEM } from './upgrade-data';
+import { PalletSize, PALLET_SIZE_ORDER } from '../pallet/pallet-data';
 
-const UPGRADE_STORAGE_KEY = 'hp_manual_upgrades_v1';
+/** "Rebuild pallet storage and reset upgrade progression" round八: bumped
+ * from v1 — a genuine schema/rebalance reset (spec: "本次為技能重製版本...
+ * bump upgrade schema version...對目前prototype舊技能存檔執行一次性乾淨重
+ * 置"). Since a v1 save simply doesn't exist under this new key,
+ * mergeUpgradeSaveState(null) below naturally returns clean defaults (0
+ * score, every level 0) the FIRST time this loads post-update — and because
+ * every purchase/settlement immediately re-saves under THIS key, every
+ * subsequent reload reads real v2 data back correctly, so the reset only
+ * ever happens once, never on every page load (spec: "只重置一次...之後重
+ * 新整理必須正常保存"). No separate "have I reset yet" flag needed — a
+ * versioned storage key already IS a one-time migration by construction. */
+const UPGRADE_STORAGE_KEY = 'hp_manual_upgrades_v2';
 
 function createDefaultUpgradeSaveState(): UpgradeSaveState {
   return {
     availableSettlementScore: 0,
-    levels: { multiCarry: 0, heavyHandling: 0, moveSpeed: 0, similarCargoSense: 0, ropeStrap: 0 },
+    levels: { multiCarry: 0, heavyHandling: 0, moveSpeed: 0, similarCargoSense: 0, ropeStrap: 0, powerGlovesUpgrade: 0 },
     settledDayId: null,
   };
 }
@@ -173,6 +185,22 @@ export class UpgradeSystem {
     return this.state.levels.ropeStrap >= 1;
   }
 
+  /** "Rebuild pallet storage and reset upgrade progression" round七: power
+   * gloves' own base carry capability — Lv.0 small only, Lv.1 adds medium,
+   * Lv.2 adds large (spec七). Read directly by pallet-system.ts's own
+   * take-from-rack gate, same no-setter pattern as isRopeStrapUnlocked
+   * above. */
+  getMaxCarryablePalletSize(): PalletSize {
+    const level = this.state.levels.powerGlovesUpgrade;
+    if (level >= 2) return 'large';
+    if (level >= 1) return 'medium';
+    return 'small';
+  }
+
+  canCarryPalletSize(size: PalletSize): boolean {
+    return PALLET_SIZE_ORDER.indexOf(size) <= PALLET_SIZE_ORDER.indexOf(this.getMaxCarryablePalletSize());
+  }
+
   private applyEffect(id: UpgradeId): void {
     const level = this.state.levels[id];
     switch (id) {
@@ -195,6 +223,10 @@ export class UpgradeSystem {
       case 'ropeStrap':
         // No setter to call — read directly via isRopeStrapUnlocked() by
         // pallet-system.ts's own F-key handler.
+        break;
+      case 'powerGlovesUpgrade':
+        // No setter to call — read directly via getMaxCarryablePalletSize()/
+        // canCarryPalletSize() by pallet-system.ts's own take-from-rack gate.
         break;
     }
   }

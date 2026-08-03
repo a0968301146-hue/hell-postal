@@ -82,7 +82,7 @@ export class GameApp {
     // 手持狀態") — PauseManager already freezes palletSystem.update() from
     // running while paused, so it just stays frozen in place and resumes
     // normally once the manual closes.
-    if (playerData.state === 'holding-item' && playerData.heldObjectId !== this.systems.palletSystem.palletId) {
+    if (playerData.state === 'holding-item' && !this.systems.palletSystem.isPalletId(playerData.heldObjectId ?? '')) {
       this.systems.pickupSystem.forceDropHeld();
     }
     if (playerData.state === 'pushing-dolly') {

@@ -1,1 +1,2 @@
-export { PalletSystem, PALLET_ID } from './pallet-system';
+export { PalletSystem } from './pallet-system';
+export * from './pallet-data';

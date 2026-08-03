@@ -237,7 +237,7 @@ export class InteractionSystem {
       // PickupSystem.canAddToHeld/pickUp already own.
       const heldForBagCheck = this.playerData.heldObjectId;
       const isHoldingEnvelope = !!(heldForBagCheck && this.mailSystem.getEnvelope(heldForBagCheck));
-      // Also blocked while the pallet itself is the currently-held item
+      // Also blocked while a pallet itself is the currently-held item
       // ("Fix cargo throwing and rebalance daily manifest" round一) — the
       // pallet's own world-space carry (pallet-system.ts) writes
       // playerData.heldObjectId directly and never pushes onto
@@ -248,11 +248,12 @@ export class InteractionSystem {
       // desync spec一 warns against: Q-throw and everything else reading
       // heldObjectId would then point at the wrong item while the pallet is
       // still visibly attached to the player with no way to place it).
-      const isHoldingPallet = this.playerData.heldObjectId === this.palletSystem.palletId;
+      const isHoldingPallet = this.palletSystem.isPalletId(this.playerData.heldObjectId ?? '');
       if (
         this.currentTarget &&
         !isHoldingPallet &&
-        this.currentTarget.id !== this.palletSystem.palletId &&
+        !this.palletSystem.isPalletId(this.currentTarget.id) &&
+        !this.palletSystem.isRackId(this.currentTarget.id) &&
         this.currentTarget.id !== MAIL_RACK_INTERACTABLE_ID &&
         this.currentTarget.id !== VEHICLE_CALL_BUTTON_ID && this.currentTarget.id !== VEHICLE_DEPART_BUTTON_ID &&
         !(this.mailBagSystem.isBag(this.currentTarget.id) && isHoldingEnvelope) &&
@@ -267,11 +268,19 @@ export class InteractionSystem {
       // pallet-system.ts's class doc comment for why it can't go through
       // PickupSystem's generic viewmodel-clone flow like every other held
       // item below) — a second E press here commits the placement if the
-      // live preview is valid, or stays held with a toast otherwise.
-      // tryPlace() owns playerData.state/heldObjectId itself on success, so
+      // live preview is valid, or stays held with a toast otherwise. Aiming
+      // at the pallet's OWN matching, currently-empty wall rack slot instead
+      // hangs it back up ("Rebuild pallet storage and reset upgrade
+      // progression" round六: "按E將托盤吸附回slot") rather than placing it
+      // on the floor — checked first since it's the more specific target.
+      // Both own playerData.state/heldObjectId themselves on success, so
       // there's nothing left to do here either way.
-      if (this.playerData.heldObjectId === this.palletSystem.palletId) {
-        this.palletSystem.tryPlace();
+      if (isHoldingPallet && this.playerData.heldObjectId) {
+        if (this.currentTarget && this.palletSystem.isMatchingEmptyRack(this.currentTarget.id, this.playerData.heldObjectId)) {
+          this.palletSystem.tryReturnToRack(this.currentTarget.id);
+        } else {
+          this.palletSystem.tryPlace();
+        }
         return;
       }
       // Insert held envelope into a targeted OPEN mail bag (spec二/三) —
@@ -429,16 +438,28 @@ export class InteractionSystem {
       return;
     }
 
-    // Priority 1: pick up targeted object (envelope, package, crate, or the
-    // sorting pallet). The pallet goes through its own pickUp() (world-space
-    // group-carry, not PickupSystem's viewmodel clone) — see pallet-system.ts.
-    // pickUp() owns playerData.state/heldObjectId itself and positions the
-    // pallet in front of the camera on this very first held frame.
+    // Priority 0.9: wall pallet racks, aimed at while empty-handed (nothing
+    // to hang up) — canPickUp is only true to satisfy the raycast filter,
+    // same reasoning as the mail rack/vehicle buttons above; intercepted
+    // here purely so it can never fall into Priority 1's generic pickup
+    // fallback below and fail there instead.
+    if (this.currentTarget && this.palletSystem.isRackId(this.currentTarget.id)) {
+      this.clearHighlight(this.currentTarget);
+      this.currentTarget = null;
+      return;
+    }
+
+    // Priority 1: pick up targeted object (envelope, package, crate, or a
+    // sorting pallet — resting on the floor OR straight off its wall rack).
+    // Pallets go through their own pickUp() (world-space group-carry, not
+    // PickupSystem's viewmodel clone) — see pallet-system.ts. pickUp() owns
+    // playerData.state/heldObjectId itself and positions the pallet in
+    // front of the camera on this very first held frame.
     if (this.currentTarget) {
-      if (this.currentTarget.id === this.palletSystem.palletId) {
+      if (this.palletSystem.isPalletId(this.currentTarget.id)) {
         const fwd = new THREE.Vector3();
         this.camera.getWorldDirection(fwd);
-        this.palletSystem.pickUp(this.camera.position, fwd);
+        this.palletSystem.pickUp(this.currentTarget.id, this.camera.position, fwd);
         this.clearHighlight(this.currentTarget);
         this.currentTarget = null;
         return;
@@ -626,8 +647,8 @@ export class InteractionSystem {
       // exists to satisfy this raycast's generic filter, never meant to
       // actually be carried.
       if (
-        hit && this.playerData.heldObjectId !== this.palletSystem.palletId &&
-        hit.id !== this.palletSystem.palletId && hit.id !== MAIL_RACK_INTERACTABLE_ID &&
+        hit && !this.palletSystem.isPalletId(this.playerData.heldObjectId ?? '') &&
+        !this.palletSystem.isPalletId(hit.id) && !this.palletSystem.isRackId(hit.id) && hit.id !== MAIL_RACK_INTERACTABLE_ID &&
         hit.id !== VEHICLE_CALL_BUTTON_ID && hit.id !== VEHICLE_DEPART_BUTTON_ID &&
         this.pickupSystem.canAddToHeld(hit)
       ) {
@@ -647,8 +668,17 @@ export class InteractionSystem {
         this.currentTarget = null;
         this.playerData.targetedObjectId = null;
       }
-      if (this.playerData.heldObjectId === this.palletSystem.palletId) {
-        if (this.palletSystem.previewValid) {
+      if (this.playerData.heldObjectId && this.palletSystem.isPalletId(this.playerData.heldObjectId)) {
+        // "Rebuild pallet storage and reset upgrade progression" round六:
+        // aiming at the carried pallet's own matching, currently-empty rack
+        // slot offers "E 掛回托盤" instead of the normal floor-placement
+        // prompt — the ACTION side (onKeyDown, above) already checks the
+        // exact same isMatchingEmptyRack condition, so this only needs to
+        // keep the DISPLAYED prompt in sync with what E will actually do.
+        if (hit && this.palletSystem.isMatchingEmptyRack(hit.id, this.playerData.heldObjectId)) {
+          this.hud.showInteractionPrompt('整理托盤', 'E 掛回托盤');
+          this.hud.setCrosshairActive(true);
+        } else if (this.palletSystem.previewValid) {
           this.hud.showInteractionPrompt('整理托盤', 'E：放置整理托盤');
           this.hud.setCrosshairActive(true);
         } else {
@@ -689,8 +719,20 @@ export class InteractionSystem {
           this.hud.showInteractionPrompt(newTarget.displayName, '按 E 拿起');
         } else if (this.envelopeSystem.isCrate(newTarget)) {
           this.hud.showInteractionPrompt(newTarget.displayName, `E：拿起信封箱\nF：取出信封 (剩餘${this.envelopeSystem.remainingCount})`);
-        } else if (newTarget.id === this.palletSystem.palletId) {
+        } else if (this.palletSystem.isPalletId(newTarget.id)) {
+          // Covers both a floor-placed pallet AND one still mounted on its
+          // wall rack (spec五: "按E後直接進入搬運狀態") — pickUp() itself
+          // owns the actual power-gloves-equip/level gate and shows the
+          // specific "需要裝備力量手套"/"力量手套尚無法搬動X型托盤" toast on
+          // a failed attempt, so this prompt stays a plain, always-shown
+          // hint rather than pre-computing that same gate twice.
           this.hud.showInteractionPrompt(newTarget.displayName, 'E：拿起整理托盤');
+        } else if (this.palletSystem.isRackId(newTarget.id)) {
+          // Empty-handed here (holding a pallet is handled entirely by the
+          // holding-item branch above) — an empty rack has nothing to do
+          // with E yet, just a neutral label so the crosshair highlight
+          // isn't left captionless.
+          this.hud.showInteractionPrompt(newTarget.displayName, '空掛架');
         } else if (this.mailSystem.getEnvelope(newTarget.id)) {
           // Crosshair inspect (spec三) — reuses this SAME raycast/prompt
           // path, no second raycasting system.

@@ -130,19 +130,26 @@ export class SpraySystem {
     this.previewYaw += dir * THREE.MathUtils.degToRad(SPRAY_ROTATE_STEP_DEG);
   }
 
-  /** Right-click creates ONE spot at the current preview position/yaw
-   * (spec五: "每次右鍵只建立一塊，不可持續重複噴出大量物件" — this is a plain
-   * 'mousedown' listener, fired once per press, never polled per-frame, so
-   * holding the button down can't spam spots). Bare-hands/cargo-hook
-   * right-click are untouched — both only ever act while their OWN
-   * activeTool is selected, and this only acts while 'sprayCan' is. */
+  /** "Rebuild pallet storage and reset upgrade progression" round一: left
+   * click creates ONE spot at the current preview position/yaw (spec:
+   * "每次按下只建立一塊，不支援按住連續噴漆" — a plain 'mousedown' listener,
+   * fired once per press, never polled per-frame, so holding the button
+   * down can't spam spots); right click deletes whichever EXISTING spot is
+   * currently under the crosshair, if any. Routed entirely by
+   * `activeTool === 'sprayCan'` (spec一: "依activeTool路由滑鼠輸入，不建立
+   * 互相搶事件的全域邏輯") — bare-hands/cargo-hook mousedown handlers each
+   * gate on their OWN activeTool the exact same way, so none of the three
+   * ever act on the other's input. */
   private onMouseDown(event: MouseEvent): void {
-    if (event.button !== 2) return;
     if (!this.isLocked()) return;
     if (this.pauseManager.isPaused) return;
     if (this.playerData.activeTool !== 'sprayCan') return;
-    if (!this.previewValid) return;
-    this.createSpot();
+    if (event.button === 0) {
+      if (!this.previewValid) return;
+      this.createSpot();
+    } else if (event.button === 2) {
+      this.deleteAimedSpot();
+    }
   }
 
   private createSpot(): void {
@@ -156,6 +163,24 @@ export class SpraySystem {
       colorIndex: 0,
       mesh,
     });
+  }
+
+  /** Right-click delete (spec一: "命中已建立的噴漆區域時，刪除該區域...一次
+   * 只刪除最前方命中的一塊...沒有命中噴漆時不執行任何事") — reuses
+   * findAimedSpot()'s exact same center-of-screen raycast (nearest hit
+   * wins), never a second targeting system. Removes the mesh from the
+   * scene, drops it from `spots`, and disposes its geometry/material so
+   * nothing is left as a dangling raycast target or a GPU resource leak
+   * (spec: "不留下無效raycast目標"). */
+  private deleteAimedSpot(): void {
+    const spot = this.findAimedSpot();
+    if (!spot) return;
+    this.scene.remove(spot.mesh);
+    spot.mesh.geometry.dispose();
+    (spot.mesh.material as THREE.Material).dispose();
+    const idx = this.spots.indexOf(spot);
+    if (idx !== -1) this.spots.splice(idx, 1);
+    if (this.aimedSpot === spot) this.aimedSpot = null;
   }
 
   /** E cycles the aimed decal's color (spec五: "按E依序循環六種顏色...只修改

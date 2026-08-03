@@ -1,7 +1,7 @@
 import { PlayerInteractionData, ActiveTool } from '../../core/game-state';
 import { HUD } from '../hud';
 import { PauseManager } from '../../core/pause-manager';
-import { PALLET_ID } from '../pallet';
+import { isPalletId } from '../pallet';
 
 const TOOL_NAME: Record<ActiveTool, string> = {
   empty: '徒手',
@@ -18,10 +18,10 @@ const TOOL_NAME: Record<ActiveTool, string> = {
  * Deliberately does NOT know about CargoHookSystem at all — CargoHookSystem
  * watches `playerData.activeTool` itself every frame and self-cancels the
  * instant it stops being 'cargoHook', so no callback/import wiring is
- * needed in either direction. It DOES need `PALLET_ID` (a plain exported
- * string constant, not a PalletSystem class reference — see pallet-
- * system.ts's own doc comment on why that constant exists) purely to block
- * switching tools while the pallet is held (spec四: "搬著托盤時不可切換工
+ * needed in either direction. It DOES need `isPalletId` (a plain exported
+ * data-only helper, not a PalletSystem class reference — see
+ * pallet-data.ts's own doc comment on why it's exported this way) purely to
+ * block switching tools while a pallet is held (spec四: "搬著托盤時不可切換工
  * 具，提示「請先放下托盤」"). */
 export class ToolSystem {
   private playerData: PlayerInteractionData;
@@ -136,7 +136,7 @@ export class ToolSystem {
    * deselected freely while it counts down. */
   trySelect(tool: ActiveTool): void {
     if (this.playerData.activeTool === tool) return;
-    if (this.playerData.heldObjectId === PALLET_ID) {
+    if (isPalletId(this.playerData.heldObjectId)) {
       this.hud.showToast('請先放下托盤');
       return;
     }
@@ -186,7 +186,7 @@ export class ToolSystem {
     // discrete state — see pallet-system.ts), so carrying it is the second
     // condition here.
     if (this.playerData.state === 'placement-preview') return;
-    if (this.playerData.heldObjectId === PALLET_ID) return;
+    if (isPalletId(this.playerData.heldObjectId)) return;
     // "Fix pallet throw and add spray paint tool" round spec五: "噴漆預覽存
     // 在時，滾輪不切換工具" — spray-paint has no separate discrete "preview
     // mode" the way held-item placement does (its projection is just the

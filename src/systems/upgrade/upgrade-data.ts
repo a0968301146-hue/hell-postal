@@ -82,6 +82,18 @@ export const UPGRADE_DEFINITIONS: UpgradeDefinition[] = [
       { level: 1, description: '搬運托盤時可按 F 綁定／解除固定繩，綁定後投擲托盤不會使貨物散落' },
     ],
   },
+  {
+    id: 'powerGlovesUpgrade',
+    displayName: '力量手套強化',
+    description: '強化力量手套的負重能力，解鎖搬運更大尺寸的整理托盤（小型／中型／大型三種掛牆托盤）。',
+    maxLevel: 2,
+    costs: [60, 100],
+    levelEffects: [
+      { level: 0, description: '只能搬運小型托盤' },
+      { level: 1, description: '可搬運小型與中型托盤' },
+      { level: 2, description: '可搬運小型、中型與大型托盤' },
+    ],
+  },
 ];
 
 export function getUpgradeDefinition(id: UpgradeId): UpgradeDefinition {
