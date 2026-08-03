@@ -82,17 +82,34 @@ function drawFrame(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): vo
  * MIN_CANVAS_HEIGHT) and grows the sprite's world-space scale to match — the
  * canvas element's `.height`/`.width` setters always clear its pixel
  * content, which is fine here since every caller redraws immediately after.
- * Reassigning either dimension also invalidates the CanvasTexture, hence
- * the `needsUpdate` on return. */
+ *
+ * Whenever the canvas's own pixel dimensions actually change, a plain
+ * `texture.needsUpdate = true` on the EXISTING THREE.CanvasTexture is not
+ * enough to make the renderer re-upload/resize the GPU-side texture in this
+ * renderer's configuration — verified directly (real E press advances
+ * greeting -> waitingForItem, the canvas is genuinely redrawn with the new
+ * item name/preview/prompt and its dimensions genuinely change, yet the
+ * on-screen sprite kept showing the old greeting content even across an
+ * extra explicit re-render and a second needsUpdate toggle; swapping in a
+ * brand-new CanvasTexture wrapping the same canvas fixed it immediately).
+ * So a fresh CanvasTexture is created and swapped onto the material every
+ * time this fires — which is only on an actual dialogue-stage change
+ * (greeting/waitingForItem/thanking/missed), never per-frame — and the old
+ * one is disposed to avoid leaking the GPU texture. */
 function resizeBubbleCanvas(bubble: LostFoundBubble, contentHeight: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; texture: THREE.CanvasTexture } {
   const material = bubble.sprite.material as THREE.SpriteMaterial;
-  const texture = material.map as THREE.CanvasTexture;
-  const canvas = texture.image as HTMLCanvasElement;
+  const oldTexture = material.map as THREE.CanvasTexture;
+  const canvas = oldTexture.image as HTMLCanvasElement;
   const canvasHeight = Math.max(MIN_CANVAS_HEIGHT, Math.ceil(contentHeight));
   canvas.width = CANVAS_WIDTH;
   canvas.height = canvasHeight;
   bubble.sprite.scale.set(SPRITE_WORLD_WIDTH, SPRITE_WORLD_WIDTH * (canvasHeight / CANVAS_WIDTH), 1);
-  texture.needsUpdate = true;
+
+  const texture = new THREE.CanvasTexture(canvas);
+  material.map = texture;
+  material.needsUpdate = true;
+  oldTexture.dispose();
+
   return { canvas, ctx: canvas.getContext('2d')!, texture };
 }
 
