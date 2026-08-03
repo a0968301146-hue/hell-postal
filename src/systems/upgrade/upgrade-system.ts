@@ -19,11 +19,24 @@ import { PalletSize, PALLET_SIZE_ORDER } from '../pallet/pallet-data';
  * versioned storage key already IS a one-time migration by construction. */
 const UPGRADE_STORAGE_KEY = 'hp_manual_upgrades_v2';
 
+// TEMPORARY TEST GRANT — remove before public demo.
+// A brand-new save starts with this much spendable score (skills all still
+// Lv.0, purchases still deduct normally) instead of 0, so testers have
+// something to actually spend without needing to play a full day first.
+// TEMPORARY_TEST_GRANT_VERSION is a one-time-migration stamp (mirrors this
+// file's own upgradePoints->availableSettlementScore migration just below)
+// — bump it if this grant amount ever needs to be re-applied to saves that
+// already received an earlier version; leave it alone otherwise, or every
+// reload would hand out another 1000.
+const TEMPORARY_TEST_STARTING_SCORE = 1000;
+const TEMPORARY_TEST_GRANT_VERSION = 1;
+
 function createDefaultUpgradeSaveState(): UpgradeSaveState {
   return {
-    availableSettlementScore: 0,
+    availableSettlementScore: TEMPORARY_TEST_STARTING_SCORE, // TEMPORARY TEST GRANT — remove before public demo
     levels: { multiCarry: 0, heavyHandling: 0, moveSpeed: 0, similarCargoSense: 0, ropeStrap: 0, powerGlovesUpgrade: 0 },
     settledDayId: null,
+    testGrantVersion: TEMPORARY_TEST_GRANT_VERSION, // TEMPORARY TEST GRANT — remove before public demo
   };
 }
 
@@ -51,7 +64,7 @@ function mergeUpgradeSaveState(saved: (Partial<UpgradeSaveState> & { upgradePoin
     levels[def.id] = typeof lvl === 'number' && lvl >= 0 && lvl <= def.maxLevel ? lvl : 0;
   }
 
-  let availableSettlementScore = base.availableSettlementScore;
+  let availableSettlementScore = 0;
   if (typeof saved.availableSettlementScore === 'number' && saved.availableSettlementScore >= 0) {
     availableSettlementScore = saved.availableSettlementScore;
   } else if (typeof saved.upgradePoints === 'number' && saved.upgradePoints >= 0) {
@@ -61,10 +74,23 @@ function mergeUpgradeSaveState(saved: (Partial<UpgradeSaveState> & { upgradePoin
     availableSettlementScore = saved.upgradePoints;
   }
 
+  // TEMPORARY TEST GRANT — remove before public demo. A save that predates
+  // this grant (testGrantVersion missing or behind the current stamp) gets
+  // topped up ONCE — never below whatever it already had (spec: "使用
+  // testGrantVersion避免重複發放" / "availableSettlementScore =
+  // max(currentScore, 1000)") — and stamped so this branch can never fire
+  // again for the same save.
+  const savedTestGrantVersion = typeof saved.testGrantVersion === 'number' ? saved.testGrantVersion : 0;
+  if (savedTestGrantVersion < TEMPORARY_TEST_GRANT_VERSION) {
+    availableSettlementScore = Math.max(availableSettlementScore, TEMPORARY_TEST_STARTING_SCORE);
+  }
+  const testGrantVersion = Math.max(savedTestGrantVersion, TEMPORARY_TEST_GRANT_VERSION);
+
   return {
     availableSettlementScore,
     levels,
     settledDayId: typeof saved.settledDayId === 'number' ? saved.settledDayId : base.settledDayId,
+    testGrantVersion,
   };
 }
 
@@ -95,8 +121,20 @@ export class UpgradeSystem {
   constructor(pickupSystem: PickupSystem, playerController: PlayerController) {
     this.pickupSystem = pickupSystem;
     this.playerController = playerController;
-    this.state = mergeUpgradeSaveState(this.storage.getJSON<UpgradeSaveState>(UPGRADE_STORAGE_KEY));
+    const rawSaved = this.storage.getJSON<UpgradeSaveState>(UPGRADE_STORAGE_KEY);
+    this.state = mergeUpgradeSaveState(rawSaved);
     this.applyAllEffects();
+
+    // TEMPORARY TEST GRANT — remove before public demo. An existing save
+    // that just received the one-time top-up above must be persisted RIGHT
+    // NOW — otherwise a refresh before the player's next organic save()
+    // (a purchase or a day settling) would still read the old, un-stamped
+    // save from storage and grant it again (spec: "不可每次重新整理重新補
+    // 1000分"). A brand-new save (rawSaved === null) needs no such write —
+    // there's nothing on disk yet to desync from.
+    if (rawSaved && (typeof rawSaved.testGrantVersion !== 'number' || rawSaved.testGrantVersion < this.state.testGrantVersion)) {
+      this.save();
+    }
   }
 
   get availableSettlementScore(): number {

@@ -86,6 +86,34 @@ export const LOST_FOUND_COUNTER = { x: -12.5, z: 16.5 };
  * identical either way; only the back panel/NPC/interaction side flip. */
 export const LOST_FOUND_COUNTER_HALF_EXTENTS = { x: 0.35, y: 0.45, z: 1.4 };
 
+/** NPC interaction sensor zone ("Fix NPC interaction zone and expand fishing
+ * pier" round一) — replaces a distance-formula check with a real Rapier
+ * sensor volume the player's own capsule must genuinely overlap
+ * (lost-found-system.ts's isPlayerInsideSensor). Sits entirely on the
+ * counter's EAST (player-approach) face, starting exactly at that face — 0
+ * overlap with the counter's own solid collider (spec: "不可放在櫃檯Collider
+ * 內") — and nowhere near the NPC's own west-side wait spot on the far side
+ * of the counter (spec: "不可放在NPC模型中心後方").
+ *
+ * halfExtents.x (depth, protrudes east off the counter face) = 0.5 ->
+ * zone CENTER sits 0.5m east of the counter's own face, within the spec's
+ * 0.35~0.55m range. halfExtents.z (width, along the counter's own length
+ * axis) = 0.8 -> 1.6m total, narrower than the counter's own 2.8m length,
+ * centered on it. halfExtents.y (height) = 0.9 -> 1.8m total, matching the
+ * player capsule's own full height (2*0.55 halfHeight + 2*0.35 radius,
+ * physics-system.ts) so a standing player's whole body is inside the zone's
+ * vertical span, not just their feet or head. */
+const LOST_FOUND_INTERACTION_ZONE_HALF_EXTENTS = { x: 0.5, y: 0.9, z: 0.8 };
+const lostFoundCounterFrontFaceX = LOST_FOUND_COUNTER.x + LOST_FOUND_COUNTER_HALF_EXTENTS.x;
+export const LOST_FOUND_INTERACTION_ZONE = {
+  center: {
+    x: lostFoundCounterFrontFaceX + LOST_FOUND_INTERACTION_ZONE_HALF_EXTENTS.x,
+    y: LOST_FOUND_ROOM.floorY + LOST_FOUND_INTERACTION_ZONE_HALF_EXTENTS.y,
+    z: LOST_FOUND_COUNTER.z,
+  },
+  halfExtents: LOST_FOUND_INTERACTION_ZONE_HALF_EXTENTS,
+};
+
 /** Lost-item storage cabinet — OUT of the small front room and into
  * BACK_AREA's own package-sorting area, against its west wall, north of the
  * player spawn/pallet cluster with open floor on every other side ("Expand

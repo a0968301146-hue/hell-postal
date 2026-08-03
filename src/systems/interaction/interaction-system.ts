@@ -345,6 +345,7 @@ export class InteractionSystem {
       // interior special cases above.
       if (
         this.playerData.heldObjectId &&
+        this.playerData.activeTool === 'empty' &&
         this.lostFoundSystem.isNpcWaiting &&
         this.lostFoundSystem.isPlayerNearCounter(this.camera.position)
       ) {
@@ -396,7 +397,11 @@ export class InteractionSystem {
     // lostFoundNpcInteractedToday via tryConfirmAtCounter(null). Checked
     // before the generic pickup priorities below since nothing else should
     // ever be targetable while standing at the counter.
-    if (this.lostFoundSystem.isNpcWaiting && this.lostFoundSystem.isPlayerNearCounter(this.camera.position)) {
+    if (
+      this.playerData.activeTool === 'empty' &&
+      this.lostFoundSystem.isNpcWaiting &&
+      this.lostFoundSystem.isPlayerNearCounter(this.camera.position)
+    ) {
       this.lostFoundSystem.tryConfirmAtCounter(null);
       return;
     }
@@ -687,6 +692,7 @@ export class InteractionSystem {
         }
       } else if (
         this.playerData.heldObjectId &&
+        this.playerData.activeTool === 'empty' &&
         this.lostFoundSystem.isNpcWaiting &&
         this.lostFoundSystem.isPlayerNearCounter(this.camera.position)
       ) {
@@ -811,7 +817,11 @@ export class InteractionSystem {
   private updateStationPrompts(): void {
     // Lost & found counter — empty-handed talk-only prompt (spec三 case3),
     // checked first since nothing else is targetable while standing there.
-    if (this.lostFoundSystem.isNpcWaiting && this.lostFoundSystem.isPlayerNearCounter(this.camera.position)) {
+    if (
+      this.playerData.activeTool === 'empty' &&
+      this.lostFoundSystem.isNpcWaiting &&
+      this.lostFoundSystem.isPlayerNearCounter(this.camera.position)
+    ) {
       this.hud.showInteractionPrompt('失物招領櫃檯', 'E 交還失物／與顧客互動');
       this.hud.setCrosshairActive(true);
       return;

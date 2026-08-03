@@ -7,7 +7,10 @@ import { InteractableObject, createInteractableObject } from '../../shared/types
 // InteractionSystem, which depends on LostFoundSystem.
 import { PickupPort } from '../../shared/types/pickup-port';
 import { SCENE_CONFIG } from '../world-layout';
-import { LOST_FOUND_ROOM, LOST_FOUND_COUNTER, LOST_FOUND_COUNTER_HALF_EXTENTS } from '../../data/world/lost-found-layout-data';
+import RAPIER from '@dimforge/rapier3d-compat';
+import {
+  LOST_FOUND_ROOM, LOST_FOUND_COUNTER, LOST_FOUND_COUNTER_HALF_EXTENTS, LOST_FOUND_INTERACTION_ZONE,
+} from '../../data/world/lost-found-layout-data';
 import {
   LOST_ITEM_PRESETS, LostItemPreset, LOST_FOUND_CASES, LostFoundCaseDef, LOST_FOUND_WRONG_ITEM_TEXT, LOST_FOUND_MISSED_TEXT,
   LOST_FOUND_SEEKING_TEXT, LOST_FOUND_CONTINUE_PROMPT, DECOY_LOST_ITEM_COUNT, DAILY_LOST_FOUND_NPC_COUNT, buildLostItemGeometry,
@@ -28,6 +31,12 @@ const LOST_ITEM_ID_PREFIX = 'lostitem-';
  * visitors and held cargo feedback" round二: "NPC原地進入thanking 4秒...4秒
  * 後才離場"). */
 const LOST_FOUND_THANKING_DURATION = 4;
+
+/** Visualizes LOST_FOUND_INTERACTION_ZONE as a semi-transparent box while
+ * true ("Fix NPC interaction zone and expand fishing pier" round一) — always
+ * false in the shipped build; flip locally only to eyeball the zone's real
+ * placement against the counter/NPC. */
+const DEBUG_LOST_FOUND_INTERACTION_ZONE = false;
 
 function randRange(min: number, max: number): number {
   return min + Math.random() * (max - min);
@@ -144,6 +153,17 @@ export class LostFoundSystem {
    * UNLOAD_BURST_CONFIG, never modified), so they don't visually launch
    * through a still-closed port. null when no spawn is pending. */
   private lostItemSpawnTimer: number | null = null;
+  /** The real Rapier sensor volume covering LOST_FOUND_INTERACTION_ZONE
+   * ("Fix NPC interaction zone and expand fishing pier" round一) — built
+   * once in buildInteractionZone(), read every frame in update(). */
+  private interactionZoneSensor!: RAPIER.Collider;
+  /** True while the player's capsule genuinely overlaps
+   * interactionZoneSensor this frame — the ONE flag isPlayerNearCounter()
+   * defers to, so the interaction prompt and the actual E-key handling can
+   * never disagree (both call sites already route through the same public
+   * method; this just changes what that method reads internally). Set/
+   * cleared every frame in update(), never guessed from position math. */
+  private canInteractWithLostFound = false;
 
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>,
@@ -159,6 +179,31 @@ export class LostFoundSystem {
     this.cabinetSystem = new LostFoundCabinetSystem(scene, physics, interactables, pickupSystem);
 
     this.buildCounter();
+    this.buildInteractionZone();
+  }
+
+  /** Real Rapier sensor trigger covering LOST_FOUND_INTERACTION_ZONE ("Fix
+   * NPC interaction zone and expand fishing pier" round一) — a genuine
+   * physics volume the player's own capsule must overlap, replacing the old
+   * "3D straight-line distance to the NPC/counter" formula (spec: "不以NPC
+   * 模型中心的3D直線距離作為唯一判斷"). Never blocks movement (sensors
+   * produce no contact response) and only ever tested against the player's
+   * own collider (spec: "只偵測GROUP_PLAYER" — see createSensorCuboid's own
+   * doc comment for how that's enforced). */
+  private buildInteractionZone(): void {
+    const { center, halfExtents } = LOST_FOUND_INTERACTION_ZONE;
+    this.interactionZoneSensor = this.physics.createSensorCuboid(
+      center.x, center.y, center.z, halfExtents.x, halfExtents.y, halfExtents.z
+    );
+
+    if (DEBUG_LOST_FOUND_INTERACTION_ZONE) {
+      const geo = new THREE.BoxGeometry(halfExtents.x * 2, halfExtents.y * 2, halfExtents.z * 2);
+      const mat = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.25, wireframe: false });
+      const debugMesh = new THREE.Mesh(geo, mat);
+      debugMesh.position.set(center.x, center.y, center.z);
+      this.scene.add(debugMesh);
+      this.scene.add(new THREE.BoxHelper(debugMesh, 0x00ff00));
+    }
   }
 
   private buildCounter(): void {
@@ -399,16 +444,24 @@ export class LostFoundSystem {
     return this.npcSystem.state === 'waiting';
   }
 
-  /** Player must be within range AND on the counter's EAST side — the NPC
-   * always waits on the west side after the 180° rotation ("Expand lost
-   * found return storage and scoring" round一), so this is what actually
-   * enforces "玩家與NPC互動時仍隔著櫃檯". */
+  /** Authoritative "can the player interact with the lost-found NPC right
+   * now" check ("Fix NPC interaction zone and expand fishing pier" round
+   * 一) — PRIMARILY canInteractWithLostFound, the real Rapier sensor-overlap
+   * flag refreshed every frame in update(), not a distance formula (spec:
+   * "不以NPC模型中心的3D直線距離作為唯一判斷"). `pos` still feeds an
+   * optional SECOND-layer horizontal-distance safety net (spec: "可保留水平
+   * 距離作第二層安全判斷，但忽略不必要的Y高度差") — deliberately generous
+   * (interactionDistance+2) so it only ever matters if canInteractWithLostFound
+   * somehow stayed stale/true from a position far away (e.g. a same-frame
+   * teleport), never as the deciding factor during normal play. Every call
+   * site (both the prompt display and the actual E-key handling) routes
+   * through this SAME method, so the two can never disagree (spec: "提示與
+   * 實際互動使用同一個判定"). */
   isPlayerNearCounter(pos: THREE.Vector3): boolean {
+    if (!this.canInteractWithLostFound) return false;
     const dx = pos.x - LOST_FOUND_COUNTER.x;
     const dz = pos.z - LOST_FOUND_COUNTER.z;
-    const dist = Math.sqrt(dx * dx + dz * dz);
-    const onEastSide = pos.x > LOST_FOUND_COUNTER.x;
-    return onEastSide && dist < SCENE_CONFIG.interactionDistance + 1;
+    return Math.sqrt(dx * dx + dz * dz) < SCENE_CONFIG.interactionDistance + 2;
   }
 
   /** Press E at the counter while the CURRENT queue entry's NPC is
@@ -507,6 +560,14 @@ export class LostFoundSystem {
   }
 
   update(deltaTime: number): void {
+    // Refreshed first, every frame, from a REAL Rapier sensor-overlap query
+    // (spec: "玩家進入時設定canInteractWithLostFound=true，離開時清除") —
+    // game-app.ts's own update() runs playerController.update() + physics
+    // .update() (finalizing this frame's player position) before ever
+    // reaching lostFoundSystem.update(), so this always reflects the
+    // player's up-to-date position for the frame it's read in.
+    this.canInteractWithLostFound = this.physics.isPlayerInsideSensor(this.interactionZoneSensor);
+
     this.npcSystem.update(deltaTime);
     this.cabinetSystem.update(deltaTime);
 

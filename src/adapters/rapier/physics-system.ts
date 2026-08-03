@@ -46,6 +46,43 @@ export class PhysicsSystem implements PhysicsWorldPort {
     this.world.createCollider(colliderDesc, body);
   }
 
+  /** Fixed, non-blocking SENSOR cuboid ("Fix NPC interaction zone and expand
+   * fishing pier" round一) — a genuine Rapier trigger volume, not a distance
+   * formula: `isPlayerInsideSensor()` below reports real geometric overlap
+   * with the player's own capsule via `world.intersectionPair()`, which
+   * Rapier only computes between a pair where at least one side is a
+   * sensor. Membership/filter are set to only ever be meaningfully tested
+   * against GROUP_PLAYER (spec: "只偵測GROUP_PLAYER") — callers only ever
+   * pass the returned collider back into isPlayerInsideSensor, never use it
+   * for a broader group-filtered query, so this pairing is what actually
+   * enforces that restriction in practice. Never blocks movement — sensors
+   * produce no contact response in Rapier by construction. */
+  createSensorCuboid(x: number, y: number, z: number, hx: number, hy: number, hz: number): RAPIER.Collider {
+    const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z);
+    const body = this.world.createRigidBody(bodyDesc);
+    const colliderDesc = RAPIER.ColliderDesc.cuboid(hx, hy, hz)
+      .setSensor(true)
+      .setCollisionGroups((GROUP_STATIC << 16) | GROUP_PLAYER)
+      // Rapier's own ActiveCollisionTypes.DEFAULT explicitly excludes any
+      // pair between two non-dynamic bodies ("not enabling collisions
+      // between two non-dynamic bodies" — collider.d.ts) — the player body
+      // is KinematicPositionBased and this sensor's body is Fixed, so
+      // without this the sensor would silently never report an overlap
+      // with the player no matter how deep the actual geometric overlap
+      // is. Verified empirically: intersectionPair() returned false even
+      // with the player capsule centered exactly on the sensor until this
+      // flag was added.
+      .setActiveCollisionTypes(RAPIER.ActiveCollisionTypes.DEFAULT | RAPIER.ActiveCollisionTypes.KINEMATIC_FIXED);
+    return this.world.createCollider(colliderDesc, body);
+  }
+
+  /** True while the player's own capsule collider genuinely overlaps the
+   * given sensor (created via createSensorCuboid above) this physics step —
+   * real geometric intersection, not a cached/derived position check. */
+  isPlayerInsideSensor(sensor: RAPIER.Collider): boolean {
+    return this.world.intersectionPair(this.playerCollider, sensor);
+  }
+
   /** Static cuboid tilted around the X axis (radians) — used for sloped surfaces like the cargo ramp. */
   createStaticCuboidRotatedX(x: number, y: number, z: number, hx: number, hy: number, hz: number, rotX: number, friction = 0.7): void {
     const quat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), rotX);
