@@ -7,13 +7,13 @@ const TOOL_NAME: Record<ActiveTool, string> = {
   empty: '徒手',
   powerGloves: '力量手套',
   cargoHook: '捕貨鉤',
+  sprayCan: '噴漆罐',
 };
 
 /** Bottom-center 4-slot hotbar ("Add tool hotbar and cargo hook" round 一,
  * slot 2 unlocked by "Add power gloves and refine cargo hook cooldown"
- * round 三) — owns ONLY tool-selection state/input/UI. Slot 4 (預留) stays
- * permanently locked this round — there is no unlock mechanism for it yet,
- * so digit press / wheel never reach it (spec: "第4格保持鎖定").
+ * round 三, slot 4 unlocked by "Fix pallet throw and add spray paint tool"
+ * round 五) — owns ONLY tool-selection state/input/UI.
  *
  * Deliberately does NOT know about CargoHookSystem at all — CargoHookSystem
  * watches `playerData.activeTool` itself every frame and self-cancels the
@@ -32,14 +32,16 @@ export class ToolSystem {
   private slot1El: HTMLElement;
   private slot2El: HTMLElement;
   private slot3El: HTMLElement;
+  private slot4El: HTMLElement;
   private slot3CooldownOverlay: HTMLElement;
   private slot3CooldownText: HTMLElement;
   private toolNamePopup: HTMLElement;
   private toolNameTimer: number | null = null;
 
   /** Wheel-cycle order matches the visible slot order left-to-right —
-   * spec三: "滾輪在1→2→3之間循環". */
-  private readonly WHEEL_CYCLE: ActiveTool[] = ['empty', 'powerGloves', 'cargoHook'];
+   * "Fix pallet throw and add spray paint tool" round spec五: "滾輪工具切換
+   * 改為1→2→3→4循環". */
+  private readonly WHEEL_CYCLE: ActiveTool[] = ['empty', 'powerGloves', 'cargoHook', 'sprayCan'];
 
   constructor(playerData: PlayerInteractionData, hud: HUD, pauseManager: PauseManager, isLockedFn: () => boolean) {
     this.playerData = playerData;
@@ -55,7 +57,7 @@ export class ToolSystem {
     this.slot1El = this.buildSlot('1', '✋', '徒手', false);
     this.slot2El = this.buildSlot('2', '🧤', '力量手套', false);
     this.slot3El = this.buildSlot('3', '🪝', '捕貨鉤', false);
-    const slot4El = this.buildSlot('4', '', '', true);
+    this.slot4El = this.buildSlot('4', '🎨', '噴漆罐', false);
 
     // "Improve cargo hook aerial pickup" round spec五: "工具欄第3格顯示冷卻
     // 遮罩與剩餘秒數" — a rising dark overlay (height = remaining/total) plus
@@ -72,7 +74,7 @@ export class ToolSystem {
     hotbar.appendChild(this.slot1El);
     hotbar.appendChild(this.slot2El);
     hotbar.appendChild(this.slot3El);
-    hotbar.appendChild(slot4El);
+    hotbar.appendChild(this.slot4El);
     container.appendChild(hotbar);
 
     this.toolNamePopup = document.createElement('div');
@@ -104,6 +106,7 @@ export class ToolSystem {
     this.slot1El.classList.toggle('selected', this.playerData.activeTool === 'empty');
     this.slot2El.classList.toggle('selected', this.playerData.activeTool === 'powerGloves');
     this.slot3El.classList.toggle('selected', this.playerData.activeTool === 'cargoHook');
+    this.slot4El.classList.toggle('selected', this.playerData.activeTool === 'sprayCan');
   }
 
   private showToolNamePopup(tool: ActiveTool): void {
@@ -126,6 +129,8 @@ export class ToolSystem {
    *   (prior round; Pallet/dolly holds also set state away from
    *   'empty-handed', so this one check covers every kind of "currently
    *   holding something" case, not just PickupSystem's own heldObjectId).
+   * - "噴漆罐必須空手使用" ("Fix pallet throw and add spray paint tool" round
+   *   spec五) — same reasoning/gate as cargoHook above.
    * Does NOT gate on cargo-hook cooldown — a cooldown only blocks FIRING
    * (see CargoHookSystem.onMouseDown), the tool can still be selected/
    * deselected freely while it counts down. */
@@ -135,7 +140,7 @@ export class ToolSystem {
       this.hud.showToast('請先放下托盤');
       return;
     }
-    if (tool === 'cargoHook' && this.playerData.state !== 'empty-handed') {
+    if ((tool === 'cargoHook' || tool === 'sprayCan') && this.playerData.state !== 'empty-handed') {
       this.hud.showToast('請先放下手上的物品');
       return;
     }
@@ -168,9 +173,7 @@ export class ToolSystem {
     if (event.code === 'Digit1') { this.trySelect('empty'); return; }
     if (event.code === 'Digit2') { this.trySelect('powerGloves'); return; }
     if (event.code === 'Digit3') { this.trySelect('cargoHook'); return; }
-    if (event.code === 'Digit4') {
-      this.hud.showToast('尚未解鎖');
-    }
+    if (event.code === 'Digit4') { this.trySelect('sprayCan'); return; }
   }
 
   private onWheel(event: WheelEvent): void {
@@ -184,10 +187,19 @@ export class ToolSystem {
     // condition here.
     if (this.playerData.state === 'placement-preview') return;
     if (this.playerData.heldObjectId === PALLET_ID) return;
+    // "Fix pallet throw and add spray paint tool" round spec五: "噴漆預覽存
+    // 在時，滾輪不切換工具" — spray-paint has no separate discrete "preview
+    // mode" the way held-item placement does (its projection is just the
+    // tool's normal behavior the whole time it's selected — see
+    // spray-paint-system.ts), so the same "own the wheel while this tool is
+    // active" pattern as the placement-preview check above applies here:
+    // SpraySystem registers its OWN 'wheel' listener for rotation, gated on
+    // this exact same activeTool check.
+    if (this.playerData.activeTool === 'sprayCan') return;
     if (Math.abs(event.deltaY) < 1) return;
-    // Cycles through the three usable slots in visible left-to-right order
-    // (spec三: "滾輪在1→2→3之間循環"), direction-aware so scrolling back
-    // reverses it — slot 4 is never a wheel destination.
+    // Cycles through the four usable slots in visible left-to-right order
+    // (spec五: "滾輪工具切換改為1→2→3→4循環"), direction-aware so scrolling
+    // back reverses it.
     const currentIndex = this.WHEEL_CYCLE.indexOf(this.playerData.activeTool);
     const dir = event.deltaY > 0 ? 1 : -1;
     const nextIndex = (currentIndex + dir + this.WHEEL_CYCLE.length) % this.WHEEL_CYCLE.length;

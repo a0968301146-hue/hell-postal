@@ -285,6 +285,11 @@ export class GameApp {
     // just above, for the crosshair "can-hook" indicator instead of a
     // second raycast (spec七).
     s.cargoHookSystem.update(deltaTime, inspectedCargo);
+    // "Fix pallet throw and add spray paint tool" round: same unconditional/
+    // self-guarding convention as cargoHookSystem just above (checks
+    // pauseManager.isPaused/isLocked internally rather than being gated by
+    // the caller here).
+    s.spraySystem.update();
     // "同類感知" upgrade ("Revise score upgrades and fix frog walkable
     // colliders" round spec二D: 觸發方式改為手持一件貨物時啟用，不再要求準
     // 心先對準貨物) — driven by the CURRENTLY HELD item instead of the

@@ -326,63 +326,7 @@ export const VEHICLE_CONTROL_WALL_BUTTONS = {
   depth: VEHICLE_BUTTON_DEPTH,
 };
 
-/** Reserved (white-box only, no function yet) cargo-type zones — space is
- * claimed now so future systems have somewhere to go; purely floor decals +
- * floating labels (world-layout-system.ts buildCargoZones), no physics
- * collider, so they never block player movement. Only help the player sort
- * — nothing requires cargo to sit in one before it can ship (unchanged).
- *
- * Two rows ("移除滾筒架/特殊貨物放置區加倍" round: 特殊貨物區域加倍 — 大型/
- * 冷凍/活體三種各多一個海外版): DOMESTIC_ROW (south, the original 5-zone
- * row) and OVERSEAS_ROW (north, immediately adjacent — touches
- * DOMESTIC_ROW's own minZ exactly, never overlapping it) hold matching
- * same-size overseas copies of the large/frozen/live zones only —
- * zone-normal and zone-fragile stay single (this round only doubles
- * 大型/冷凍/活體, per spec). OVERSEAS_ROW sits at Z 17.5–20.5, well clear
- * of the player spawn (z=14.8)/pallet (z=15.5, PALLET_CONFIG)/dolly's
- * parked spot (z=16, DOLLY_CONFIGS)/unload debris zone (z<=14.3) to its
- * north, and the vehicle control posts (z=25.5, VEHICLE_CONTROL_POS) well
- * south of DOMESTIC_ROW. */
-const CARGO_ZONE_HALF_WIDTH = 1.6;
-const DOMESTIC_ROW_MIN_Z = BACK_AREA.minZ + 10.5; // 20.5
-const DOMESTIC_ROW_MAX_Z = BACK_AREA.minZ + 13.5; // 23.5
-const OVERSEAS_ROW_MAX_Z = DOMESTIC_ROW_MIN_Z; // 20.5 — touches, doesn't overlap
-const OVERSEAS_ROW_MIN_Z = OVERSEAS_ROW_MAX_Z - (DOMESTIC_ROW_MAX_Z - DOMESTIC_ROW_MIN_Z); // 17.5 — same depth as the domestic row
-
-export const CARGO_ZONES = [
-  { id: 'zone-normal', label: '一般貨物區', centerX: -7.2, color: 0x8a8a8a, minZ: DOMESTIC_ROW_MIN_Z, maxZ: DOMESTIC_ROW_MAX_Z },
-  { id: 'zone-large-domestic', label: '國內大型貨物區', centerX: -3.6, color: 0x8a6a4a, minZ: DOMESTIC_ROW_MIN_Z, maxZ: DOMESTIC_ROW_MAX_Z },
-  { id: 'zone-large-overseas', label: '海外大型貨物區', centerX: -3.6, color: 0x8a6a4a, minZ: OVERSEAS_ROW_MIN_Z, maxZ: OVERSEAS_ROW_MAX_Z },
-  { id: 'zone-frozen-domestic', label: '國內冷凍貨物區', centerX: 0, color: 0x4a90b8, minZ: DOMESTIC_ROW_MIN_Z, maxZ: DOMESTIC_ROW_MAX_Z },
-  { id: 'zone-frozen-overseas', label: '海外冷凍貨物區', centerX: 0, color: 0x4a90b8, minZ: OVERSEAS_ROW_MIN_Z, maxZ: OVERSEAS_ROW_MAX_Z },
-  { id: 'zone-live-domestic', label: '國內活體貨物區', centerX: 3.6, color: 0x4a9a4a, minZ: DOMESTIC_ROW_MIN_Z, maxZ: DOMESTIC_ROW_MAX_Z },
-  { id: 'zone-live-overseas', label: '海外活體貨物區', centerX: 3.6, color: 0x4a9a4a, minZ: OVERSEAS_ROW_MIN_Z, maxZ: OVERSEAS_ROW_MAX_Z },
-  // "Add sequential lost-found visitors and held cargo feedback" round五:
-  // renamed from '失物招領區' — this decorative floor zone (id + label
-  // only, see buildCargoZones) is unrelated to the REAL lost-found NPC/
-  // cabinet system (lost-found-system.ts et al, untouched), which keeps its
-  // own room/counter/label elsewhere. Only the id/label change here; the
-  // zone's position/color/footprint are untouched (spec: "只修改後場分類區
-  // 名稱").
-  { id: 'zone-fragile', label: '易碎品區', centerX: 7.2, color: 0xb8a04a, minZ: DOMESTIC_ROW_MIN_Z, maxZ: DOMESTIC_ROW_MAX_Z },
-].map(z => ({ ...z, halfWidth: CARGO_ZONE_HALF_WIDTH }));
-
 // Compass convention (see compass-ui.ts): North = -Z, East = +X, South = +Z, West = -X.
-
-/** Land docks — hugs the back area's SOUTH wall, one active slot per land
- * creature ("Expand land entrance and cargo capacity" round — see
- * vehicle-dock-data.ts for the exact per-vehicle world positions these
- * decorative floor markers echo). "Update vehicle cargo compatibility and
- * capacity" round: centerX/centerZ/width/depth all recomputed to exactly
- * match each vehicle's own SCALED footprint (VEHICLE_VISUAL_SCALE=1.5, see
- * vehicle-data.ts) at its new dock position (vehicle-dock-data.ts), so
- * these decals stay accurate rather than drifting stale under the enlarged
- * roster. */
-export const LAND_DOCKS = [
-  { id: 'land-dock-frog', centerX: -3.7, centerZ: 28.0, width: 2.25, depth: 3.9, active: true },
-  { id: 'land-dock-rockgiant', centerX: 0, centerZ: 28.0, width: 3.9, depth: 6.9, active: true },
-  { id: 'land-dock-snail', centerX: 4.0, centerZ: 28.0, width: 3.0, depth: 5.1, active: true },
-];
 
 /** Gap in the back area's south wall the land vehicles drive through —
  * widened ("Expand land entrance and cargo capacity" round) so 青蛙／石頭
@@ -430,11 +374,6 @@ export const SEA_GATE = {
   centerZ: (PIER.minZ + PIER.maxZ) / 2,
   halfWidth: (PIER.maxZ - PIER.minZ) / 2,
 };
-
-export const SEA_DOCKS = [
-  { id: 'sea-dock-1', centerX: PIER.minX + 4, centerZ: PIER.minZ + 2, radius: 1.2 },
-  { id: 'sea-dock-2', centerX: PIER.minX + 4, centerZ: PIER.maxZ - 2, radius: 1.2 },
-];
 
 /** Overall world bounds, used only for a distant backdrop / sanity checks. */
 // NOTE (spec "刪除北邊房間" round): deliberately no longer folds in

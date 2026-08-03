@@ -1000,6 +1000,24 @@ export class PalletSystem implements PalletThrowHooks {
     return obj.id === this.palletId && this.isRopeBound;
   }
 
+  /** "Fix pallet throw and add spray paint tool" round一: recomputes ONE
+   * pinned item's world position/rotation from the pallet's CURRENT
+   * matrixWorld and the item's saved local offset (the exact same math
+   * updateCarry() already uses for the mesh every frame — see its own doc
+   * comment), and writes it into both the mesh AND the RigidBody. Caller's
+   * responsibility to have called `this.palletObj.mesh.updateMatrixWorld()`
+   * first, and to call this BEFORE re-enabling the body. */
+  private syncPinnedCargoToCurrentWorldTransform(p: PinnedCargoEntry): void {
+    const worldPos = p.localPos.clone().applyMatrix4(this.palletObj.mesh.matrixWorld);
+    const worldQuat = this.palletObj.mesh.quaternion.clone().multiply(p.localQuat);
+    p.obj.mesh.position.copy(worldPos);
+    p.obj.mesh.quaternion.copy(worldQuat);
+    if (p.obj.rigidBody) {
+      p.obj.rigidBody.setTranslation({ x: worldPos.x, y: worldPos.y, z: worldPos.z }, true);
+      p.obj.rigidBody.setRotation({ x: worldQuat.x, y: worldQuat.y, z: worldQuat.z, w: worldQuat.w }, true);
+    }
+  }
+
   /** Called by pickup-system.ts's executeThrow() BEFORE it applies any
    * impulse/velocity — the pallet's body is permanently kinematic while
    * parked/carried, which silently ignores those calls, so it must become
@@ -1014,16 +1032,33 @@ export class PalletSystem implements PalletThrowHooks {
   prepareForThrow(_obj: InteractableObject): void {
     this.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
 
+    // "Fix pallet throw and add spray paint tool" round一: updateCarry()
+    // only ever wrote each pinned item's MESH position every frame (see its
+    // own doc comment) — the cargo's RigidBody stayed disabled at whatever
+    // stale world translation it had from BEFORE pickup the whole time. On
+    // release here, setBodyEnabled(true) alone resumed simulation from that
+    // stale spot, so the cargo visibly snapped/teleported back to where the
+    // pallet was originally picked up instead of flying out from its real,
+    // current position. Fixed by recomputing each item's CURRENT world
+    // transform from the pallet's CURRENT matrixWorld + its saved local
+    // offset, and writing it into BOTH the mesh and the RigidBody, BEFORE
+    // re-enabling the body — never the other order (a re-enabled body
+    // resumes stepping immediately, so setting its transform after would
+    // have "先恢復dynamic再補位置" this fix was told not to do again).
+    this.palletObj.mesh.updateMatrixWorld(true);
+
     if (this.isRopeBound) {
       this.pendingThrowCargoIds = [...this.boundCargoIds];
       for (const p of this.pinned) {
         if (!this.boundCargoIds.includes(p.obj.id)) continue;
+        this.syncPinnedCargoToCurrentWorldTransform(p);
         if (p.obj.rigidBody) this.physics.setBodyEnabled(p.obj.rigidBody, true);
         this.createCargoJoint(p.obj.id, p.localPos, p.localQuat);
       }
     } else {
       this.pendingThrowCargoIds = this.pinned.map((p) => p.obj.id);
       for (const p of this.pinned) {
+        this.syncPinnedCargoToCurrentWorldTransform(p);
         p.obj.isHeld = false;
         p.obj.canPickUp = true;
         if (p.obj.rigidBody) this.physics.setBodyEnabled(p.obj.rigidBody, true);

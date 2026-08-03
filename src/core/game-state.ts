@@ -6,15 +6,15 @@ export type PlayerInteractionState = 'empty-handed' | 'holding-item' | 'placemen
 
 /** "Add tool hotbar and cargo hook" round: which bottom-hotbar tool is
  * currently selected — 'powerGloves' added by "Add power gloves and refine
- * cargo hook cooldown" round (slot 4 stays locked, still never represented
- * here — see tool-system.ts). Read by PickupSystem (block generic E-pickup
- * of individual cargo/envelopes/lost items/mail boxes unless
- * activeTool==='empty' — cargoHook and powerGloves each have their own
- * dedicated pickup path instead, keeping the "must be empty-handed to
- * target a NEW item" invariant true for the whole time either is selected,
- * not just at the moment of switching to it) and by PalletSystem (only
- * powerGloves may pick up the pallet). */
-export type ActiveTool = 'empty' | 'cargoHook' | 'powerGloves';
+ * cargo hook cooldown" round, 'sprayCan' added by "Fix pallet throw and add
+ * spray paint tool" round (slot 4). Read by PickupSystem (block generic
+ * E-pickup of individual cargo/envelopes/lost items/mail boxes unless
+ * activeTool==='empty' — cargoHook, powerGloves, and sprayCan each have
+ * their own dedicated interaction instead, keeping the "must be empty-handed
+ * to target a NEW item" invariant true for the whole time any of them is
+ * selected, not just at the moment of switching to it) and by PalletSystem
+ * (only powerGloves may pick up the pallet). */
+export type ActiveTool = 'empty' | 'cargoHook' | 'powerGloves' | 'sprayCan';
 
 export interface PlayerInteractionData {
   state: PlayerInteractionState;

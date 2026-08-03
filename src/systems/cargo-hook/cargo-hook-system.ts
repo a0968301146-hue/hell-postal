@@ -220,19 +220,46 @@ export class CargoHookSystem {
    * current position to its intended NEXT position this frame, filtered
    * against static scene geometry AND GROUP_BOX (vehicle shell/ramp
    * colliders share GROUP_BOX with cargo — see class doc comment), excluding
-   * the cargo's own collider so it never blocks against itself. */
+   * the cargo's own collider so it never blocks against itself.
+   *
+   * "Fix pallet throw and add spray paint tool" round二: GROUP_BOX also
+   * covers every OTHER loose Cargo item, which meant pulling the bottom box
+   * out of a stack immediately cancelled the hook the instant the lift swept
+   * into whatever was resting on top of it — spec explicitly wants stacked
+   * cargo pulled out from underneath, with the item(s) above it toppling
+   * naturally instead of blocking the hook outright. Since collision
+   * GROUPS alone can't distinguish "another movable Cargo" from "a vehicle
+   * shell/ramp" or "the sorting pallet" (all three share GROUP_BOX
+   * membership), this adds a `filterPredicate` that excludes ONLY colliders
+   * belonging to a genuinely tracked, currently-movable Cargo item (i.e. one
+   * with an id in cargoSystem.cargoDataMap) — vehicle/pallet/static geometry
+   * still cancels the hook exactly as before. This ONLY affects this
+   * obstruction QUERY; the actual Rapier collision groups are untouched, so
+   * the target's real body still physically collides with (and can push,
+   * topple, or knock loose) whatever cargo is actually in its way once it's
+   * moving, via normal simulation — never disabled, never forced kinematic. */
   private isPathBlocked(obj: InteractableObject, fromPos: THREE.Vector3, toPos: THREE.Vector3): boolean {
     const movement = toPos.clone().sub(fromPos);
     if (movement.lengthSq() < 1e-8) return false;
     const rot = obj.rigidBody!.rotation();
     const shape = new RAPIER.Cuboid(Math.max(obj.width / 2, 0.02), Math.max(obj.height / 2, 0.02), Math.max(obj.depth / 2, 0.02));
+
+    const movableCargoHandles = new Set<number>();
+    for (const id of this.cargoSystem.cargoDataMap.keys()) {
+      if (id === obj.id) continue;
+      const other = this.interactables.get(id);
+      if (other?.collider) movableCargoHandles.add(other.collider.handle);
+    }
+
     const hit = this.physics.world.castShape(
       { x: fromPos.x, y: fromPos.y, z: fromPos.z },
       { x: rot.x, y: rot.y, z: rot.z, w: rot.w },
       { x: movement.x, y: movement.y, z: movement.z },
       shape, 0.0, 1.0, false,
       undefined, (GROUP_BOX << 16) | (GROUP_STATIC | GROUP_BOX),
-      obj.collider ?? undefined
+      obj.collider ?? undefined,
+      undefined,
+      (collider) => !movableCargoHandles.has(collider.handle)
     );
     return hit !== null;
   }

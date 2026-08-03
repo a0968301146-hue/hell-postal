@@ -26,6 +26,7 @@ import { MediaPlayerSystem } from '../systems/media-player/media-player-system';
 import { MediaPlayerUI } from '../systems/media-player/media-player-ui';
 import { ToolSystem } from '../systems/tool';
 import { CargoHookSystem } from '../systems/cargo-hook';
+import { SpraySystem } from '../systems/spray-paint';
 
 /** Every gameplay system GameApp constructs once at startup and keeps for
  * the rest of the session (Phase 6: "系統建立、建構子注入、註冊" moved out of
@@ -71,6 +72,8 @@ export interface GameSystems {
   /** "Add tool hotbar and cargo hook" round. */
   toolSystem: ToolSystem;
   cargoHookSystem: CargoHookSystem;
+  /** "Fix pallet throw and add spray paint tool" round. */
+  spraySystem: SpraySystem;
 }
 
 /** Back-references into GameApp's own small orchestration methods — the
@@ -377,6 +380,18 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     playerData, hud, pauseManager, dailyFlowSystem, pickupSystem, toolSystem, () => playerController.isLocked
   );
 
+  // Spray paint tool ("Fix pallet throw and add spray paint tool" round
+  // spec五, hotbar slot 4) — restricted to the same real floor meshes
+  // PickupSystem itself places items on (main back-area floor, pier deck,
+  // lost-found room floor), which is what keeps cargo/pallet/shelves/walls/
+  // vehicles/NPCs impossible to spray on without needing any exclusion list
+  // of its own (see spray-paint-system.ts's own doc comment).
+  const spraySystem = new SpraySystem(
+    camera, scene, playerData, hud, pauseManager,
+    [sceneData.floor, sceneData.pierFloor, sceneData.lostFoundFloor],
+    () => playerController.isLocked
+  );
+
   // Interaction system
   const interactionSystem = new InteractionSystem(
     camera, interactables, playerData, pickupSystem, hud,
@@ -414,6 +429,6 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     unloadingSystem, palletSystem, cargoInspectionSystem, cargoInspectionUI,
     lostFoundSystem, lostFoundUI, mailSystem, mailBagSystem,
     upgradeSystem, similarCargoHighlight, mediaPlayerSystem,
-    toolSystem, cargoHookSystem,
+    toolSystem, cargoHookSystem, spraySystem,
   };
 }

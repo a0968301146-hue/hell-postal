@@ -10,7 +10,7 @@ import { InteractableObject } from '../../shared/types/interactable';
 // exposes.
 import { PhysicsWorldPort } from '../../shared/types/physics-world-port';
 import {
-  WALL_THICKNESS, BACK_AREA, CARGO_ZONES, LAND_DOCKS, LAND_GATE, PIER, SEA_GATE, SEA_DOCKS, NORTH_GATES,
+  WALL_THICKNESS, BACK_AREA, LAND_GATE, PIER, SEA_GATE, NORTH_GATES,
   WEST_WALL_SHELVES, SHELF_LEVEL_Y_OFFSETS, SHELF_BOARD_THICKNESS, SHELF_POST_THICKNESS, SHELF_FRAME_TOP_MARGIN,
   BULLETIN_BOARD, TV_TABLE, TELEVISION,
 } from './logistics-layout-data';
@@ -111,10 +111,7 @@ export function createLogisticsScene(scene: THREE.Scene, physics: PhysicsWorldPo
   scene.add(dirLight);
 
   const floor = buildBackArea(scene, physics);
-  buildCargoZones(scene);
-  buildLandDocks(scene);
   const pierFloor = buildPierAndWater(scene, physics);
-  buildSeaDocks(scene);
   const lostFoundFloor = buildLostFoundRoom(scene, physics);
   const shelfSurfaces = buildWestWallShelves(scene, physics);
 
@@ -486,43 +483,6 @@ function buildWestWallShelves(scene: THREE.Scene, physics: PhysicsWorldPort): TH
   return surfaces;
 }
 
-/** White-box-only floor markers reserving space for future cargo-type zones
- * (normal/large(domestic+overseas)/frozen(domestic+overseas)/live(domestic+
- * overseas)/fragile — see CARGO_ZONES). No function yet — just space
- * claims, purely decal + label, no physics collider. */
-function buildCargoZones(scene: THREE.Scene): void {
-  for (const zone of CARGO_ZONES) {
-    const width = zone.halfWidth * 2 - 0.2;
-    const depth = zone.maxZ - zone.minZ - 0.2;
-    const cz = (zone.minZ + zone.maxZ) / 2;
-
-    const geo = new THREE.PlaneGeometry(width, depth);
-    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: zone.color, transparent: true, opacity: 0.35 }));
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(zone.centerX, BACK_AREA.floorY + 0.01, cz);
-    mesh.userData.zoneId = zone.id;
-    scene.add(mesh);
-
-    // Floating billboard above the zone — easier to read while walking past
-    // than a flat floor decal, and always faces the player.
-    const label = createFloatingLabel(zone.label, { width: 1.1, bg: 'rgba(32,32,28,0.75)', fg: '#e8e0c8' });
-    label.position.set(zone.centerX, BACK_AREA.floorY + 1.4, cz);
-    scene.add(label);
-  }
-}
-
-function buildLandDocks(scene: THREE.Scene): void {
-  for (const dock of LAND_DOCKS) {
-    const geo = new THREE.PlaneGeometry(dock.width, dock.depth);
-    const color = dock.active ? 0xd8b400 : 0x8a7a30;
-    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.65 }));
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(dock.centerX, BACK_AREA.floorY + 0.01, dock.centerZ);
-    mesh.userData.dockId = dock.id;
-    scene.add(mesh);
-  }
-}
-
 function buildPierAndWater(scene: THREE.Scene, physics: PhysicsWorldPort): THREE.Mesh {
   const { minX, maxX, minZ, maxZ, floorY, waterY } = PIER;
   const width = maxX - minX;
@@ -546,15 +506,4 @@ function buildPierAndWater(scene: THREE.Scene, physics: PhysicsWorldPort): THREE
   scene.add(water);
 
   return deck;
-}
-
-function buildSeaDocks(scene: THREE.Scene): void {
-  for (const dock of SEA_DOCKS) {
-    const geo = new THREE.CircleGeometry(dock.radius, 24);
-    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x22aa55, transparent: true, opacity: 0.65 }));
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(dock.centerX, PIER.floorY + 0.02, dock.centerZ);
-    mesh.userData.dockId = dock.id;
-    scene.add(mesh);
-  }
 }
