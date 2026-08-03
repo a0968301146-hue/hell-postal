@@ -1,6 +1,5 @@
 import * as THREE from 'three';
-import { BACK_AREA, WALL_THICKNESS } from '../world-layout';
-import { LOST_FOUND_DOOR } from '../../data/world/lost-found-layout-data';
+import { BACK_AREA, WALL_THICKNESS, SEA_GATE } from '../world-layout';
 
 /** "Rebuild pallet storage and reset upgrade progression" round三: every
  * pallet-size constant lives here, centralized (spec三: "所有尺寸集中於
@@ -50,41 +49,42 @@ export const PALLET_DETECT_HEIGHT = 1.0;
  * resting spots (spec四: "初始狀態：三張托盤全部掛在各自牆面slot"). */
 export const PALLET_SAFETY_DROP_POS = { x: -4.0, z: 15.5 };
 
-/** Wall pallet-storage rack ("Rebuild pallet storage and reset upgrade
- * progression" round四) — three slots on the BACK_AREA west wall, north of
- * the lost-found door gap (LOST_FOUND_DOOR) and clear of every other
- * west-wall fixture (WEST_WALL_SHELVES/BULLETIN_BOARD/TV_TABLE/
- * VEHICLE_CONTROL_WALL_BUTTONS all sit SOUTH of the door — see
- * logistics-layout-data.ts) — this stretch (BACK_AREA.minZ=10 up to the
- * door's own north edge at 15.5) is otherwise completely empty, and stays
- * reasonably close to the sorting pallet's own traditional spot
- * (PALLET_SAFETY_DROP_POS, z=15.5) despite being on the wall rather than the
- * open floor (spec四: "整理區附近的空牆"). Derived from LOST_FOUND_DOOR and
- * BACK_AREA directly rather than a hardcoded coordinate, matching this
- * codebase's own established convention for every other wall fixture
- * (BULLETIN_BOARD/TV_TABLE/VEHICLE_CONTROL_WALL_BUTTONS each derive their
- * own position from whatever's immediately north of them the same way). */
-const RACK_DOOR_CLEARANCE = 0.6;
-const RACK_CORNER_CLEARANCE = 0.8;
+/** Wall pallet-storage rack ("Relocate pallet racks and add fishing pier"
+ * round一) — three slots on the BACK_AREA EAST wall, south of the sea-gate
+ * opening (SEA_GATE, which is where PIER breaks through this same wall for
+ * x:PIER.minX..PIER.maxX — see logistics-layout-data.ts). The wall is only
+ * solid south of the gate's own south edge (SEA_GATE.centerZ+halfWidth=24)
+ * through the BACK_AREA south-wall corner (BACK_AREA.maxZ=32) — an 8m clear
+ * run with zero other fixtures on it (the doorway/unload dock/bulletin
+ * board/TV/vehicle buttons all live on the WEST wall — see
+ * logistics-layout-data.ts), and it stays entirely south of every sea
+ * vehicle's own dock/travel range (SEA_DOCK_SLOTS never exceeds
+ * z≈22.95 — see vehicle-dock-data.ts), so this stretch is both the literal
+ * "東南方牆壁" (southeast interior wall) and clear of every listed
+ * do-not-overlap fixture by construction. Derived from SEA_GATE/BACK_AREA
+ * directly rather than a hardcoded coordinate, matching this codebase's own
+ * convention for every other wall fixture. */
+const RACK_GATE_CLEARANCE = 1.0; // clear of the sea-gate opening's own south edge
+const RACK_CORNER_CLEARANCE = 1.0; // clear of the south-wall corner
 const RACK_SLOT_GAP = 0.25;
 /** How far above the floor the BOTTOM edge of every slot sits — kept
  * identical across all three sizes so their mounted pallets visually read as
- * resting on one consistent "shelf line" despite their different heights
- * (spec四: "玩家站在地面即可瞄準並拿取"). */
-const RACK_BOTTOM_CLEARANCE = 0.3;
+ * resting on one consistent "shelf line" (spec: "掛架底部離地約0.45～0.65m",
+ * "玩家站在地面即可瞄準並拿取"). */
+const RACK_BOTTOM_CLEARANCE = 0.55;
 /** How far the mounted pallet's thin edge stands off the wall's own inner
  * face — mirrors BULLETIN_BOARD_WALL_STANDOFF/TV_TABLE_WALL_STANDOFF's own
- * role for every other west-wall fixture. */
+ * role for every other wall fixture. */
 const RACK_WALL_STANDOFF = 0.05;
 /** Simple wall bracket visual — a shallow frame the pallet mounts flush
- * against (spec四: "使用簡單壁掛支架、輪廓框與牆面文字標示"). */
+ * against (spec: "使用簡單壁掛支架、輪廓框與牆面文字標示"). */
 const RACK_BRACKET_MARGIN = 0.12; // how far the outline frame extends past the pallet's own mounted footprint
 export const RACK_BRACKET_THICKNESS = 0.04;
 
-const westWallInnerFaceX = BACK_AREA.minX + WALL_THICKNESS / 2;
+const eastWallInnerFaceX = BACK_AREA.maxX - WALL_THICKNESS / 2;
 
-const rackClusterSouthZ = LOST_FOUND_DOOR.centerZ - LOST_FOUND_DOOR.halfWidth - RACK_DOOR_CLEARANCE;
-const rackClusterNorthZ = BACK_AREA.minZ + RACK_CORNER_CLEARANCE;
+const rackClusterNorthZ = SEA_GATE.centerZ + SEA_GATE.halfWidth + RACK_GATE_CLEARANCE;
+const rackClusterSouthZ = BACK_AREA.maxZ - RACK_CORNER_CLEARANCE;
 
 export interface PalletWallSlot {
   id: string;
@@ -100,14 +100,21 @@ export interface PalletWallSlot {
   bracketHeight: number;
 }
 
-/** Rotating -90° about world Z maps local Y (a flat pallet's top-face
- * normal, +Y) to world +X (east, out of the west wall into the room) and
+/** Rotating +90° about world Z maps local Y (a flat pallet's top-face
+ * normal, +Y) to world -X (west, out of the EAST wall into the room) and
  * local X (width) to a now-VERTICAL axis — exactly "flush against the wall,
- * top face outward, standing on edge" (spec四). Since every pallet size is
- * SQUARE (width === depth, spec三), using width vs depth for the now-
- * vertical span is interchangeable — width is used throughout below. */
-const WALL_MOUNT_QUAT = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 2);
+ * top face outward, standing on edge" (mirror image of the old west-wall
+ * mount, which used -90° for the opposite-facing wall). Since every pallet
+ * size is SQUARE (width === depth, spec三 — unchanged this round), using
+ * width vs depth for the now-vertical span is interchangeable — width is
+ * used throughout below. */
+const WALL_MOUNT_QUAT = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
 
+/** Player facing the east wall (looking +X, into the wall from inside the
+ * room) has their own left hand toward -Z (north) — so "由左至右：小型/中型/
+ * 大型" places small at the NORTH end (closer to the sea gate) and large at
+ * the SOUTH end (closer to the corner, where there's the most floor
+ * clearance for its bigger footprint). */
 function buildWallSlots(): Record<PalletSize, PalletWallSlot> {
   const slots = {} as Record<PalletSize, PalletWallSlot>;
   let cursorZ = rackClusterNorthZ;
@@ -116,7 +123,7 @@ function buildWallSlots(): Record<PalletSize, PalletWallSlot> {
     // After the wall-mount rotation, `width` spans vertically and `height`
     // (the pallet's thin edge) spans the wall-normal (X) axis.
     const centerZ = cursorZ + dims.width / 2;
-    const centerX = westWallInnerFaceX + RACK_WALL_STANDOFF + dims.height / 2;
+    const centerX = eastWallInnerFaceX - RACK_WALL_STANDOFF - dims.height / 2;
     const centerY = BACK_AREA.floorY + RACK_BOTTOM_CLEARANCE + dims.width / 2;
     slots[size] = {
       id: `pallet-rack-${size}`,
@@ -129,11 +136,10 @@ function buildWallSlots(): Record<PalletSize, PalletWallSlot> {
     cursorZ += dims.width + RACK_SLOT_GAP;
   }
   // Dev-time guard, never a hardcoded margin left unverified — the whole
-  // cluster (north corner clearance through the last slot's own south edge)
-  // must stay clear of the lost-found door's own approach clearance, or the
-  // rack would visually collide with player foot-traffic through the door.
+  // cluster (north gate clearance through the last slot's own south edge)
+  // must stay clear of the south-wall corner.
   if (cursorZ - RACK_SLOT_GAP > rackClusterSouthZ) {
-    console.error('[pallet-data] wall rack cluster overflows into the lost-found door clearance zone');
+    console.error('[pallet-data] wall rack cluster overflows into the south-wall corner clearance zone');
   }
   return slots;
 }

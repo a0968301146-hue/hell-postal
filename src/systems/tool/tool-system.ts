@@ -2,6 +2,11 @@ import { PlayerInteractionData, ActiveTool } from '../../core/game-state';
 import { HUD } from '../hud';
 import { PauseManager } from '../../core/pause-manager';
 import { isPalletId } from '../pallet';
+// Imported directly from pickup-system.ts, NOT the '../interaction' barrel —
+// matches pallet-system.ts's own established reasoning for this exact same
+// import (keeps this file from ever risking a future cycle through anything
+// else the barrel re-exports).
+import { PickupSystem } from '../interaction/pickup-system';
 
 const TOOL_NAME: Record<ActiveTool, string> = {
   empty: '徒手',
@@ -28,6 +33,7 @@ export class ToolSystem {
   private hud: HUD;
   private pauseManager: PauseManager;
   private isLocked: () => boolean;
+  private pickupSystem: PickupSystem;
 
   private slot1El: HTMLElement;
   private slot2El: HTMLElement;
@@ -43,11 +49,12 @@ export class ToolSystem {
    * 改為1→2→3→4循環". */
   private readonly WHEEL_CYCLE: ActiveTool[] = ['empty', 'powerGloves', 'cargoHook', 'sprayCan'];
 
-  constructor(playerData: PlayerInteractionData, hud: HUD, pauseManager: PauseManager, isLockedFn: () => boolean) {
+  constructor(playerData: PlayerInteractionData, hud: HUD, pauseManager: PauseManager, isLockedFn: () => boolean, pickupSystem: PickupSystem) {
     this.playerData = playerData;
     this.hud = hud;
     this.pauseManager = pauseManager;
     this.isLocked = isLockedFn;
+    this.pickupSystem = pickupSystem;
 
     const container = hud.getContainer();
 
@@ -133,7 +140,23 @@ export class ToolSystem {
    *   spec五) — same reasoning/gate as cargoHook above.
    * Does NOT gate on cargo-hook cooldown — a cooldown only blocks FIRING
    * (see CargoHookSystem.onMouseDown), the tool can still be selected/
-   * deselected freely while it counts down. */
+   * deselected freely while it counts down.
+   *
+   * "Fully fix bare-hands NPC interaction" round二: switching TO 'empty'
+   * additionally, defensively, force-normalizes playerData.state back to
+   * 'empty-handed' (and heldObjectId to null) whenever nothing is actually
+   * held (PickupSystem.heldCount===0 and not a pallet) — a genuinely
+   * exhaustive audit of every heldStack/state writer in this codebase found
+   * every one of them already correctly paired, but InteractionSystem's own
+   * entire empty-handed priority chain (bulletin board / TV / vehicle
+   * buttons / mail rack / pallet racks / the lost-found NPC counter) is
+   * gated behind a single `if (playerData.state !== 'empty-handed') return;`
+   * check — so ANY future desync between "nothing genuinely held" and a
+   * stale non-'empty-handed' state, from this file or any other, would
+   * silently route every one of those E-presses into PickupSystem's
+   * unrelated 'holding-item' branch instead and look exactly like "E does
+   * nothing". This makes returning to slot 1 the one guaranteed place that
+   * class of bug can never survive, regardless of where it originates. */
   trySelect(tool: ActiveTool): void {
     if (this.playerData.activeTool === tool) return;
     if (isPalletId(this.playerData.heldObjectId)) {
@@ -145,6 +168,10 @@ export class ToolSystem {
       return;
     }
     this.playerData.activeTool = tool;
+    if (tool === 'empty' && this.pickupSystem.heldCount === 0 && !isPalletId(this.playerData.heldObjectId)) {
+      this.playerData.state = 'empty-handed';
+      this.playerData.heldObjectId = null;
+    }
     this.updateSelectionUI();
     this.showToolNamePopup(tool);
   }

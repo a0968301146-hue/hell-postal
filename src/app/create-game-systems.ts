@@ -378,7 +378,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // deliberately has no reference to CargoHookSystem at all — see
   // tool-system.ts's own doc comment on why no callback wiring is needed in
   // either direction (CargoHookSystem watches playerData.activeTool itself).
-  const toolSystem = new ToolSystem(playerData, hud, pauseManager, () => playerController.isLocked);
+  const toolSystem = new ToolSystem(playerData, hud, pauseManager, () => playerController.isLocked, pickupSystem);
   const cargoHookSystem = new CargoHookSystem(
     camera, scene, pickupSystem.viewModelScene, physics, interactables, cargoSystem,
     playerData, hud, pauseManager, dailyFlowSystem, pickupSystem, toolSystem, () => playerController.isLocked
