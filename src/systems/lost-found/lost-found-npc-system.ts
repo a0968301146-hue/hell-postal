@@ -101,6 +101,12 @@ export class LostFoundNpcSystem {
     const hitboxMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
     const hitboxMesh = new THREE.Mesh(hitboxGeo, hitboxMat);
     hitboxMesh.position.set(0, NPC_HITBOX_CENTER_Y, 0);
+    // "Trace and fix NPC E interaction routing" round三: the hitbox carries
+    // its own ownership data directly — InteractionSystem resolves "is this
+    // the lost-found NPC" from THIS, never by comparing a raw id string
+    // against an imported constant (spec: "不要依Mesh名稱字串猜測NPC").
+    hitboxMesh.userData.interactionType = 'lostFoundNpc';
+    hitboxMesh.userData.npcId = LOST_FOUND_NPC_INTERACTABLE_ID;
     group.add(hitboxMesh);
     const hitboxObj = createInteractableObject(LOST_FOUND_NPC_INTERACTABLE_ID, displayName, hitboxMesh, NPC_HITBOX_WIDTH, NPC_HITBOX_HEIGHT, NPC_HITBOX_DEPTH);
     // canPickUp=true only to satisfy the shared raycast filter's own

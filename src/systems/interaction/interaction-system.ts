@@ -20,6 +20,7 @@ import { MailSystem } from '../mail/mail-system';
 import { MailBagSystem, MAIL_RACK_INTERACTABLE_ID } from '../mail/mail-bag-system';
 import { getMailDestination } from '../mail/mail-data';
 import { BULLETIN_BOARD_INTERACTABLE_ID, TELEVISION_INTERACTABLE_ID } from '../world-layout';
+import { DEBUG_NPC_E_INTERACTION, logNpcEDebug } from './npc-e-debug';
 
 export class InteractionSystem {
   private raycaster: THREE.Raycaster;
@@ -41,6 +42,12 @@ export class InteractionSystem {
    * behind "掛回托盤提示顯示但按E無效" — see canStoreHeldPallet's own call
    * sites below). */
   private lastHoldingItemHitId: string | null = null;
+  /** Companion to lastHoldingItemHitId, set at the exact same moment from
+   * the exact same `hit` — "Trace and fix NPC E interaction routing" round
+   * 三: isLostFoundNpcTarget() takes an InteractableObject, not a bare id
+   * string, so this is the pre-resolved boolean the onKeyDown branch reads
+   * instead of re-deriving it from a stale id comparison. */
+  private lastHoldingItemHitIsNpc = false;
   private isLocked: () => boolean;
   private envelopeSystem: EnvelopeSystem;
   private envelopeStation: EnvelopeStampStation;
@@ -174,10 +181,69 @@ export class InteractionSystem {
     if (removed) this.pickupSystem.pickUp(removed);
   }
 
+  /** "Trace and fix NPC E interaction routing" round三: resolves "is this
+   * target the lost-found NPC" from the hitbox mesh's OWN ownership data
+   * (set once, at spawn, in lost-found-npc-system.ts), never by comparing a
+   * raw id string against an imported constant — spec: "不要依Mesh名稱字串
+   * 猜測NPC". Every prompt-display AND E-action call site below routes
+   * through this SAME helper, so they can never disagree about what counts
+   * as "aiming at the NPC". */
+  private isLostFoundNpcTarget(target: InteractableObject | null): boolean {
+    return !!target && target.mesh.userData.interactionType === 'lostFoundNpc';
+  }
+
+  /** Structured one-shot trace for a real KeyE press ("Trace and fix NPC E
+   * interaction routing" round) — gathers the full pipeline snapshot
+   * (raw KeyboardEvent, player/game state, this class's own raycast/target
+   * resolution, LostFoundSystem's own NPC/queue state) BEFORE any guard has
+   * a chance to early-return, so a stalled press is diagnosable regardless
+   * of which check stops it. Only ever computed when DEBUG_NPC_E_INTERACTION
+   * is true AND the physical key looks like the interact key — a plain
+   * geometry/state read, no mutation. */
+  private buildNpcEKeyTrace(event: KeyboardEvent): Record<string, unknown> {
+    const freshHit = this.raycastCurrentHit();
+    return {
+      event: {
+        key: event.key,
+        code: event.code,
+        repeat: event.repeat,
+        defaultPrevented: event.defaultPrevented,
+        pointerLockElementExists: !!document.pointerLockElement,
+        eventTargetTag: (event.target as HTMLElement | null)?.tagName ?? null,
+      },
+      gameState: {
+        pauseManagerIsPaused: this.pauseManager.isPaused,
+        activeTool: this.playerData.activeTool,
+        playerState: this.playerData.state,
+        heldObjectId: this.playerData.heldObjectId,
+        heldStackLength: this.pickupSystem.heldCount,
+      },
+      interactionSystem: {
+        currentTargetId: this.currentTarget ? this.currentTarget.id : null,
+        lastHoldingItemHitId: this.lastHoldingItemHitId,
+        freshRaycastHitId: freshHit ? freshHit.id : null,
+        freshRaycastHitName: freshHit ? freshHit.displayName : null,
+        npcHitboxKnownId: LOST_FOUND_NPC_INTERACTABLE_ID,
+      },
+      lostFoundSystem: this.lostFoundSystem.debugSnapshot(),
+    };
+  }
+
   private onKeyDown(event: KeyboardEvent): void {
-    if (event.repeat) return;
-    if (!this.isLocked()) return;
-    if (this.pauseManager.isPaused) return;
+    // Captured BEFORE any guard below can return early, so a trace exists
+    // regardless of which check ends up stopping this press (spec: "按下E
+    // 時，必須依順序記錄一次完整追蹤").
+    const isELikeKey = event.code === 'KeyE';
+    let npcTrace: Record<string, unknown> | null = DEBUG_NPC_E_INTERACTION && isELikeKey ? this.buildNpcEKeyTrace(event) : null;
+    const stopNpcTrace = (stoppedAt: string, extra?: Record<string, unknown>) => {
+      if (!npcTrace) return;
+      logNpcEDebug('InteractionSystem.onKeyDown', { ...npcTrace, stoppedAt, ...extra });
+      npcTrace = null;
+    };
+
+    if (event.repeat) { stopNpcTrace('event.repeat === true (ignored)'); return; }
+    if (!this.isLocked()) { stopNpcTrace('isLocked() === false'); return; }
+    if (this.pauseManager.isPaused) { stopNpcTrace('pauseManager.isPaused === true'); return; }
 
     // F key: cycle a targeted OPEN mail bag's destination pattern (spec六),
     // or (legacy, dead while ENABLE_LEGACY_MAIL_FLOW is false) take an
@@ -207,13 +273,20 @@ export class InteractionSystem {
     // E key — "interact" and "pickupPlace" share this one handler (see
     // input-binding-manager.ts doc comment on why they're not independent).
     const bindings = this.settingsManager.inputBindings;
-    if (!bindings.matches('interact', event.code) && !bindings.matches('pickupPlace', event.code)) return;
+    if (!bindings.matches('interact', event.code) && !bindings.matches('pickupPlace', event.code)) {
+      stopNpcTrace('binding mismatch: neither interact nor pickupPlace bound to this event.code');
+      return;
+    }
 
-    if (this.playerData.state === 'placement-preview' || this.playerData.state === 'stamping-minigame') return;
+    if (this.playerData.state === 'placement-preview' || this.playerData.state === 'stamping-minigame') {
+      stopNpcTrace(`state blocks: ${this.playerData.state}`);
+      return;
+    }
 
     // Pushing a dolly: E always means "let go", regardless of proximity —
     // checked before the empty-handed guard below since 'pushing-dolly' isn't 'empty-handed'.
     if (this.playerData.state === 'pushing-dolly') {
+      stopNpcTrace('state === pushing-dolly (dolly release only)');
       this.dollySystem.stopPush();
       this.playerData.state = 'empty-handed';
       return;
@@ -268,7 +341,7 @@ export class InteractionSystem {
         !this.palletSystem.isRackId(this.currentTarget.id) &&
         this.currentTarget.id !== MAIL_RACK_INTERACTABLE_ID &&
         this.currentTarget.id !== VEHICLE_CALL_BUTTON_ID && this.currentTarget.id !== VEHICLE_DEPART_BUTTON_ID &&
-        this.currentTarget.id !== LOST_FOUND_NPC_INTERACTABLE_ID &&
+        !this.isLostFoundNpcTarget(this.currentTarget) &&
         !(this.mailBagSystem.isBag(this.currentTarget.id) && isHoldingEnvelope) &&
         this.pickupSystem.canAddToHeld(this.currentTarget)
       ) {
@@ -368,18 +441,23 @@ export class InteractionSystem {
       if (
         this.playerData.heldObjectId &&
         this.playerData.activeTool === 'empty' &&
-        this.lastHoldingItemHitId === LOST_FOUND_NPC_INTERACTABLE_ID &&
+        this.lastHoldingItemHitIsNpc &&
         this.lostFoundSystem.isNpcWaiting
       ) {
+        stopNpcTrace('handled: holding-item NPC hand-over branch');
         this.lostFoundSystem.tryConfirmWithNpc(this.playerData.heldObjectId);
         return;
       }
       // Normal: enter placement mode
+      stopNpcTrace('holding-item: fell through to generic placement (not aimed at NPC)');
       this.pickupSystem.enterPlacementMode();
       return;
     }
 
-    if (this.playerData.state !== 'empty-handed') return;
+    if (this.playerData.state !== 'empty-handed') {
+      stopNpcTrace(`state !== empty-handed: ${this.playerData.state}`);
+      return;
+    }
 
     // Priority -1: bulletin board upgrade UI (spec二) — reads
     // PickupSystem's actual heldCount rather than trusting playerData.state
@@ -388,6 +466,7 @@ export class InteractionSystem {
     // since aiming at the board should never simultaneously trigger
     // anything else.
     if (this.currentTarget && this.currentTarget.id === BULLETIN_BOARD_INTERACTABLE_ID) {
+      stopNpcTrace('diverted: currentTarget is bulletin board, not NPC');
       if (this.pickupSystem.heldCount === 0) {
         this.onOpenUpgradeMenu();
       }
@@ -403,6 +482,7 @@ export class InteractionSystem {
     // true to satisfy the raycast's own filter, never meant to actually be
     // picked up (mirrors the bulletin board/mail rack's own pattern).
     if (this.currentTarget && this.currentTarget.id === TELEVISION_INTERACTABLE_ID) {
+      stopNpcTrace('diverted: currentTarget is television, not NPC');
       if (this.pickupSystem.heldCount === 0) {
         this.onOpenMediaPlayer();
       }
@@ -420,14 +500,25 @@ export class InteractionSystem {
     // nothing since isNpcWaiting only becomes true once physically arrived.
     // Consumed here regardless of outcome so a registered-but-not-yet-
     // waiting hitbox never falls through into a generic pickup attempt.
-    if (this.currentTarget && this.currentTarget.id === LOST_FOUND_NPC_INTERACTABLE_ID) {
-      if (this.playerData.activeTool === 'empty' && this.lostFoundSystem.isNpcWaiting) {
+    if (this.currentTarget && this.isLostFoundNpcTarget(this.currentTarget)) {
+      const canInteract = this.playerData.activeTool === 'empty' && this.lostFoundSystem.isNpcWaiting;
+      let handleInteractionCalled = false;
+      if (canInteract) {
+        handleInteractionCalled = true;
         this.lostFoundSystem.tryConfirmWithNpc(null);
       }
+      stopNpcTrace('handled: empty-handed NPC priority-0 branch', { canInteract, handleInteractionCalled });
       this.clearHighlight(this.currentTarget);
       this.currentTarget = null;
       return;
     }
+
+    // If we reach here on a real E press, currentTarget did NOT match the
+    // NPC id at all (or was null) — the single most important trace point
+    // for "raycast hit the NPC per the screenshot, but E did nothing": if
+    // this fires, currentTargetId/freshRaycastHitId in the trace above
+    // reveal exactly what InteractionSystem actually saw instead.
+    stopNpcTrace('currentTarget did not match NPC id when reaching Priority 0.7+ (see currentTargetId/freshRaycastHitId)');
 
     // Priority 0.7: empty-bag supply rack (spec三/四: "玩家必須用準心射線直
     // 接命中供應架互動Collider，按E才能取得新袋" — a raycast-precise target
@@ -608,6 +699,7 @@ export class InteractionSystem {
       // cleared below for the pallet-carry/NPC-hitbox cases, which still
       // need their own aimed-at id available to the action side).
       this.lastHoldingItemHitId = hit ? hit.id : null;
+      this.lastHoldingItemHitIsNpc = this.isLostFoundNpcTarget(hit);
 
       // Bulletin board while holding anything (spec二: "需空手才能查看升
       // 級") — highest priority in this branch since it must show
@@ -684,7 +776,7 @@ export class InteractionSystem {
       if (
         hit && !this.palletSystem.isPalletId(this.playerData.heldObjectId ?? '') &&
         !this.palletSystem.isPalletId(hit.id) && !this.palletSystem.isRackId(hit.id) && hit.id !== MAIL_RACK_INTERACTABLE_ID &&
-        hit.id !== VEHICLE_CALL_BUTTON_ID && hit.id !== VEHICLE_DEPART_BUTTON_ID && hit.id !== LOST_FOUND_NPC_INTERACTABLE_ID &&
+        hit.id !== VEHICLE_CALL_BUTTON_ID && hit.id !== VEHICLE_DEPART_BUTTON_ID && !this.isLostFoundNpcTarget(hit) &&
         this.pickupSystem.canAddToHeld(hit)
       ) {
         if (this.currentTarget !== hit) {
@@ -719,7 +811,7 @@ export class InteractionSystem {
           this.hud.showInteractionPrompt('整理托盤', '此處無法放置');
           this.hud.setCrosshairActive(false);
         }
-      } else if (this.playerData.heldObjectId && this.playerData.activeTool === 'empty' && hit && hit.id === LOST_FOUND_NPC_INTERACTABLE_ID) {
+      } else if (this.playerData.heldObjectId && this.playerData.activeTool === 'empty' && hit && this.isLostFoundNpcTarget(hit)) {
         // "Fix NPC direct interaction and pallet stack handling" round二:
         // hand-over prompt while holding something and aiming directly at
         // the NPC's own hitbox — mirrors onKeyDown's own lastHoldingItemHitId
@@ -843,7 +935,7 @@ export class InteractionSystem {
             '載具出發',
             this.vehicleControlSystem.canDepart ? '按 E 讓兩台載具一起離場' : this.vehicleControlSystem.departBlockedMessage()
           );
-        } else if (newTarget.id === LOST_FOUND_NPC_INTERACTABLE_ID) {
+        } else if (newTarget && this.isLostFoundNpcTarget(newTarget)) {
           // "Fix NPC direct interaction and pallet stack handling" round二:
           // crosshair directly on the NPC's own hitbox, empty-handed. Not-
           // yet-arrived (still walking in/out) shows a neutral "not here

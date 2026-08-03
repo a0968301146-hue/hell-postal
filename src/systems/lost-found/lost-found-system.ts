@@ -17,6 +17,7 @@ import { LostFoundNpcSystem } from './lost-found-npc-system';
 import { LostItemPreviewRenderer } from './lost-item-preview-renderer';
 import { LostFoundCabinetSystem, computeLostItemFitScale } from './lost-found-cabinet-system';
 import { LostFoundSettlementInput } from '../scoring/scoring-types';
+import { logNpcEDebug } from '../interaction/npc-e-debug';
 
 const LOST_ITEM_ID_PREFIX = 'lostitem-';
 
@@ -371,6 +372,22 @@ export class LostFoundSystem {
     return this.npcSystem.state === 'waiting';
   }
 
+  /** Debug-only structured snapshot ("Trace and fix NPC E interaction
+   * routing" round) — read by interaction-system.ts's own NPC-E tracer via
+   * npc-e-debug.ts. Never used by real gameplay logic; a no-op cost when
+   * DEBUG_NPC_E_INTERACTION is false (the caller gates the call itself). */
+  debugSnapshot(): Record<string, unknown> {
+    const entry = this.activeIndex !== -1 ? this.todaysQueue[this.activeIndex] : null;
+    return {
+      activeIndex: this.activeIndex,
+      npcSystemState: this.npcSystem.state,
+      isNpcWaiting: this.isNpcWaiting,
+      entryCaseId: entry ? entry.caseDef.id : null,
+      entryState: entry ? entry.state : null,
+      entryTargetItemId: entry ? entry.targetItemId : null,
+    };
+  }
+
   /** Press E while aiming at the NPC's own interaction hitbox and the
    * CURRENT queue entry's NPC is physically waiting — behavior depends
    * entirely on the entry's own dialogue stage ("Fix NPC direct interaction
@@ -395,16 +412,24 @@ export class LostFoundSystem {
    *   - 'entering'/'thanking'/'leaving': no-op entirely (spec:
    *     "thanking期間不可互動、不可跳過"). */
   tryConfirmWithNpc(heldId: string | null): void {
-    if (!this.isNpcWaiting || this.activeIndex === -1) return;
+    const before = this.debugSnapshot();
+    if (!this.isNpcWaiting || this.activeIndex === -1) {
+      logNpcEDebug('LostFoundSystem.tryConfirmWithNpc', { heldId, before, result: 'no-op: not waiting or no active entry', after: this.debugSnapshot() });
+      return;
+    }
     const entry = this.todaysQueue[this.activeIndex];
 
     if (entry.state === 'greeting') {
       entry.state = 'waitingForItem';
       this.npcSystem.showItemNeed(LOST_FOUND_SEEKING_TEXT);
+      logNpcEDebug('LostFoundSystem.tryConfirmWithNpc', { heldId, before, result: 'greeting -> waitingForItem', after: this.debugSnapshot() });
       return;
     }
 
-    if (entry.state !== 'waitingForItem' || heldId === null) return;
+    if (entry.state !== 'waitingForItem' || heldId === null) {
+      logNpcEDebug('LostFoundSystem.tryConfirmWithNpc', { heldId, before, result: 'no-op: wrong stage or empty-handed', after: this.debugSnapshot() });
+      return;
+    }
 
     if (heldId === entry.targetItemId) {
       this.pickupSystem.forceDropHeld();
@@ -413,8 +438,10 @@ export class LostFoundSystem {
       entry.outcome = 'completed';
       this.thankingTimer = LOST_FOUND_THANKING_DURATION;
       this.npcSystem.updateBubbleText(pickRandomThanks());
+      logNpcEDebug('LostFoundSystem.tryConfirmWithNpc', { heldId, before, result: 'waitingForItem -> thanking (correct item)', after: this.debugSnapshot() });
     } else {
       this.ui.showWrong(LOST_FOUND_WRONG_ITEM_TEXT);
+      logNpcEDebug('LostFoundSystem.tryConfirmWithNpc', { heldId, before, result: 'wrong item, stays waitingForItem', after: this.debugSnapshot() });
     }
   }
 
