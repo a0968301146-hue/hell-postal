@@ -20,7 +20,7 @@ import { MailSystem } from '../mail/mail-system';
 import { MailBagSystem, MAIL_RACK_INTERACTABLE_ID } from '../mail/mail-bag-system';
 import { getMailDestination } from '../mail/mail-data';
 import { BULLETIN_BOARD_INTERACTABLE_ID, TELEVISION_INTERACTABLE_ID } from '../world-layout';
-import { DEBUG_NPC_E_INTERACTION, logNpcEDebug } from './npc-e-debug';
+import { isNpcEDebugEnabled, logNpcEDebug } from './npc-e-debug';
 
 export class InteractionSystem {
   private raycaster: THREE.Raycaster;
@@ -129,7 +129,15 @@ export class InteractionSystem {
     this.onOpenMediaPlayer = onOpenMediaPlayer;
     this.onDollyUsed = onDollyUsed;
 
-    document.addEventListener('keydown', (e) => this.onKeyDown(e));
+    // "Fix trusted keyboard NPC interaction" round四: moved from
+    // document/bubble to window/CAPTURE phase — capture always runs before
+    // any bubble-phase listener anywhere in the tree (including this same
+    // event's own target/bubble phases on canvas or any other element), so
+    // this is now the FIRST handler to ever see a keydown, regardless of
+    // where focus happens to be or what any other DOM node might do with
+    // the event on the way up. Still the ONE and only E-key entry point —
+    // no second listener was added anywhere.
+    window.addEventListener('keydown', (e) => this.onKeyDown(e), { capture: true });
     document.addEventListener('mousedown', (e) => this.onMouseDown(e));
   }
 
@@ -192,27 +200,34 @@ export class InteractionSystem {
     return !!target && target.mesh.userData.interactionType === 'lostFoundNpc';
   }
 
-  /** Structured one-shot trace for a real KeyE press ("Trace and fix NPC E
-   * interaction routing" round) — gathers the full pipeline snapshot
-   * (raw KeyboardEvent, player/game state, this class's own raycast/target
-   * resolution, LostFoundSystem's own NPC/queue state) BEFORE any guard has
-   * a chance to early-return, so a stalled press is diagnosable regardless
-   * of which check stops it. Only ever computed when DEBUG_NPC_E_INTERACTION
-   * is true AND the physical key looks like the interact key — a plain
+  /** Structured one-shot trace for a real KeyE press ("Fix trusted keyboard
+   * NPC interaction" round) — gathers the full pipeline snapshot (raw
+   * KeyboardEvent incl. isTrusted/isComposing, player/game/pause state,
+   * this class's own raycast/target resolution, LostFoundSystem's own NPC/
+   * queue state) BEFORE any guard has a chance to early-return, so a
+   * stalled press is diagnosable regardless of which check stops it. Only
+   * ever computed when isNpcEDebugEnabled() (the ?debugNpcE=1 URL param) is
+   * true AND the physical key looks like the interact key — a plain
    * geometry/state read, no mutation. */
   private buildNpcEKeyTrace(event: KeyboardEvent): Record<string, unknown> {
     const freshHit = this.raycastCurrentHit();
+    const activeEl = document.activeElement as HTMLElement | null;
     return {
       event: {
         key: event.key,
         code: event.code,
+        isTrusted: event.isTrusted,
+        isComposing: event.isComposing,
+        keyCode: (event as unknown as { keyCode?: number }).keyCode,
         repeat: event.repeat,
         defaultPrevented: event.defaultPrevented,
-        pointerLockElementExists: !!document.pointerLockElement,
-        eventTargetTag: (event.target as HTMLElement | null)?.tagName ?? null,
+        eventTarget: (event.target as HTMLElement | null)?.tagName ?? null,
+        documentActiveElement: activeEl ? `${activeEl.tagName}${activeEl.id ? '#' + activeEl.id : ''}` : null,
+        pointerLockElement: document.pointerLockElement ? (document.pointerLockElement as HTMLElement).tagName : null,
       },
       gameState: {
         pauseManagerIsPaused: this.pauseManager.isPaused,
+        pauseReasons: (['manual', 'settlement', 'stampMinigame', 'upgradeMenu', 'mediaPlayerMenu'] as const).filter((r) => this.pauseManager.has(r)),
         activeTool: this.playerData.activeTool,
         playerState: this.playerData.state,
         heldObjectId: this.playerData.heldObjectId,
@@ -234,7 +249,7 @@ export class InteractionSystem {
     // regardless of which check ends up stopping this press (spec: "按下E
     // 時，必須依順序記錄一次完整追蹤").
     const isELikeKey = event.code === 'KeyE';
-    let npcTrace: Record<string, unknown> | null = DEBUG_NPC_E_INTERACTION && isELikeKey ? this.buildNpcEKeyTrace(event) : null;
+    let npcTrace: Record<string, unknown> | null = isNpcEDebugEnabled() && isELikeKey ? this.buildNpcEKeyTrace(event) : null;
     const stopNpcTrace = (stoppedAt: string, extra?: Record<string, unknown>) => {
       if (!npcTrace) return;
       logNpcEDebug('InteractionSystem.onKeyDown', { ...npcTrace, stoppedAt, ...extra });
@@ -277,6 +292,14 @@ export class InteractionSystem {
       stopNpcTrace('binding mismatch: neither interact nor pickupPlace bound to this event.code');
       return;
     }
+    // "Fix trusted keyboard NPC interaction" round四: preventDefault ONLY
+    // once we've confirmed this physical key IS a bound game action — never
+    // globally for every keydown (spec: "只在確認是遊戲互動鍵後
+    // preventDefault，不要對所有鍵盤輸入全域阻擋"). Guards against the
+    // browser/OS routing an unhandled key through some other default
+    // behavior (e.g. an IME's own composition handling) before this
+    // handler's own game logic below gets to act on it.
+    event.preventDefault();
 
     if (this.playerData.state === 'placement-preview' || this.playerData.state === 'stamping-minigame') {
       stopNpcTrace(`state blocks: ${this.playerData.state}`);
@@ -444,8 +467,9 @@ export class InteractionSystem {
         this.lastHoldingItemHitIsNpc &&
         this.lostFoundSystem.isNpcWaiting
       ) {
-        stopNpcTrace('handled: holding-item NPC hand-over branch');
+        const npcStateBefore = this.lostFoundSystem.debugSnapshot();
         this.lostFoundSystem.tryConfirmWithNpc(this.playerData.heldObjectId);
+        stopNpcTrace('handled: holding-item NPC hand-over branch', { npcStateBefore, npcStateAfter: this.lostFoundSystem.debugSnapshot() });
         return;
       }
       // Normal: enter placement mode
@@ -503,11 +527,12 @@ export class InteractionSystem {
     if (this.currentTarget && this.isLostFoundNpcTarget(this.currentTarget)) {
       const canInteract = this.playerData.activeTool === 'empty' && this.lostFoundSystem.isNpcWaiting;
       let handleInteractionCalled = false;
+      const npcStateBefore = this.lostFoundSystem.debugSnapshot();
       if (canInteract) {
         handleInteractionCalled = true;
         this.lostFoundSystem.tryConfirmWithNpc(null);
       }
-      stopNpcTrace('handled: empty-handed NPC priority-0 branch', { canInteract, handleInteractionCalled });
+      stopNpcTrace('handled: empty-handed NPC priority-0 branch', { canInteract, handleInteractionCalled, npcStateBefore, npcStateAfter: this.lostFoundSystem.debugSnapshot() });
       this.clearHighlight(this.currentTarget);
       this.currentTarget = null;
       return;
