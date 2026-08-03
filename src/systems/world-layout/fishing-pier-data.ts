@@ -29,22 +29,23 @@ export const FISHING_PIER_CENTER_X = (FISHING_PIER.minX + FISHING_PIER.maxX) / 2
 export const FISHING_PIER_DECK_TOP_Y = FISHING_PIER.floorY;
 
 /** Two chairs, side by side, both facing south (+Z, out over open water past
- * the deck's own south edge at FISHING_PIER.maxZ=29) — spec: "椅子間距維持
- * 約0.6~0.8m". 0.7m gap in X.
+ * the deck's own south edge at FISHING_PIER.maxZ=29) — "Fix NPC direct
+ * interaction and pallet stack handling" round五: pulled apart from 0.7m to
+ * the spec's own suggested coordinates (10.9, 12.2), a 1.3m gap, within the
+ * requested 1.2~1.4m range.
  *
- * Deliberately NOT centered on the deck — even at the new 3.0m width, a
- * centered pair plus the player capsule's own radius (0.35m, physics-
- * system.ts) still leaves neither side lane individually wide enough to
- * clear both a chair and the deck's own edge. Clustering both chairs
- * against the WEST edge instead sacrifices the (already-unusable) west lane
- * but leaves a full east lane 1.5m+ wide the whole deck length — spec此輪:
- * "至少保留1.0m可通行走道". See FISHING_PIER_EAST_LANE_CLEARANCE below for
- * the actual computed figure. */
+ * Still NOT centered on the deck (3.0m wide) — the west lane (10.5..10.9
+ * minus the chair's own half-extent) stays too narrow for the player
+ * capsule's own radius (0.35m, physics-system.ts) regardless, same as
+ * before. What changes this round is the gap BETWEEN the two chairs
+ * (11.16..11.94, 0.78m) — now wide enough for the capsule to actually pass
+ * through the middle (spec: "玩家可從兩張椅子中間通過"), not just around the
+ * east side. FISHING_PIER_EAST_LANE_CLEARANCE below confirms the east lane
+ * itself still clears the spec's own 0.8~1.0m minimum too. */
 const CHAIR_HALF_EXTENT = 0.26;
-const CHAIR_GAP = 0.7;
 const CHAIR_Z = FISHING_PIER.maxZ - 1.0;
-export const FISHING_CHAIR_A = new THREE.Vector3(FISHING_PIER.minX + 0.5, FISHING_PIER_DECK_TOP_Y, CHAIR_Z);
-export const FISHING_CHAIR_B = new THREE.Vector3(FISHING_CHAIR_A.x + CHAIR_GAP, FISHING_PIER_DECK_TOP_Y, CHAIR_Z);
+export const FISHING_CHAIR_A = new THREE.Vector3(10.9, FISHING_PIER_DECK_TOP_Y, CHAIR_Z);
+export const FISHING_CHAIR_B = new THREE.Vector3(12.2, FISHING_PIER_DECK_TOP_Y, CHAIR_Z);
 /** Chairs face +Z — no yaw needed, the chair mesh itself is built with its
  * backrest on the -Z side. */
 export const FISHING_CHAIR_FACING = 0;

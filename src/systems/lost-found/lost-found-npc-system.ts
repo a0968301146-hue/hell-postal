@@ -1,16 +1,33 @@
 import * as THREE from 'three';
 import {
-  LOST_FOUND_NPC_SPAWN, LOST_FOUND_NPC_WAIT_SPOT, LOST_FOUND_NPC_ROUTE_WAYPOINTS, LOST_FOUND_ROOM, LOST_FOUND_COUNTER,
+  LOST_FOUND_NPC_SPAWN, LOST_FOUND_NPC_WAIT_SPOT, LOST_FOUND_NPC_ROUTE_WAYPOINTS, LOST_FOUND_ROOM,
 } from '../../data/world/lost-found-layout-data';
 import {
   createLostFoundBubble, showLostFoundBubble, updateLostFoundBubbleText, disposeLostFoundBubble, LostFoundBubble,
 } from './lost-found-bubble-ui';
 import { LostItemPreset } from './lost-found-data';
 import { LostItemPreviewRenderer } from './lost-item-preview-renderer';
+import { InteractableObject, createInteractableObject } from '../../shared/types/interactable';
 
 const NPC_SPEED = 1.6; // m/s, simple slide-to-target movement — same convention as counter-npc-system.ts
 const ARRIVE_EPS = 0.08;
 const HEAD_Y = LOST_FOUND_ROOM.floorY + 1.9;
+
+/** Raycast id for the NPC's own invisible interaction hitbox ("Fix NPC
+ * direct interaction and pallet stack handling" round二) — a stable id
+ * (the SAME one is re-registered every time a new daily NPC spawns, since
+ * only one is ever on-screen at once — LostFoundSystem's own queue already
+ * enforces that). */
+export const LOST_FOUND_NPC_INTERACTABLE_ID = 'lost-found-npc';
+/** Hitbox footprint (spec二: "寬約0.7m / 高約1.8m / 深約0.6m"). */
+const NPC_HITBOX_WIDTH = 0.7;
+const NPC_HITBOX_HEIGHT = 1.8;
+const NPC_HITBOX_DEPTH = 0.6;
+/** Local Y (the group's own position.y is always 0 — see spawn() below,
+ * `group.position.set(x, 0, z)`) for the hitbox's own center — matches the
+ * body capsule mesh's own local Y offset exactly, landing roughly at chest
+ * height on the ~1.46m-tall capsule. */
+const NPC_HITBOX_CENTER_Y = LOST_FOUND_ROOM.floorY + 0.28 + 0.45;
 
 export type LostFoundNpcState = 'gone' | 'walkingIn' | 'waiting' | 'walkingOut';
 
@@ -30,31 +47,41 @@ export class LostFoundNpcSystem {
 
   private scene: THREE.Scene;
   private previewRenderer: LostItemPreviewRenderer;
+  private interactables: Map<string, InteractableObject>;
   private group: THREE.Group | null = null;
   private bubble: LostFoundBubble | null = null;
   private currentPreset: LostItemPreset | null = null;
   private target = new THREE.Vector3();
   /** Remaining points to visit in order, current target first — set by
-   * spawn()/startLeaving() from LOST_FOUND_NPC_ROUTE_WAYPOINTS so the NPC
-   * ducks around the counter's own footprint instead of cutting straight
-   * through it. Popped one at a time in update() as each point is reached. */
+   * spawn()/startLeaving() from LOST_FOUND_NPC_ROUTE_WAYPOINTS. Popped one
+   * at a time in update() as each point is reached. */
   private route: { x: number; z: number }[] = [];
+  /** Invisible, non-colliding raycast hitbox ("Fix NPC direct interaction
+   * and pallet stack handling" round二) — a child of `group`, so it always
+   * tracks the NPC's current position/rotation for free; registered into the
+   * shared `interactables` map only while `group` exists (spawn() through
+   * disposeGroup()), so it's never a valid raycast target while the NPC
+   * hasn't arrived yet or has already left (spec: "離場或尚未抵達時不可互
+   * 動" — enforced together with LostFoundSystem's own isNpcWaiting gate). */
+  private hitboxObj: InteractableObject | null = null;
 
-  constructor(scene: THREE.Scene, previewRenderer: LostItemPreviewRenderer) {
+  constructor(scene: THREE.Scene, previewRenderer: LostItemPreviewRenderer, interactables: Map<string, InteractableObject>) {
     this.scene = scene;
     this.previewRenderer = previewRenderer;
+    this.interactables = interactables;
   }
 
   get position(): THREE.Vector3 | null {
     return this.group ? this.group.position : null;
   }
 
-  /** Spawns just outside the west gate and starts walking in toward the
-   * counter's waiting spot (spec二: NPC從西側門外生成，經大門走到櫃檯等待
-   * 位置). No-op if an NPC is already present. `preset` is the day's target
-   * lost item — kept for the head bubble's model preview once arrived (see
-   * update()'s arrival branch). */
-  spawn(preset: LostItemPreset): void {
+  /** Spawns just outside the west gate and starts walking in toward its own
+   * waiting spot. No-op if an NPC is already present. `preset` is the day's
+   * target lost item — kept for the head bubble's model preview once
+   * arrived (see update()'s arrival branch). `displayName` becomes the
+   * interaction hitbox's own prompt title (spec二: "顯示：NPC名稱 / E
+   * 交談"). */
+  spawn(preset: LostItemPreset, displayName: string): void {
     if (this.group) return;
 
     const group = new THREE.Group();
@@ -63,6 +90,25 @@ export class LostFoundNpcSystem {
     const body = new THREE.Mesh(capsuleGeo, bodyMat);
     body.position.y = LOST_FOUND_ROOM.floorY + 0.28 + 0.45;
     group.add(body);
+
+    // Invisible interaction hitbox (spec二: "寬約0.7m / 高約1.8m / 深約
+    // 0.6m...不可見...沒有物理阻擋...可被既有InteractionSystem準心raycast命
+    // 中") — genuinely see-through (opacity 0) rather than mesh.visible=
+    // false, since InteractionSystem's own raycast target list
+    // (getInteractableMeshes()) filters out any mesh with visible===false
+    // entirely, which would make it permanently unraycastable.
+    const hitboxGeo = new THREE.BoxGeometry(NPC_HITBOX_WIDTH, NPC_HITBOX_HEIGHT, NPC_HITBOX_DEPTH);
+    const hitboxMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+    const hitboxMesh = new THREE.Mesh(hitboxGeo, hitboxMat);
+    hitboxMesh.position.set(0, NPC_HITBOX_CENTER_Y, 0);
+    group.add(hitboxMesh);
+    const hitboxObj = createInteractableObject(LOST_FOUND_NPC_INTERACTABLE_ID, displayName, hitboxMesh, NPC_HITBOX_WIDTH, NPC_HITBOX_HEIGHT, NPC_HITBOX_DEPTH);
+    // canPickUp=true only to satisfy the shared raycast filter's own
+    // requirement — never actually meant to be picked up (same pattern as
+    // the mail rack / vehicle buttons / pallet racks).
+    hitboxObj.canPickUp = true;
+    this.interactables.set(LOST_FOUND_NPC_INTERACTABLE_ID, hitboxObj);
+    this.hitboxObj = hitboxObj;
 
     group.position.set(LOST_FOUND_NPC_SPAWN.x, 0, LOST_FOUND_NPC_SPAWN.z);
     this.scene.add(group);
@@ -104,9 +150,9 @@ export class LostFoundNpcSystem {
    * into waitingForItem ("Add sequential lost-found visitors and held cargo
    * feedback" round二: "進入waitingForItem後...顯示需要的失物名稱與模型預
    * 覽"), never automatically on arrival anymore (see update()'s own arrival
-   * branch below, which now only faces the counter — no bubble content of
-   * its own; LostFoundSystem always shows the greeting text right after via
-   * updateBubbleText() instead). No-op if this NPC has no target preset. */
+   * branch below, which has no bubble content of its own — LostFoundSystem
+   * always shows the greeting text right after via updateBubbleText()
+   * instead). No-op if this NPC has no target preset. */
   showItemNeed(promptText: string): void {
     if (this.bubble && this.currentPreset) {
       showLostFoundBubble(this.bubble, this.previewRenderer, this.currentPreset, promptText);
@@ -136,12 +182,12 @@ export class LostFoundNpcSystem {
       }
       if (this.state === 'walkingIn') {
         this.state = 'waiting';
-        // Face the counter/player directly (spec一: "NPC必須走到櫃檯正
-        // 面...面向玩家") rather than leaving whatever heading the last
-        // movement step happened to produce.
-        const faceDx = LOST_FOUND_COUNTER.x - pos.x;
-        const faceDz = LOST_FOUND_COUNTER.z - pos.z;
-        this.group.rotation.y = Math.atan2(faceDx, faceDz);
+        // No counter to "face" any more ("Fix NPC direct interaction and
+        // pallet stack handling" round一) — just keep whatever heading the
+        // final approach step already produced (see the movement branch
+        // below, `Math.atan2(dx, dz)`), which already reads as roughly
+        // "facing back toward the player's own east-side door" since that's
+        // the general direction of approach.
         // Bubble content is now entirely LostFoundSystem's call (spec二:
         // greeting first, no item name/preview yet) — it calls
         // updateBubbleText() with a random greeting immediately after this
@@ -165,6 +211,10 @@ export class LostFoundNpcSystem {
     if (this.bubble) disposeLostFoundBubble(this.bubble);
     this.bubble = null;
     this.currentPreset = null;
+    if (this.hitboxObj) {
+      this.interactables.delete(LOST_FOUND_NPC_INTERACTABLE_ID);
+      this.hitboxObj = null;
+    }
     this.group.traverse((child) => {
       if (child instanceof THREE.Mesh) {
         child.geometry?.dispose();

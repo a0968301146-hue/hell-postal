@@ -220,8 +220,8 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     pickupSystem.addPlacementSurface(surface);
   }
 
-  // West-side lost & found desk — minimal one-case flow (spec三). Built
-  // after pickupSystem exists (tryConfirmAtCounter consumes the held item
+  // West-side lost & found room — minimal one-case flow (spec三). Built
+  // after pickupSystem exists (tryConfirmWithNpc consumes the held item
   // via pickupSystem.forceDropHeld() on success).
   const lostFoundUI = new LostFoundUI();
   const lostFoundSystem = new LostFoundSystem(

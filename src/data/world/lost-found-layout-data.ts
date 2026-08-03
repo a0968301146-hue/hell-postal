@@ -48,71 +48,22 @@ export const LOST_FOUND_NPC_GATE = {
  * own gates. */
 export const LOST_FOUND_NPC_SPAWN = { x: -17.5, z: 15.5 };
 
-/** Where the NPC stops and waits once arrived — WEST of the counter now
- * ("Expand lost found return storage and scoring" round 一: 櫃檯旋轉180度,
- * NPC等待位置同步旋轉到西側). Mirrored across LOST_FOUND_COUNTER.x from the
- * old east-side spot (was centerX+1.0, now centerX-1.0) — the player already
- * enters this room from the EAST (LOST_FOUND_DOOR, on BACK_AREA's own west
- * wall), so this rotation puts the NPC on the far side from the player's
- * natural approach, counter in between, exactly as spec requires ("玩家站在
- * 櫃檯另一側，雙方中間隔著櫃檯"). */
-export const LOST_FOUND_NPC_WAIT_SPOT = { x: -13.5, z: 15.2 };
+/** Where the NPC stops and waits once arrived ("Fix NPC direct interaction
+ * and pallet stack handling" round一/二: 移除失物招領櫃檯，NPC移到原櫃檯區域
+ * 內的可行走地面，玩家直接瞄準NPC模型互動). Reuses the OLD counter's own
+ * center coordinate — that spot is now just open floor once the counter mesh
+ * /collider is gone, roughly centered in the room (room spans x -15..-10, z
+ * 14..19) and easily reachable from the player's own east-side door
+ * (LOST_FOUND_DOOR, on BACK_AREA's west wall). */
+export const LOST_FOUND_NPC_WAIT_SPOT = { x: -12.5, z: 16.5 };
 
 /** Intermediate waypoints the NPC walks through between LOST_FOUND_NPC_SPAWN
  * and LOST_FOUND_NPC_WAIT_SPOT (in that order for arrival; reversed, then
- * ending at LOST_FOUND_NPC_SPAWN, for departure). Empty this round — now
- * that the NPC's wait spot sits on the SAME (west) side of the room as its
- * own spawn/gate, a direct single-leg line from spawn to wait spot never
- * crosses the counter's footprint (counter spans x -12.85..-12.15; the
- * NPC's entire path stays at x <= -13.5, clear of it entirely), so the old
- * "duck around the counter's north end" detour is no longer needed. */
+ * ending at LOST_FOUND_NPC_SPAWN, for departure). Empty — with the counter
+ * gone there is no furniture footprint left to detour around; a direct
+ * single-leg line from the west gate to the wait spot crosses open floor the
+ * whole way. */
 export const LOST_FOUND_NPC_ROUTE_WAYPOINTS: { x: number; z: number }[] = [];
-
-/** Counter — a long north-south bar, rotated 180 degrees this round ("Expand
- * lost found return storage and scoring" round 一: 將目前失物招領櫃檯旋轉
- * 180度 — 若目前正面朝東，旋轉後應朝西). A plain symmetric box has no
- * visually distinct "facing" on its own — see lost-found-system.ts
- * buildCounter()'s raised back panel (now on the WEST edge, backing the
- * NPC's new west-side position) for the actual visual "facing west" cue;
- * the FUNCTIONAL orientation (who stands where) is enforced purely
- * positionally: LOST_FOUND_NPC_WAIT_SPOT.x < LOST_FOUND_COUNTER.x <
- * wherever the player is standing when
- * LostFoundSystem.isPlayerNearCounter() returns true — flipped from "< " to
- * "west of" this round, see that method. */
-export const LOST_FOUND_COUNTER = { x: -12.5, z: 16.5 };
-/** Counter footprint half-extents (X depth, Y height, Z length) — shared by
- * both the physics collider and the visual mesh (lost-found-system.ts).
- * Unchanged by the 180-degree rotation — a symmetric box's own footprint is
- * identical either way; only the back panel/NPC/interaction side flip. */
-export const LOST_FOUND_COUNTER_HALF_EXTENTS = { x: 0.35, y: 0.45, z: 1.4 };
-
-/** NPC interaction sensor zone ("Fix NPC interaction zone and expand fishing
- * pier" round一) — replaces a distance-formula check with a real Rapier
- * sensor volume the player's own capsule must genuinely overlap
- * (lost-found-system.ts's isPlayerInsideSensor). Sits entirely on the
- * counter's EAST (player-approach) face, starting exactly at that face — 0
- * overlap with the counter's own solid collider (spec: "不可放在櫃檯Collider
- * 內") — and nowhere near the NPC's own west-side wait spot on the far side
- * of the counter (spec: "不可放在NPC模型中心後方").
- *
- * halfExtents.x (depth, protrudes east off the counter face) = 0.5 ->
- * zone CENTER sits 0.5m east of the counter's own face, within the spec's
- * 0.35~0.55m range. halfExtents.z (width, along the counter's own length
- * axis) = 0.8 -> 1.6m total, narrower than the counter's own 2.8m length,
- * centered on it. halfExtents.y (height) = 0.9 -> 1.8m total, matching the
- * player capsule's own full height (2*0.55 halfHeight + 2*0.35 radius,
- * physics-system.ts) so a standing player's whole body is inside the zone's
- * vertical span, not just their feet or head. */
-const LOST_FOUND_INTERACTION_ZONE_HALF_EXTENTS = { x: 0.5, y: 0.9, z: 0.8 };
-const lostFoundCounterFrontFaceX = LOST_FOUND_COUNTER.x + LOST_FOUND_COUNTER_HALF_EXTENTS.x;
-export const LOST_FOUND_INTERACTION_ZONE = {
-  center: {
-    x: lostFoundCounterFrontFaceX + LOST_FOUND_INTERACTION_ZONE_HALF_EXTENTS.x,
-    y: LOST_FOUND_ROOM.floorY + LOST_FOUND_INTERACTION_ZONE_HALF_EXTENTS.y,
-    z: LOST_FOUND_COUNTER.z,
-  },
-  halfExtents: LOST_FOUND_INTERACTION_ZONE_HALF_EXTENTS,
-};
 
 /** Lost-item storage cabinet — OUT of the small front room and into
  * BACK_AREA's own package-sorting area, against its west wall, north of the

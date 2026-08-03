@@ -6,18 +6,12 @@ import { InteractableObject, createInteractableObject } from '../../shared/types
 // (systems/interaction) — avoids a file-level circular import through
 // InteractionSystem, which depends on LostFoundSystem.
 import { PickupPort } from '../../shared/types/pickup-port';
-import { SCENE_CONFIG } from '../world-layout';
-import RAPIER from '@dimforge/rapier3d-compat';
-import {
-  LOST_FOUND_ROOM, LOST_FOUND_COUNTER, LOST_FOUND_COUNTER_HALF_EXTENTS, LOST_FOUND_INTERACTION_ZONE,
-} from '../../data/world/lost-found-layout-data';
 import {
   LOST_ITEM_PRESETS, LostItemPreset, LOST_FOUND_CASES, LostFoundCaseDef, LOST_FOUND_WRONG_ITEM_TEXT, LOST_FOUND_MISSED_TEXT,
   LOST_FOUND_SEEKING_TEXT, LOST_FOUND_CONTINUE_PROMPT, DECOY_LOST_ITEM_COUNT, DAILY_LOST_FOUND_NPC_COUNT, buildLostItemGeometry,
   pickRandomGreeting, pickRandomThanks,
 } from './lost-found-data';
 import { UNLOAD_PORTS, UNLOAD_SPAWN_JITTER_X, UNLOAD_SPAWN_JITTER_Z, UNLOAD_BURST_CONFIG } from '../daily-flow';
-import { createFloatingLabel } from '../../adapters/three/world-label-system';
 import { LostFoundUI } from './lost-found-ui';
 import { LostFoundNpcSystem } from './lost-found-npc-system';
 import { LostItemPreviewRenderer } from './lost-item-preview-renderer';
@@ -26,17 +20,10 @@ import { LostFoundSettlementInput } from '../scoring/scoring-types';
 
 const LOST_ITEM_ID_PREFIX = 'lostitem-';
 
-/** How long a successfully-completed NPC lingers at the counter showing its
- * thank-you text before actually walking out ("Add sequential lost-found
- * visitors and held cargo feedback" round二: "NPC原地進入thanking 4秒...4秒
- * 後才離場"). */
+/** How long a successfully-completed NPC lingers showing its thank-you text
+ * before actually walking out ("Add sequential lost-found visitors and held
+ * cargo feedback" round二: "NPC原地進入thanking 4秒...4秒後才離場"). */
 const LOST_FOUND_THANKING_DURATION = 4;
-
-/** Visualizes LOST_FOUND_INTERACTION_ZONE as a semi-transparent box while
- * true ("Fix NPC interaction zone and expand fishing pier" round一) — always
- * false in the shipped build; flip locally only to eyeball the zone's real
- * placement against the counter/NPC. */
-const DEBUG_LOST_FOUND_INTERACTION_ZONE = false;
 
 function randRange(min: number, max: number): number {
   return min + Math.random() * (max - min);
@@ -102,7 +89,7 @@ interface LostFoundQueueEntry {
  * waits on the WEST); the NPC's head bubble now shows the target item's
  * actual model preview via the ONE shared LostItemPreviewRenderer (spec
  * 二); E-key handling covers three cases — correct/wrong/empty-handed
- * (spec三) — via tryConfirmAtCounter(heldId: string | null); each day now
+ * (spec三) — via tryConfirmWithNpc(heldId: string | null); each day now
  * bursts in 1 target + DECOY_LOST_ITEM_COUNT decoy lost items (spec五),
  * every one auto-fit-scaled at spawn time so it can always physically fit
  * a cabinet cell (spec六); and settleAtDeparture() (renamed/extended from
@@ -153,17 +140,6 @@ export class LostFoundSystem {
    * UNLOAD_BURST_CONFIG, never modified), so they don't visually launch
    * through a still-closed port. null when no spawn is pending. */
   private lostItemSpawnTimer: number | null = null;
-  /** The real Rapier sensor volume covering LOST_FOUND_INTERACTION_ZONE
-   * ("Fix NPC interaction zone and expand fishing pier" round一) — built
-   * once in buildInteractionZone(), read every frame in update(). */
-  private interactionZoneSensor!: RAPIER.Collider;
-  /** True while the player's capsule genuinely overlaps
-   * interactionZoneSensor this frame — the ONE flag isPlayerNearCounter()
-   * defers to, so the interaction prompt and the actual E-key handling can
-   * never disagree (both call sites already route through the same public
-   * method; this just changes what that method reads internally). Set/
-   * cleared every frame in update(), never guessed from position math. */
-  private canInteractWithLostFound = false;
 
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>,
@@ -175,61 +151,12 @@ export class LostFoundSystem {
     this.pickupSystem = pickupSystem;
     this.ui = ui;
     this.previewRenderer = new LostItemPreviewRenderer();
-    this.npcSystem = new LostFoundNpcSystem(scene, this.previewRenderer);
+    // "Fix NPC direct interaction and pallet stack handling" round一/二:
+    // no more counter/interaction-sensor to build here — the daily NPC
+    // registers/unregisters its own raycast hitbox directly into
+    // `interactables` as it spawns/despawns (see lost-found-npc-system.ts).
+    this.npcSystem = new LostFoundNpcSystem(scene, this.previewRenderer, interactables);
     this.cabinetSystem = new LostFoundCabinetSystem(scene, physics, interactables, pickupSystem);
-
-    this.buildCounter();
-    this.buildInteractionZone();
-  }
-
-  /** Real Rapier sensor trigger covering LOST_FOUND_INTERACTION_ZONE ("Fix
-   * NPC interaction zone and expand fishing pier" round一) — a genuine
-   * physics volume the player's own capsule must overlap, replacing the old
-   * "3D straight-line distance to the NPC/counter" formula (spec: "不以NPC
-   * 模型中心的3D直線距離作為唯一判斷"). Never blocks movement (sensors
-   * produce no contact response) and only ever tested against the player's
-   * own collider (spec: "只偵測GROUP_PLAYER" — see createSensorCuboid's own
-   * doc comment for how that's enforced). */
-  private buildInteractionZone(): void {
-    const { center, halfExtents } = LOST_FOUND_INTERACTION_ZONE;
-    this.interactionZoneSensor = this.physics.createSensorCuboid(
-      center.x, center.y, center.z, halfExtents.x, halfExtents.y, halfExtents.z
-    );
-
-    if (DEBUG_LOST_FOUND_INTERACTION_ZONE) {
-      const geo = new THREE.BoxGeometry(halfExtents.x * 2, halfExtents.y * 2, halfExtents.z * 2);
-      const mat = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.25, wireframe: false });
-      const debugMesh = new THREE.Mesh(geo, mat);
-      debugMesh.position.set(center.x, center.y, center.z);
-      this.scene.add(debugMesh);
-      this.scene.add(new THREE.BoxHelper(debugMesh, 0x00ff00));
-    }
-  }
-
-  private buildCounter(): void {
-    const { x: hx, y: hy, z: hz } = LOST_FOUND_COUNTER_HALF_EXTENTS;
-    const y = LOST_FOUND_ROOM.floorY + hy;
-    const geo = new THREE.BoxGeometry(hx * 2, hy * 2, hz * 2);
-    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x7a5c3a }));
-    mesh.position.set(LOST_FOUND_COUNTER.x, y, LOST_FOUND_COUNTER.z);
-    this.scene.add(mesh);
-    this.physics.createStaticCuboid(LOST_FOUND_COUNTER.x, y, LOST_FOUND_COUNTER.z, hx, hy, hz);
-
-    // Raised back panel running the counter's full length, on its WEST edge
-    // — a plain symmetric box has no visual "facing" of its own, so this
-    // accent is what actually reads as "正面朝向西方" after the 180°
-    // rotation ("Expand lost found return storage and scoring" round 一):
-    // the panel backs the NPC's own west side, leaving the east (player)
-    // side an open desktop. Purely decorative — the main counter collider
-    // above already covers this footprint.
-    const panelGeo = new THREE.BoxGeometry(0.05, 0.3, hz * 2);
-    const panel = new THREE.Mesh(panelGeo, new THREE.MeshStandardMaterial({ color: 0x5a4028 }));
-    panel.position.set(LOST_FOUND_COUNTER.x - hx + 0.03, y + hy + 0.15, LOST_FOUND_COUNTER.z);
-    this.scene.add(panel);
-
-    const label = createFloatingLabel('失物招領櫃檯', { width: 0.9, bg: 'rgba(30,25,20,0.75)' });
-    label.position.set(LOST_FOUND_COUNTER.x, y + hy + 0.6, LOST_FOUND_COUNTER.z);
-    this.scene.add(label);
   }
 
   /** Draws DAILY_LOST_FOUND_NPC_COUNT (3) DISTINCT cases from the pool —
@@ -262,7 +189,7 @@ export class LostFoundSystem {
     const entry = this.todaysQueue[idx];
     entry.state = 'entering';
     const preset = LOST_ITEM_PRESETS.find((p) => p.id === entry.caseDef.lostItemPresetId);
-    if (preset) this.npcSystem.spawn(preset);
+    if (preset) this.npcSystem.spawn(preset, entry.caseDef.customerName);
     this.refreshQueueStatusUI();
   }
 
@@ -444,30 +371,13 @@ export class LostFoundSystem {
     return this.npcSystem.state === 'waiting';
   }
 
-  /** Authoritative "can the player interact with the lost-found NPC right
-   * now" check ("Fix NPC interaction zone and expand fishing pier" round
-   * 一) — PRIMARILY canInteractWithLostFound, the real Rapier sensor-overlap
-   * flag refreshed every frame in update(), not a distance formula (spec:
-   * "不以NPC模型中心的3D直線距離作為唯一判斷"). `pos` still feeds an
-   * optional SECOND-layer horizontal-distance safety net (spec: "可保留水平
-   * 距離作第二層安全判斷，但忽略不必要的Y高度差") — deliberately generous
-   * (interactionDistance+2) so it only ever matters if canInteractWithLostFound
-   * somehow stayed stale/true from a position far away (e.g. a same-frame
-   * teleport), never as the deciding factor during normal play. Every call
-   * site (both the prompt display and the actual E-key handling) routes
-   * through this SAME method, so the two can never disagree (spec: "提示與
-   * 實際互動使用同一個判定"). */
-  isPlayerNearCounter(pos: THREE.Vector3): boolean {
-    if (!this.canInteractWithLostFound) return false;
-    const dx = pos.x - LOST_FOUND_COUNTER.x;
-    const dz = pos.z - LOST_FOUND_COUNTER.z;
-    return Math.sqrt(dx * dx + dz * dz) < SCENE_CONFIG.interactionDistance + 2;
-  }
-
-  /** Press E at the counter while the CURRENT queue entry's NPC is
-   * physically waiting there — behavior depends entirely on the entry's own
-   * dialogue stage ("Add sequential lost-found visitors and held cargo
-   * feedback" round二):
+  /** Press E while aiming at the NPC's own interaction hitbox and the
+   * CURRENT queue entry's NPC is physically waiting — behavior depends
+   * entirely on the entry's own dialogue stage ("Fix NPC direct interaction
+   * and pallet stack handling" round二, carried over from "Add sequential
+   * lost-found visitors and held cargo feedback" round二). Caller
+   * (interaction-system.ts) owns the raycast-hit/distance/activeTool/pause
+   * gating — this method only ever judges the NPC's own dialogue stage:
    *   - 'greeting': the FIRST E press only advances to 'waitingForItem' and
    *     reveals the target's name+model preview (spec: "第一次按E只進入需
    *     求階段，不可直接交付") — fires regardless of what's held or even
@@ -484,7 +394,7 @@ export class LostFoundSystem {
    *     hint shown. heldId===null -> no-op (bubble already shows the need).
    *   - 'entering'/'thanking'/'leaving': no-op entirely (spec:
    *     "thanking期間不可互動、不可跳過"). */
-  tryConfirmAtCounter(heldId: string | null): void {
+  tryConfirmWithNpc(heldId: string | null): void {
     if (!this.isNpcWaiting || this.activeIndex === -1) return;
     const entry = this.todaysQueue[this.activeIndex];
 
@@ -560,14 +470,6 @@ export class LostFoundSystem {
   }
 
   update(deltaTime: number): void {
-    // Refreshed first, every frame, from a REAL Rapier sensor-overlap query
-    // (spec: "玩家進入時設定canInteractWithLostFound=true，離開時清除") —
-    // game-app.ts's own update() runs playerController.update() + physics
-    // .update() (finalizing this frame's player position) before ever
-    // reaching lostFoundSystem.update(), so this always reflects the
-    // player's up-to-date position for the frame it's read in.
-    this.canInteractWithLostFound = this.physics.isPlayerInsideSensor(this.interactionZoneSensor);
-
     this.npcSystem.update(deltaTime);
     this.cabinetSystem.update(deltaTime);
 
@@ -578,7 +480,7 @@ export class LostFoundSystem {
     // the NPC physically arrives (spec: "先顯示一段問候或閒聊"); 'thanking'
     // counts down for exactly LOST_FOUND_THANKING_DURATION real seconds
     // (spec: "4秒後才離場", no interaction possible in the meantime — see
-    // tryConfirmAtCounter's own stage gate) before actually starting the
+    // tryConfirmWithNpc's own stage gate) before actually starting the
     // walk-out; 'leaving' resolves into its already-decided outcome
     // ('completed' or 'missed', see LostFoundQueueEntry's own doc comment)
     // ONLY once the NPC has fully walked out and despawned, at which point

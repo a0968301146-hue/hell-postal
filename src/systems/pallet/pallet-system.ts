@@ -12,7 +12,7 @@ import { UpgradeSystem } from '../upgrade';
 // cycle: interaction barrel -> interaction-system -> pallet barrel ->
 // pallet-system -> interaction barrel).
 import { PalletThrowHooks } from '../interaction/pickup-system';
-import { BACK_AREA, WORLD_BOUNDS } from '../world-layout';
+import { BACK_AREA, WORLD_BOUNDS, SCENE_CONFIG } from '../world-layout';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
 import {
   PalletSize, PalletDimensions, PALLET_SIZE_ORDER, PALLET_DIMENSIONS, PALLET_DETECT_HEIGHT,
@@ -170,6 +170,20 @@ export class PalletSystem implements PalletThrowHooks {
   private placementPos = new THREE.Vector3();
   private placementQuat = new THREE.Quaternion();
   private downRaycaster = new THREE.Raycaster();
+  /** Crosshair raycaster for the F-key rope-strap check against GROUND
+   * pallets ("Fix NPC direct interaction and pallet stack handling" round
+   * 四) — a SEPARATE raycaster from downRaycaster (placement-preview) and
+   * InteractionSystem's own (that one only ever targets pallets for pickup/
+   * return-to-rack, never for rope-binding a pallet that's just resting on
+   * the floor). */
+  private aimRaycaster = new THREE.Raycaster();
+  /** This frame's camera position/forward, cached from update()'s own
+   * parameters — read by getAimedGroundPallet() so the F-key handler (a
+   * separate keydown listener, fired at an arbitrary point between frames)
+   * always has a recent aim direction to raycast from without needing its
+   * own camera reference threaded through the constructor. */
+  private lastCameraPosition: THREE.Vector3 | null = null;
+  private lastCameraForward: THREE.Vector3 | null = null;
   private previewMesh: THREE.Mesh;
   /** Pinned cargo whose collider must stay disabled for one more physics
    * step after tryPlace() repositions it — flushed at the top of the NEXT
@@ -371,42 +385,220 @@ export class PalletSystem implements PalletThrowHooks {
     this.placementYaw += dir * PLACEMENT_YAW_STEP;
   }
 
-  /** F toggles rope-binding for whatever's currently pinned to the held
-   * pallet — a completely independent listener from InteractionSystem's own
-   * (matching cargo-hook-system.ts's established pattern), so it never
-   * intercepts F for anything else. */
+  /** F toggles rope-binding for a GROUND-PLACED pallet the crosshair is
+   * aimed at ("Fix NPC direct interaction and pallet stack handling" round
+   * 四: 固定繩索只能對放在地面的托盤使用 — removed entirely from the old
+   * "while carrying" flow) — a completely independent listener from
+   * InteractionSystem's own (matching cargo-hook-system.ts's established
+   * pattern), so it never intercepts F for anything else (spec: "不可破壞信
+   * 封箱等其他F功能" — this listener only ever acts when its OWN full
+   * condition set is satisfied, silently no-opping otherwise, same as every
+   * other independent F/Q listener already in this codebase).
+   *
+   * Locked-skill/held-pallet/wrong-tool all silently no-op (spec: "技能尚未
+   * 解鎖時...按F不執行固定繩功能" — no toast, no prompt, nothing) —
+   * getRopeStrapPromptSuffix() below enforces the SAME condition set for the
+   * prompt side, so the two can never disagree about when F does something. */
   private onKeyDown(event: KeyboardEvent): void {
     if (event.repeat) return;
     if (event.code !== 'KeyF') return;
     if (this.pauseManager.isPaused) return;
-    if (!this.heldPalletId) return;
-    const instance = this.pallets.get(this.heldPalletId);
-    if (!instance) return;
+    if (this.heldPalletId) return;
     if (this.playerData.activeTool !== 'powerGloves') return;
-    if (!this.upgradeSystem.isRopeStrapUnlocked()) {
-      this.hud.showToast('尚未解鎖固定繩索');
-      return;
-    }
+    if (!this.upgradeSystem.isRopeStrapUnlocked()) return;
+
+    const instance = this.getAimedGroundPallet();
+    if (!instance) return;
+
     if (instance.isRopeBound) {
       this.unbindRope(instance);
       return;
     }
-    if (instance.pinned.length === 0) {
+    if (!this.isPalletRestingStill(instance)) return;
+    const supportedCargo = this.findSupportedCargoRecursive(instance);
+    if (supportedCargo.length === 0) {
       this.hud.showToast('托盤上沒有可固定的貨物');
       return;
     }
-    this.bindRope(instance);
+    this.bindRope(instance, supportedCargo);
   }
 
-  private bindRope(instance: PalletInstance): void {
+  /** Raycast-precise "which ground-placed (storageState==='placed') pallet
+   * is the crosshair currently aimed at, within interaction range" — the
+   * ONE source both onKeyDown's own F-press ABOVE and
+   * getRopeStrapPromptSuffix's own display-prompt BELOW read, so they can
+   * never disagree (mirrors canStoreHeldPallet's own "single judgment
+   * function" role for the wall-mount-return fix). Never matches a held or
+   * wall-stored pallet — F does nothing for either (spec四: "已經放置在地面
+   * 的托盤" only). */
+  private getAimedGroundPallet(): PalletInstance | null {
+    if (!this.lastCameraPosition || !this.lastCameraForward) return null;
+    this.aimRaycaster.set(this.lastCameraPosition, this.lastCameraForward);
+    const groundPallets = Array.from(this.pallets.values()).filter((p) => p.storageState === 'placed');
+    const meshes = groundPallets.map((p) => p.mesh);
+    const hits = this.aimRaycaster.intersectObjects(meshes, true);
+    if (hits.length === 0 || hits[0].distance > SCENE_CONFIG.interactionDistance) return null;
+    let obj: THREE.Object3D | null = hits[0].object;
+    while (obj) {
+      const match = groundPallets.find((p) => p.mesh === obj);
+      if (match) return match;
+      obj = obj.parent;
+    }
+    return null;
+  }
+
+  /** Spec四: "托盤線速度與角速度接近靜止" — reuses the same VELOCITY_THRESHOLD
+   * the organize-scan already treats as "stable" elsewhere in this file. */
+  private isPalletRestingStill(instance: PalletInstance): boolean {
+    const lv = instance.body.linvel();
+    const av = instance.body.angvel();
+    const speed = Math.sqrt(lv.x ** 2 + lv.y ** 2 + lv.z ** 2);
+    const angSpeed = Math.sqrt(av.x ** 2 + av.y ** 2 + av.z ** 2);
+    return speed < VELOCITY_THRESHOLD && angSpeed < VELOCITY_THRESHOLD;
+  }
+
+  /** F-key rope-strap hint for whatever the crosshair is CURRENTLY aimed at
+   * while empty-handed (InteractionSystem's own generic pallet-aim prompt
+   * calls this to build the combined text) — '' whenever F would do nothing
+   * right now, so the prompt and the actual key-press can never promise
+   * something that doesn't happen. */
+  getRopeStrapPromptSuffix(palletId: string): string {
+    if (!this.upgradeSystem.isRopeStrapUnlocked()) return '';
+    if (this.heldPalletId) return '';
+    if (this.playerData.activeTool !== 'powerGloves') return '';
+    const instance = this.pallets.get(palletId);
+    if (!instance || instance.storageState !== 'placed') return '';
+    if (instance.isRopeBound) return '\nF 解除固定繩';
+    if (!this.isPalletRestingStill(instance)) return '';
+    if (this.findSupportedCargoRecursive(instance).length === 0) return '';
+    return '\nF 綁上固定繩';
+  }
+
+  /** Recursive multi-layer support detection ("Fix NPC direct interaction
+   * and pallet stack handling" round三) — replaces the old single-layer
+   * "only cargo directly touching the pallet's own top face" scan. Layer 1
+   * is that same direct-contact check; every subsequent layer is found by
+   * testing EVERY not-yet-supported candidate against EVERY already-
+   * supported item's own world-space AABB (spec: "候選Cargo底部與支撐物頂部
+   * 垂直間距約-0.03~0.12m", "XZ footprint必須具有實際重疊" — never just a
+   * center-point containment test), repeating until a pass finds nothing
+   * new. No max-layer cap; never pulls in cargo that isn't transitively
+   * reachable from the pallet's own top face through a real contact chain,
+   * so nearby-but-unconnected cargo is never swept up. */
+  private findSupportedCargoRecursive(instance: PalletInstance): InteractableObject[] {
+    const { width, depth, height } = instance.dimensions;
+    const innerHW = width / 2;
+    const innerHD = depth / 2;
+
+    instance.palletObj.mesh.updateMatrixWorld(true);
+    const matInv = new THREE.Matrix4().copy(instance.palletObj.mesh.matrixWorld).invert();
+
+    const candidates: InteractableObject[] = [];
+    for (const [id, obj] of this.interactables) {
+      if (isPalletId(id) || isRackId(id)) continue;
+      if (obj.isHeld || !obj.mesh.visible) continue;
+      const data = this.cargoSystem.getCargoData(id);
+      if (!data || (data.shapeType !== 'box' && data.shapeType !== 'large')) continue;
+      candidates.push(obj);
+    }
+
+    const supported: InteractableObject[] = [];
+    const supportedIds = new Set<string>();
+
+    // Layer 1: cargo resting directly on the pallet's own top surface.
+    for (const obj of candidates) {
+      const localPos = obj.mesh.position.clone().applyMatrix4(matInv);
+      const inZone =
+        localPos.x >= -innerHW && localPos.x <= innerHW &&
+        localPos.z >= -innerHD && localPos.z <= innerHD &&
+        localPos.y >= height / 2 - 0.05 && localPos.y <= height / 2 + PALLET_DETECT_HEIGHT;
+      if (inZone) {
+        supported.push(obj);
+        supportedIds.add(obj.id);
+      }
+    }
+
+    // Layers 2+: cargo resting on top of already-supported cargo, found via
+    // real world-space AABB overlap (vertical gap + XZ footprint overlap),
+    // repeated breadth-first until a pass adds nothing new.
+    let frontier = supported.slice();
+    while (frontier.length > 0) {
+      const nextFrontier: InteractableObject[] = [];
+      for (const support of frontier) {
+        const sHalfW = support.width / 2, sHalfD = support.depth / 2, sHalfH = support.height / 2;
+        const sPos = support.mesh.position;
+        const sTop = sPos.y + sHalfH;
+        const sMinX = sPos.x - sHalfW, sMaxX = sPos.x + sHalfW;
+        const sMinZ = sPos.z - sHalfD, sMaxZ = sPos.z + sHalfD;
+
+        for (const cand of candidates) {
+          if (supportedIds.has(cand.id)) continue;
+          const cHalfW = cand.width / 2, cHalfD = cand.depth / 2, cHalfH = cand.height / 2;
+          const cPos = cand.mesh.position;
+          const cBottom = cPos.y - cHalfH;
+          const gap = cBottom - sTop;
+          if (gap < -0.03 || gap > 0.12) continue;
+
+          const cMinX = cPos.x - cHalfW, cMaxX = cPos.x + cHalfW;
+          const cMinZ = cPos.z - cHalfD, cMaxZ = cPos.z + cHalfD;
+          const overlapsXZ = cMinX < sMaxX && cMaxX > sMinX && cMinZ < sMaxZ && cMaxZ > sMinZ;
+          if (!overlapsXZ) continue;
+
+          supported.push(cand);
+          supportedIds.add(cand.id);
+          nextFrontier.push(cand);
+        }
+      }
+      frontier = nextFrontier;
+    }
+
+    return supported;
+  }
+
+  /** Binds rope straps to a GROUND-PLACED pallet's own currently-detected
+   * cargo (spec四) — creates the real fixed joints RIGHT AWAY (unlike
+   * tryPlace()'s own deferred pendingJointsToCreate queue, which exists
+   * specifically to handle cargo bodies still disabled on the very frame
+   * they're re-enabled; a ground pallet's cargo is already fully physics-
+   * active, so no such deferral is needed here).
+   *
+   * Sets `obj.isHeld = true` on every newly-bound item — the SAME invariant
+   * tryPlace() already establishes for cargo bound while carrying (its own
+   * class doc comment: "isHeld deliberately stays true, reusing the isHeld-
+   * blocks-pickup/cargo-hook-targeting invariant"). Without this, a
+   * subsequent pickUp() on this same pallet would find these items via BOTH
+   * the boundCargoIds re-collection AND the fresh findSupportedCargoRecursive
+   * scan (which only skips isHeld===true items) and double-pin them —
+   * confirmed via headless testing before this fix (pinnedCount came back
+   * doubled). */
+  private bindRope(instance: PalletInstance, cargo: InteractableObject[]): void {
+    instance.palletObj.mesh.updateMatrixWorld(true);
+    const matInv = new THREE.Matrix4().copy(instance.palletObj.mesh.matrixWorld).invert();
+    const quatInv = instance.palletObj.mesh.quaternion.clone().invert();
+
     instance.isRopeBound = true;
-    instance.boundCargoIds = instance.pinned.map((p) => p.obj.id);
+    instance.boundCargoIds = cargo.map((obj) => obj.id);
+    for (const obj of cargo) {
+      const localPos = obj.mesh.position.clone().applyMatrix4(matInv);
+      const localQuat = obj.mesh.quaternion.clone().premultiply(quatInv);
+      this.createCargoJoint(instance, obj.id, localPos, localQuat);
+      obj.isHeld = true;
+    }
     this.updateRopeVisual(instance);
     this.hud.showToast('貨物已被固定繩綁住');
   }
 
+  /** Reverses bindRope() above — also clears `isHeld` on every item that WAS
+   * bound (mirrors tryPlace()'s own `obj.isHeld = isBound` assignment, which
+   * is what resets it for the old held-pallet flow; a ground-only unbind
+   * never passes through tryPlace() again, so this method must reset it
+   * itself or the cargo would stay permanently unpickupable/untargetable). */
   private unbindRope(instance: PalletInstance): void {
     this.removeAllCargoJoints(instance);
+    for (const id of instance.boundCargoIds) {
+      const obj = this.interactables.get(id);
+      if (obj) obj.isHeld = false;
+    }
     instance.isRopeBound = false;
     instance.boundCargoIds = [];
     this.updateRopeVisual(instance);
@@ -486,6 +678,14 @@ export class PalletSystem implements PalletThrowHooks {
   }
 
   update(deltaTime: number, cameraPosition?: THREE.Vector3, cameraForward?: THREE.Vector3): void {
+    // Cached for getAimedGroundPallet() — the F-key rope-strap listener
+    // fires from a separate keydown handler with no camera reference of its
+    // own (see that field's own doc comment).
+    if (cameraPosition && cameraForward) {
+      this.lastCameraPosition = cameraPosition;
+      this.lastCameraForward = cameraForward;
+    }
+
     if (this.pendingCargoRestore.length > 0) {
       for (const obj of this.pendingCargoRestore) {
         if (obj.rigidBody) this.physics.setBodyEnabled(obj.rigidBody, true);
@@ -679,10 +879,6 @@ export class PalletSystem implements PalletThrowHooks {
     const matInv = new THREE.Matrix4().copy(instance.palletObj.mesh.matrixWorld).invert();
     const quatInv = instance.palletObj.mesh.quaternion.clone().invert();
 
-    const { width, depth, height } = instance.dimensions;
-    const innerHW = width / 2;
-    const innerHD = depth / 2;
-
     instance.pinned = [];
 
     // Re-collect already-bound cargo FIRST — it deliberately stays
@@ -706,19 +902,15 @@ export class PalletSystem implements PalletThrowHooks {
     }
 
     if (!wasStored) {
-      for (const [id, obj] of this.interactables) {
-        if (isPalletId(id) || isRackId(id)) continue;
-        if (obj.isHeld || !obj.mesh.visible) continue;
-        const data = this.cargoSystem.getCargoData(id);
-        if (!data || (data.shapeType !== 'box' && data.shapeType !== 'large')) continue;
-
+      // "Fix NPC direct interaction and pallet stack handling" round三:
+      // recursive multi-layer detection (findSupportedCargoRecursive) —
+      // replaces the old single-layer "only cargo directly on the pallet's
+      // own top face" scan, so a second/third+ stacked layer is picked up
+      // (and follows the carry, rotates with the wheel, survives placement,
+      // and gets caught by a Q-throw) exactly like the first layer already
+      // did.
+      for (const obj of this.findSupportedCargoRecursive(instance)) {
         const localPos = obj.mesh.position.clone().applyMatrix4(matInv);
-        const supported =
-          localPos.x >= -innerHW && localPos.x <= innerHW &&
-          localPos.z >= -innerHD && localPos.z <= innerHD &&
-          localPos.y >= height / 2 - 0.05 && localPos.y <= height / 2 + PALLET_DETECT_HEIGHT;
-        if (!supported) continue;
-
         const localQuat = obj.mesh.quaternion.clone().premultiply(quatInv);
         instance.pinned.push({ obj, localPos, localQuat });
 
@@ -954,6 +1146,24 @@ export class PalletSystem implements PalletThrowHooks {
     if (!heldInstance || heldInstance.size !== size) return false;
     const slotOccupant = this.pallets.get(PALLET_IDS[size]);
     return !!slotOccupant && slotOccupant.storageState !== 'stored';
+  }
+
+  /** ONE canonical judgment for "can the CURRENTLY HELD pallet be hung back
+   * onto this exact rack slot id right now" ("Fix NPC direct interaction and
+   * pallet stack handling" round六) — mirrors tryReturnToRack's own success
+   * gate exactly (isMatchingEmptyRack + genuinely empty). InteractionSystem
+   * reads this SAME method for both the prompt display and the actual
+   * E-press action (against the SAME per-frame raycast hit id), which is
+   * the actual fix for "提示顯示但按E無效" — the two call sites used to read
+   * different sources (a fresh raycast for the prompt vs. a stale/cleared
+   * this.currentTarget for the action) and could disagree. */
+  canStoreHeldPallet(slotId: string): boolean {
+    if (!this.heldPalletId) return false;
+    const instance = this.pallets.get(this.heldPalletId);
+    if (!instance) return false;
+    if (!this.isMatchingEmptyRack(slotId, instance.id)) return false;
+    if (instance.pinned.length > 0 || instance.boundCargoIds.length > 0 || instance.isRopeBound) return false;
+    return true;
   }
 
   /** Called by InteractionSystem's own E-handler once it's already

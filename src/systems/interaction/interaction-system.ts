@@ -15,7 +15,7 @@ import { SettingsManager } from '../settings';
 import { UnloadingSystem } from '../unloading';
 import { DailyFlowSystem } from '../daily-flow';
 import { PalletSystem } from '../pallet';
-import { LostFoundSystem } from '../lost-found';
+import { LostFoundSystem, LOST_FOUND_NPC_INTERACTABLE_ID } from '../lost-found';
 import { MailSystem } from '../mail/mail-system';
 import { MailBagSystem, MAIL_RACK_INTERACTABLE_ID } from '../mail/mail-bag-system';
 import { getMailDestination } from '../mail/mail-data';
@@ -29,6 +29,18 @@ export class InteractionSystem {
   private pickupSystem: PickupSystem;
   private hud: HUD;
   private currentTarget: InteractableObject | null = null;
+  /** The raycast hit id from THIS frame's holding-item update() branch
+   * ("Fix NPC direct interaction and pallet stack handling" round六) — the
+   * pallet-carry/lost-found-handover checks below deliberately clear
+   * `currentTarget` while holding something (it's reserved for the
+   * multi-carry highlight), so onKeyDown can't read it for its own "what am
+   * I aiming at right now" decision the way every other holding-item branch
+   * does. This field is the fix: set once per frame from the SAME `hit`
+   * the display logic already computed, so the action side and the display
+   * side can never disagree about what's being aimed at (the actual bug
+   * behind "掛回托盤提示顯示但按E無效" — see canStoreHeldPallet's own call
+   * sites below). */
+  private lastHoldingItemHitId: string | null = null;
   private isLocked: () => boolean;
   private envelopeSystem: EnvelopeSystem;
   private envelopeStation: EnvelopeStampStation;
@@ -256,6 +268,7 @@ export class InteractionSystem {
         !this.palletSystem.isRackId(this.currentTarget.id) &&
         this.currentTarget.id !== MAIL_RACK_INTERACTABLE_ID &&
         this.currentTarget.id !== VEHICLE_CALL_BUTTON_ID && this.currentTarget.id !== VEHICLE_DEPART_BUTTON_ID &&
+        this.currentTarget.id !== LOST_FOUND_NPC_INTERACTABLE_ID &&
         !(this.mailBagSystem.isBag(this.currentTarget.id) && isHoldingEnvelope) &&
         this.pickupSystem.canAddToHeld(this.currentTarget)
       ) {
@@ -273,11 +286,17 @@ export class InteractionSystem {
       // hangs it back up ("Rebuild pallet storage and reset upgrade
       // progression" round六: "按E將托盤吸附回slot") rather than placing it
       // on the floor — checked first since it's the more specific target.
-      // Both own playerData.state/heldObjectId themselves on success, so
-      // there's nothing left to do here either way.
+      // "Fix NPC direct interaction and pallet stack handling" round六: reads
+      // lastHoldingItemHitId (this frame's own raycast hit, set by update()
+      // below) through the ONE canonical canStoreHeldPallet() judgment — NOT
+      // this.currentTarget, which is deliberately never set to the rack id
+      // while carrying a pallet (see the display logic below), the exact
+      // mismatch that caused "提示顯示但按E無效". Both own playerData.state
+      // /heldObjectId themselves on success, so there's nothing left to do
+      // here either way.
       if (isHoldingPallet && this.playerData.heldObjectId) {
-        if (this.currentTarget && this.palletSystem.isMatchingEmptyRack(this.currentTarget.id, this.playerData.heldObjectId)) {
-          this.palletSystem.tryReturnToRack(this.currentTarget.id);
+        if (this.lastHoldingItemHitId && this.palletSystem.canStoreHeldPallet(this.lastHoldingItemHitId)) {
+          this.palletSystem.tryReturnToRack(this.lastHoldingItemHitId);
         } else {
           this.palletSystem.tryPlace();
         }
@@ -335,21 +354,24 @@ export class InteractionSystem {
           }
         }
       }
-      // Lost & found: hand over whatever's currently held at the counter
-      // once the day's NPC is waiting there (spec七: 按 E 將目前拿著的失物
-      // 交給NPC) — correctness (matching id vs anything else) is judged
-      // entirely inside tryConfirmAtCounter, so this gate only needs
-      // "is there actually someone to hand it to, and is the player on the
-      // correct side of the counter" — intercepts before the generic
-      // placement fallback below, same pattern as the pallet/envelope-
-      // interior special cases above.
+      // Lost & found: hand over whatever's currently held, aimed directly at
+      // the NPC's own interaction hitbox ("Fix NPC direct interaction and
+      // pallet stack handling" round二: 移除失物招領櫃檯，直接瞄準NPC模型
+      // 互動) — correctness (matching id vs anything else) is judged
+      // entirely inside tryConfirmWithNpc, so this gate only needs "is the
+      // crosshair actually on the NPC, and is someone there to hand it to" —
+      // intercepts before the generic placement fallback below, same pattern
+      // as the pallet/envelope-interior special cases above. Reads
+      // lastHoldingItemHitId (this frame's raycast, set by update() below),
+      // NOT this.currentTarget — matches the pallet-rack-return fix just
+      // above for the same underlying reason.
       if (
         this.playerData.heldObjectId &&
         this.playerData.activeTool === 'empty' &&
-        this.lostFoundSystem.isNpcWaiting &&
-        this.lostFoundSystem.isPlayerNearCounter(this.camera.position)
+        this.lastHoldingItemHitId === LOST_FOUND_NPC_INTERACTABLE_ID &&
+        this.lostFoundSystem.isNpcWaiting
       ) {
-        this.lostFoundSystem.tryConfirmAtCounter(this.playerData.heldObjectId);
+        this.lostFoundSystem.tryConfirmWithNpc(this.playerData.heldObjectId);
         return;
       }
       // Normal: enter placement mode
@@ -389,20 +411,21 @@ export class InteractionSystem {
       return;
     }
 
-    // Priority 0: talk-only interaction at the lost & found counter while
-    // empty-handed (spec三 case3: "沒有持有任何物品——僅視為與NPC互動，顯示
-    // NPC要找的失物名稱與模型，不算完成案件") — the NPC's own head bubble
-    // already shows its target item's name/preview persistently while
-    // waiting, so this press only needs to flip
-    // lostFoundNpcInteractedToday via tryConfirmAtCounter(null). Checked
-    // before the generic pickup priorities below since nothing else should
-    // ever be targetable while standing at the counter.
-    if (
-      this.playerData.activeTool === 'empty' &&
-      this.lostFoundSystem.isNpcWaiting &&
-      this.lostFoundSystem.isPlayerNearCounter(this.camera.position)
-    ) {
-      this.lostFoundSystem.tryConfirmAtCounter(null);
+    // Priority 0: crosshair aimed directly at the lost-found NPC's own
+    // interaction hitbox while empty-handed ("Fix NPC direct interaction and
+    // pallet stack handling" round二: NPC counter removed, aim + E directly
+    // at the model instead). Uses this.currentTarget, the same raycast
+    // result the generic bottom section already resolved for highlighting/
+    // prompting the hitbox — not-yet-arrived (still walking in/out) does
+    // nothing since isNpcWaiting only becomes true once physically arrived.
+    // Consumed here regardless of outcome so a registered-but-not-yet-
+    // waiting hitbox never falls through into a generic pickup attempt.
+    if (this.currentTarget && this.currentTarget.id === LOST_FOUND_NPC_INTERACTABLE_ID) {
+      if (this.playerData.activeTool === 'empty' && this.lostFoundSystem.isNpcWaiting) {
+        this.lostFoundSystem.tryConfirmWithNpc(null);
+      }
+      this.clearHighlight(this.currentTarget);
+      this.currentTarget = null;
       return;
     }
 
@@ -578,6 +601,13 @@ export class InteractionSystem {
       // board, mail-bag envelope insertion, multi-carry pickup) reuses this
       // ONE result rather than each calling raycastCurrentHit() again.
       const hit = this.raycastCurrentHit();
+      // "Fix NPC direct interaction and pallet stack handling" round六:
+      // persisted so onKeyDown can read the SAME target this frame's display
+      // logic resolved — see this field's own doc comment for why
+      // this.currentTarget alone isn't reliable here (it's deliberately
+      // cleared below for the pallet-carry/NPC-hitbox cases, which still
+      // need their own aimed-at id available to the action side).
+      this.lastHoldingItemHitId = hit ? hit.id : null;
 
       // Bulletin board while holding anything (spec二: "需空手才能查看升
       // 級") — highest priority in this branch since it must show
@@ -654,7 +684,7 @@ export class InteractionSystem {
       if (
         hit && !this.palletSystem.isPalletId(this.playerData.heldObjectId ?? '') &&
         !this.palletSystem.isPalletId(hit.id) && !this.palletSystem.isRackId(hit.id) && hit.id !== MAIL_RACK_INTERACTABLE_ID &&
-        hit.id !== VEHICLE_CALL_BUTTON_ID && hit.id !== VEHICLE_DEPART_BUTTON_ID &&
+        hit.id !== VEHICLE_CALL_BUTTON_ID && hit.id !== VEHICLE_DEPART_BUTTON_ID && hit.id !== LOST_FOUND_NPC_INTERACTABLE_ID &&
         this.pickupSystem.canAddToHeld(hit)
       ) {
         if (this.currentTarget !== hit) {
@@ -674,13 +704,12 @@ export class InteractionSystem {
         this.playerData.targetedObjectId = null;
       }
       if (this.playerData.heldObjectId && this.palletSystem.isPalletId(this.playerData.heldObjectId)) {
-        // "Rebuild pallet storage and reset upgrade progression" round六:
-        // aiming at the carried pallet's own matching, currently-empty rack
-        // slot offers "E 掛回托盤" instead of the normal floor-placement
-        // prompt — the ACTION side (onKeyDown, above) already checks the
-        // exact same isMatchingEmptyRack condition, so this only needs to
-        // keep the DISPLAYED prompt in sync with what E will actually do.
-        if (hit && this.palletSystem.isMatchingEmptyRack(hit.id, this.playerData.heldObjectId)) {
+        // "Fix NPC direct interaction and pallet stack handling" round六:
+        // canStoreHeldPallet(hit.id) is the ONE canonical judgment — the
+        // ACTION side (onKeyDown, above) now reads the exact same function
+        // against the exact same lastHoldingItemHitId this `hit` populates,
+        // so the prompt and the actual E-press can never disagree again.
+        if (hit && this.palletSystem.canStoreHeldPallet(hit.id)) {
           this.hud.showInteractionPrompt('整理托盤', 'E 掛回托盤');
           this.hud.setCrosshairActive(true);
         } else if (this.palletSystem.previewValid) {
@@ -690,14 +719,18 @@ export class InteractionSystem {
           this.hud.showInteractionPrompt('整理托盤', '此處無法放置');
           this.hud.setCrosshairActive(false);
         }
-      } else if (
-        this.playerData.heldObjectId &&
-        this.playerData.activeTool === 'empty' &&
-        this.lostFoundSystem.isNpcWaiting &&
-        this.lostFoundSystem.isPlayerNearCounter(this.camera.position)
-      ) {
-        this.hud.showInteractionPrompt('失物招領櫃檯', 'E 交還失物／與顧客互動');
-        this.hud.setCrosshairActive(true);
+      } else if (this.playerData.heldObjectId && this.playerData.activeTool === 'empty' && hit && hit.id === LOST_FOUND_NPC_INTERACTABLE_ID) {
+        // "Fix NPC direct interaction and pallet stack handling" round二:
+        // hand-over prompt while holding something and aiming directly at
+        // the NPC's own hitbox — mirrors onKeyDown's own lastHoldingItemHitId
+        // check just above (same `hit`, same frame).
+        if (this.lostFoundSystem.isNpcWaiting) {
+          this.hud.showInteractionPrompt(hit.displayName, 'E 交談');
+          this.hud.setCrosshairActive(true);
+        } else {
+          this.hud.showInteractionPrompt(hit.displayName, '尚未抵達');
+          this.hud.setCrosshairActive(false);
+        }
       }
       return;
     }
@@ -732,7 +765,15 @@ export class InteractionSystem {
           // specific "需要裝備力量手套"/"力量手套尚無法搬動X型托盤" toast on
           // a failed attempt, so this prompt stays a plain, always-shown
           // hint rather than pre-computing that same gate twice.
-          this.hud.showInteractionPrompt(newTarget.displayName, 'E：拿起整理托盤');
+          // "Fix NPC direct interaction and pallet stack handling" round四:
+          // getRopeStrapPromptSuffix reads the SAME condition set F's own
+          // handler checks (pallet-system.ts), appending "F 綁上固定繩"/
+          // "F 解除固定繩" only when F would actually do something for THIS
+          // exact pallet right now.
+          this.hud.showInteractionPrompt(
+            newTarget.displayName,
+            'E：拿起整理托盤' + this.palletSystem.getRopeStrapPromptSuffix(newTarget.id)
+          );
         } else if (this.palletSystem.isRackId(newTarget.id)) {
           // Empty-handed here (holding a pallet is handled entirely by the
           // holding-item branch above) — an empty rack has nothing to do
@@ -802,6 +843,13 @@ export class InteractionSystem {
             '載具出發',
             this.vehicleControlSystem.canDepart ? '按 E 讓兩台載具一起離場' : this.vehicleControlSystem.departBlockedMessage()
           );
+        } else if (newTarget.id === LOST_FOUND_NPC_INTERACTABLE_ID) {
+          // "Fix NPC direct interaction and pallet stack handling" round二:
+          // crosshair directly on the NPC's own hitbox, empty-handed. Not-
+          // yet-arrived (still walking in/out) shows a neutral "not here
+          // yet" hint rather than the real E-prompt, matching onKeyDown's
+          // own isNpcWaiting gate one section above.
+          this.hud.showInteractionPrompt(newTarget.displayName, this.lostFoundSystem.isNpcWaiting ? 'E 交談' : '尚未抵達');
         } else {
           this.hud.showInteractionPrompt(newTarget.displayName, '按 E 拿起');
         }
@@ -815,18 +863,6 @@ export class InteractionSystem {
   }
 
   private updateStationPrompts(): void {
-    // Lost & found counter — empty-handed talk-only prompt (spec三 case3),
-    // checked first since nothing else is targetable while standing there.
-    if (
-      this.playerData.activeTool === 'empty' &&
-      this.lostFoundSystem.isNpcWaiting &&
-      this.lostFoundSystem.isPlayerNearCounter(this.camera.position)
-    ) {
-      this.hud.showInteractionPrompt('失物招領櫃檯', 'E 交還失物／與顧客互動');
-      this.hud.setCrosshairActive(true);
-      return;
-    }
-
     // Envelope crate proximity (no direct target)
     if (this.envelopeSystem.isPlayerNearCrate(this.camera.position)) {
       if (this.envelopeSystem.hasEnvelopes()) {
