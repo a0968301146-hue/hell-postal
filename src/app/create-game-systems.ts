@@ -21,6 +21,8 @@ import { CargoInspectionSystem, CargoInspectionUI } from '../systems/cargo-inspe
 import { LostFoundSystem, LostFoundUI } from '../systems/lost-found';
 import { MailSystem } from '../systems/mail/mail-system';
 import { MailBagSystem } from '../systems/mail/mail-bag-system';
+import { PackedMailBagSystem } from '../systems/mail/packed-mail-bag-system';
+import { EnvelopeDispatchMachineSystem } from '../systems/mail/envelope-dispatch-machine-system';
 import { UpgradeSystem, UpgradeMenuUI, SimilarCargoHighlight } from '../systems/upgrade';
 import { MediaPlayerSystem } from '../systems/media-player/media-player-system';
 import { MediaPlayerUI } from '../systems/media-player/media-player-ui';
@@ -69,6 +71,9 @@ export interface GameSystems {
   /** "Add modular envelope stamping and regional mail bag system" round. */
   mailSystem: MailSystem;
   mailBagSystem: MailBagSystem;
+  /** "Add regional envelope dispatch machine" round. */
+  packedMailBagSystem: PackedMailBagSystem;
+  envelopeDispatchMachineSystem: EnvelopeDispatchMachineSystem;
   /** "Add bulletin board upgrade system" round. */
   upgradeSystem: UpgradeSystem;
   similarCargoHighlight: SimilarCargoHighlight;
@@ -255,11 +260,30 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     restoreAfterPlacement: (obj, boxVelocity) => mailBagSystem.restoreContentsAfterPlacement(obj, boxVelocity),
     restoreForThrow: (obj, linearVelocity, angularVelocity) => mailBagSystem.restoreContentsForThrow(obj, linearVelocity, angularVelocity),
   });
+  // "Add regional envelope dispatch machine" round — PackedMailBagSystem
+  // owns every sealed regional bag's own lifecycle (spawn/pickup/settlement)
+  // once EnvelopeDispatchMachineSystem's own pack button hands it a
+  // region's buffered envelope snapshots; the dispatcher itself owns the
+  // physical cabinet/holes/per-region buffers/button (built right after,
+  // since it needs both mailSystem and packedMailBagSystem to already
+  // exist).
+  const packedMailBagSystem = new PackedMailBagSystem(scene, physics, interactables, pickupSystem);
+  const envelopeDispatchMachineSystem = new EnvelopeDispatchMachineSystem(
+    scene, physics, interactables, hud, mailSystem, packedMailBagSystem
+  );
   // "Allow mail box pattern changes with contents" round: lets
   // settleAtDeparture exclude a bagged envelope whose own destination no
   // longer matches its bag's live pattern, without MailSystem needing any
-  // direct MailBagSystem import/reference of its own.
-  mailSystem.setBagPatternLookup((bagId) => mailBagSystem.getBag(bagId)?.destinationPattern ?? null);
+  // direct MailBagSystem import/reference of its own. "Add regional envelope
+  // dispatch machine" round: extended to ALSO consult packedMailBagSystem —
+  // a packed bag's own destination never cycles (fixed at spawn), but this
+  // lookup is queried for EVERY bagId settleAtDeparture encounters
+  // regardless of which system owns it, so a packed-bag id must resolve
+  // here too or its envelopes would incorrectly fail the pattern-match check
+  // and never count as shipped.
+  mailSystem.setBagPatternLookup((bagId) => (
+    mailBagSystem.getBag(bagId)?.destinationPattern ?? packedMailBagSystem.getBagDestination(bagId) ?? null
+  ));
 
   // Daily unload -> sort -> ship-via-vehicle loop (this round's core).
   // DailyFlowSystem owns the day/state/count bookkeeping and the 結束今天
@@ -282,8 +306,15 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
       lostFoundSystem.resetDaily();
       // Mail state clears the SAME way every other daily fixture does
       // (spec十二) — bags first, so any bag-held envelope reference is
-      // gone before MailSystem sweeps every remaining envelope id.
+      // gone before MailSystem sweeps every remaining envelope id. The
+      // dispatch machine's own buffers and any unshipped packed bags clear
+      // the same way ("Add regional envelope dispatch machine" round
+      // spec十一) — order relative to mailBagSystem doesn't matter (neither
+      // touches the other's state), but both still run before MailSystem's
+      // own sweep for consistency with the established ordering here.
       mailBagSystem.resetDaily();
+      envelopeDispatchMachineSystem.resetDaily();
+      packedMailBagSystem.resetDaily();
       mailSystem.resetDaily();
     },
     (finishedDay) => {
@@ -315,6 +346,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     scoringSystem,
     mailSystem,
     mailBagSystem,
+    packedMailBagSystem,
     hooks.onPauseChange,
     (config) => settingsManager.markVehicleDiscovered(config.id),
     () => settingsManager.fireTutorialEvent('vehicleCalled'),
@@ -447,6 +479,8 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     lostFoundSystem,
     mailSystem,
     mailBagSystem,
+    packedMailBagSystem,
+    envelopeDispatchMachineSystem,
     hooks.onStartMailStampUi,
     () => upgradeMenuUI.open(),
     () => mediaPlayerUI.open(),
@@ -477,6 +511,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     scoringSystem, counterNpcSystem, counterServiceSystem, compassUI, dailyFlowSystem,
     unloadingSystem, palletSystem, cargoInspectionSystem, cargoInspectionUI,
     lostFoundSystem, lostFoundUI, mailSystem, mailBagSystem,
+    packedMailBagSystem, envelopeDispatchMachineSystem,
     upgradeSystem, similarCargoHighlight, mediaPlayerSystem,
     toolSystem, cargoHookSystem, spraySystem,
     ladderSystem, toolStationSystem, envelopeVacuumSystem,

@@ -255,6 +255,11 @@ export class GameApp {
       s.lostFoundSystem.update(deltaTime);
       s.mailSystem.update(deltaTime);
       s.mailBagSystem.update(deltaTime);
+      // "Add regional envelope dispatch machine" round — same paused-block
+      // placement as mailSystem/mailBagSystem just above (its own hole
+      // sensors/reject-message cooldowns/button debounce should all freeze
+      // alongside every other gameplay system while paused).
+      s.envelopeDispatchMachineSystem.update(deltaTime);
       const flowState = s.dailyFlowSystem.state;
       const bannerText = flowState === 'completed' ? '今日貨物已全部裝載'
         : flowState === 'dayComplete' ? '今日貨物已全部送出'

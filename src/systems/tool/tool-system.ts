@@ -59,7 +59,7 @@ export class ToolSystem {
     hotbar.id = 'hotbar';
 
     for (let i = 0; i < 4; i++) {
-      const el = this.buildSlotElement(String(i + 1), i === 0);
+      const el = this.buildSlotElement(String(i + 1));
       this.slotEls.push(el);
       hotbar.appendChild(el);
     }
@@ -90,14 +90,18 @@ export class ToolSystem {
     document.addEventListener('wheel', (e) => this.onWheel(e));
   }
 
-  private buildSlotElement(key: string, locked: boolean): HTMLElement {
+  /** "Add regional envelope dispatch machine" round一: slot 1 (empty-hand)
+   * no longer shows a lock icon — it renders exactly like slots 2-4 (own
+   * icon/name, same yellow selected-outline), since the "permanently
+   * fixed" rule is already enforced purely in code (slotTools[0] is never
+   * touched by setLoadout) and needs no separate visual treatment. */
+  private buildSlotElement(key: string): HTMLElement {
     const el = document.createElement('div');
-    el.className = 'hotbar-slot' + (locked ? ' locked' : '');
+    el.className = 'hotbar-slot';
     el.innerHTML = `
       <span class="hotbar-key">${key}</span>
       <span class="hotbar-icon"></span>
       <span class="hotbar-name"></span>
-      <span class="hotbar-lock">🔒</span>
     `;
     return el;
   }

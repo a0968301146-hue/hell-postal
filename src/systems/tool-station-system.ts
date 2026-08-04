@@ -1,25 +1,36 @@
 import * as THREE from 'three';
 import { PhysicsSystem } from '../adapters/rapier/physics-system';
 import { InteractableObject, createInteractableObject } from '../shared/types/interactable';
-import { BACK_AREA } from './world-layout';
+import { BACK_AREA, WALL_THICKNESS, LAND_GATE } from './world-layout';
 import { createFloatingLabel } from '../adapters/three/world-label-system';
-import { LADDER_WALL_SLOT } from './ladder/ladder-data';
 
 export const TOOL_STATION_ID = 'tool-station-01';
 const TOOL_STATION_DISPLAY_NAME = '工具推車';
 
 const TOOL_STATION_DIMENSIONS = { width: 1.2, depth: 0.6, height: 0.9 };
 
-/** Placed a few meters west of the pallet-rack/ladder wall cluster (spec二:
- * "放在托盤架與梯子附近"), far enough off the east wall itself that its own
- * 1.0m player-clearance footprint on every side never overlaps the rack
- * cluster's own pickup/return zone or the main north-south walkway through
- * the back area — derived from the ladder's own wall-slot Z so it stays
- * co-located with that cluster rather than a bare literal. */
+/** How far the cart's own back edge stands off the south wall's inner face —
+ * mirrors every other wall fixture's own *_WALL_STANDOFF role (spec三:
+ * "推車背面距南牆約0.05-0.10m"). */
+const TOOL_STATION_WALL_STANDOFF = 0.08;
+
+const southWallInnerFaceZ = BACK_AREA.maxZ - WALL_THICKNESS / 2;
+
+/** "Add regional envelope dispatch machine" round三: moved flush against the
+ * BACK_AREA south wall (spec三: "工具推車移到南側牆邊"), front (the side
+ * facing the ladder rack's return prompt) toward the room interior/north.
+ * The south wall is only solid OUTSIDE the land-vehicle gate opening
+ * (LAND_GATE, open span x∈[-6,6] — see logistics-layout-data.ts), so X is
+ * derived as the midpoint of the solid segment east of the gate
+ * (x∈[6,10]) — centered there keeps the cart's own 1.2m width comfortably
+ * clear of BOTH the gate opening (so it never blocks the main south
+ * walkway/vehicle path) and the southeast corner (where the east-wall
+ * pallet-rack/ladder cluster's own footprint ends), rather than guessing a
+ * bare literal. */
 export const TOOL_STATION_POSITION = new THREE.Vector3(
-  LADDER_WALL_SLOT.position.x - 2.4,
+  (LAND_GATE.centerX + LAND_GATE.halfWidth + BACK_AREA.maxX) / 2,
   BACK_AREA.floorY + TOOL_STATION_DIMENSIONS.height / 2,
-  LADDER_WALL_SLOT.position.z - 0.2
+  southWallInnerFaceZ - TOOL_STATION_WALL_STANDOFF - TOOL_STATION_DIMENSIONS.depth / 2
 );
 
 /**

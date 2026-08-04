@@ -18,6 +18,8 @@ import { PalletSystem } from '../pallet';
 import { LostFoundSystem, LOST_FOUND_NPC_INTERACTABLE_ID } from '../lost-found';
 import { MailSystem } from '../mail/mail-system';
 import { MailBagSystem, MAIL_RACK_INTERACTABLE_ID } from '../mail/mail-bag-system';
+import { PackedMailBagSystem } from '../mail/packed-mail-bag-system';
+import { EnvelopeDispatchMachineSystem } from '../mail/envelope-dispatch-machine-system';
 import { getMailDestination } from '../mail/mail-data';
 import { BULLETIN_BOARD_INTERACTABLE_ID, TELEVISION_INTERACTABLE_ID } from '../world-layout';
 import { isNpcEDebugEnabled, logNpcEDebug } from './npc-e-debug';
@@ -69,6 +71,9 @@ export class InteractionSystem {
   private lostFoundSystem: LostFoundSystem;
   private mailSystem: MailSystem;
   private mailBagSystem: MailBagSystem;
+  /** "Add regional envelope dispatch machine" round. */
+  private packedMailBagSystem: PackedMailBagSystem;
+  private envelopeDispatchMachineSystem: EnvelopeDispatchMachineSystem;
   private onStartMailStampUi: () => void;
   /** Opens the bulletin board's full-screen upgrade UI ("Add bulletin board
    * upgrade system" round spec二/三) — called ONLY from the empty-handed
@@ -108,6 +113,8 @@ export class InteractionSystem {
     lostFoundSystem: LostFoundSystem,
     mailSystem: MailSystem,
     mailBagSystem: MailBagSystem,
+    packedMailBagSystem: PackedMailBagSystem,
+    envelopeDispatchMachineSystem: EnvelopeDispatchMachineSystem,
     onStartMailStampUi: () => void,
     onOpenUpgradeMenu: () => void,
     onOpenMediaPlayer: () => void,
@@ -138,6 +145,8 @@ export class InteractionSystem {
     this.lostFoundSystem = lostFoundSystem;
     this.mailSystem = mailSystem;
     this.mailBagSystem = mailBagSystem;
+    this.packedMailBagSystem = packedMailBagSystem;
+    this.envelopeDispatchMachineSystem = envelopeDispatchMachineSystem;
     this.onStartMailStampUi = onStartMailStampUi;
     this.onOpenUpgradeMenu = onOpenUpgradeMenu;
     this.onOpenMediaPlayer = onOpenMediaPlayer;
@@ -650,6 +659,21 @@ export class InteractionSystem {
       this.currentTarget = null;
       return;
     }
+    // Priority 0.93: envelope dispatch machine's own left-side pack button
+    // ("Add regional envelope dispatch machine" round八) — same "canPickUp
+    // only for the raycast filter, real action routed through its own
+    // system" pattern as the tool cart just above. canPressPackButton owns
+    // BOTH the distance (≤2.5m) and empty-handed gates, so a press that's
+    // too far away or made while carrying something is silently ignored,
+    // mirroring every other canX()/tryX() pair in this file.
+    if (this.currentTarget && this.envelopeDispatchMachineSystem.isPackButtonTarget(this.currentTarget.id)) {
+      if (this.envelopeDispatchMachineSystem.canPressPackButton(this.camera.position, this.pickupSystem.heldCount)) {
+        this.envelopeDispatchMachineSystem.pressPackButton();
+      }
+      this.clearHighlight(this.currentTarget);
+      this.currentTarget = null;
+      return;
+    }
 
     // Priority 1: pick up targeted object (envelope, package, crate, or a
     // sorting pallet — resting on the floor OR straight off its wall rack).
@@ -871,6 +895,7 @@ export class InteractionSystem {
         !this.palletSystem.isPalletId(hit.id) && !this.palletSystem.isRackId(hit.id) && hit.id !== MAIL_RACK_INTERACTABLE_ID &&
         !this.ladderSystem.isLadderTarget(hit.id) && !this.ladderSystem.isLadderRackTarget(hit.id) &&
         !this.toolStationSystem.isToolStationTarget(hit.id) &&
+        !this.envelopeDispatchMachineSystem.isPackButtonTarget(hit.id) &&
         hit.id !== VEHICLE_CALL_BUTTON_ID && hit.id !== VEHICLE_DEPART_BUTTON_ID && !this.isLostFoundNpcTarget(hit) &&
         this.pickupSystem.canAddToHeld(hit)
       ) {
@@ -999,6 +1024,21 @@ export class InteractionSystem {
           // 態以外的額外判定) — mirrors the bulletin board/TV's own
           // "E opens a UI" pattern.
           this.hud.showInteractionPrompt(newTarget.displayName, this.pickupSystem.heldCount === 0 ? 'E 開啟工具配置' : '需空手才能使用');
+        } else if (this.envelopeDispatchMachineSystem.isPackButtonTarget(newTarget.id)) {
+          // "Add regional envelope dispatch machine" round八 — same
+          // canPressPackButton() judgment the actual E-press uses (see
+          // Priority 0.93 above), so the prompt and the action can never
+          // disagree.
+          const canPress = this.envelopeDispatchMachineSystem.canPressPackButton(this.camera.position, this.pickupSystem.heldCount);
+          this.hud.showInteractionPrompt(newTarget.displayName, canPress ? 'E 打包信件' : '需空手且靠近按鈕');
+        } else if (this.packedMailBagSystem.isBag(newTarget.id)) {
+          // Crosshair inspect (spec十: "台北信封袋\n內含5封信\nE 拿起") — the
+          // actual pickup itself needs no special-cased branch at all here;
+          // it already falls through to Priority 1's fully generic
+          // this.pickupSystem.pickUp(this.currentTarget) below, exactly like
+          // any other plain single-mesh pickupable prop.
+          const bag = this.packedMailBagSystem.getBag(newTarget.id)!;
+          this.hud.showInteractionPrompt(newTarget.displayName, `內含${bag.envelopeCount}封信\nE 拿起`);
         } else if (this.mailSystem.getEnvelope(newTarget.id)) {
           // Crosshair inspect (spec三) — reuses this SAME raycast/prompt
           // path, no second raycasting system.

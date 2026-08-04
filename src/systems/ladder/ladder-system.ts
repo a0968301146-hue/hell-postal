@@ -7,8 +7,9 @@ import { HUD } from '../hud';
 import { WORLD_BOUNDS, BACK_AREA } from '../world-layout';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
 import {
-  LADDER_ID, LADDER_RACK_ID, LADDER_DISPLAY_NAME, LADDER_FOLDED, LADDER_UNFOLDED,
-  LADDER_STEP_COUNT, LADDER_STEP_HEIGHT, LADDER_RAMP_RUN, LADDER_RAMP_LENGTH, LADDER_RAMP_ANGLE,
+  LADDER_ID, LADDER_RACK_ID, LADDER_DISPLAY_NAME, LADDER_FOLDED, LADDER_UNFOLDED, LADDER_TOTAL_DEPTH,
+  LADDER_STEP_COUNT, LADDER_STEP_HEIGHT, LADDER_FRONT_LEG_LENGTH, LADDER_FRONT_LEG_ANGLE,
+  LADDER_BACK_LEG_LENGTH, LADDER_BACK_LEG_ANGLE,
   LADDER_WALL_SLOT, LADDER_PLACEMENT_YAW_STEP,
 } from './ladder-data';
 
@@ -29,7 +30,7 @@ const MIN_CAMERA_CLEARANCE = 0.8;
 const CARRY_HALF_EXTENTS = new THREE.Vector3(
   LADDER_UNFOLDED.width / 2,
   LADDER_UNFOLDED.standHeight / 2,
-  LADDER_UNFOLDED.totalDepth / 2
+  LADDER_TOTAL_DEPTH / 2
 );
 
 type LadderState = 'stored' | 'preview' | 'placed';
@@ -144,39 +145,80 @@ export class LadderSystem {
     mesh.add(foldedGroup);
     this.foldedGroup = foldedGroup;
 
-    // Unfolded (floor-placed) — local origin at the BASE center (ground
-    // contact point), local +Z = climb direction (away from the wall base,
-    // toward the top platform), local +Y = up. This is the SAME local frame
-    // the ramp/platform colliders below are built in, so mesh and physics
-    // always stay trivially in sync while carrying/placed.
+    // Unfolded (floor-placed) — a genuine A-frame. Local origin at the FRONT
+    // foot's base center (ground contact point), local +Z = climb direction
+    // (front foot toward the apex/hinge, then on through to the rear foot),
+    // local +Y = up. The apex/hinge sits at (0, standHeight, frontRun) — both
+    // the front (climbing) legs and rear (support) legs meet there, splaying
+    // back down to their own feet on either side. This is the SAME local
+    // frame the step/platform/rear-leg colliders below are built in, so mesh
+    // and physics always stay trivially in sync while carrying/placed.
     const unfoldedGroup = new THREE.Group();
-    const railLen = LADDER_RAMP_LENGTH;
+    const apexZ = LADDER_UNFOLDED.frontRun;
+
+    // Front (climbing) rails — base foot (z=0) up to the apex (z=apexZ).
     for (const sx of [-1, 1]) {
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.1, railLen), railMat);
-      rail.position.set(sx * (LADDER_UNFOLDED.width / 2 - 0.03), LADDER_UNFOLDED.standHeight / 2, LADDER_RAMP_RUN / 2);
-      rail.rotation.x = -LADDER_RAMP_ANGLE;
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.1, LADDER_FRONT_LEG_LENGTH), railMat);
+      rail.position.set(sx * (LADDER_UNFOLDED.width / 2 - 0.03), LADDER_UNFOLDED.standHeight / 2, apexZ / 2);
+      rail.rotation.x = -LADDER_FRONT_LEG_ANGLE;
       unfoldedGroup.add(rail);
     }
-    // Step treads, evenly spaced along the incline.
+    // Step treads, evenly spaced up the front rails only (spec: "前側為可
+    // 攀爬階梯").
     for (let i = 1; i <= LADDER_STEP_COUNT; i++) {
-      const stepZ = (i / LADDER_STEP_COUNT) * LADDER_RAMP_RUN;
+      const stepZ = (i / LADDER_STEP_COUNT) * apexZ;
       const stepY = i * LADDER_STEP_HEIGHT;
       const tread = new THREE.Mesh(new THREE.BoxGeometry(LADDER_UNFOLDED.width * 0.85, 0.04, 0.16), woodMat);
       tread.position.set(0, stepY - LADDER_STEP_HEIGHT / 2, stepZ);
       unfoldedGroup.add(tread);
     }
-    // Top platform.
+    // Rear (support) rails — apex (z=apexZ) splaying back down to their own
+    // foot (z=LADDER_TOTAL_DEPTH). Mirror image of the front rails' own
+    // slope (rotation.x flips sign since Y now DECREASES as Z increases),
+    // deliberately built as plain solid rails with NO tread meshes — the
+    // spec explicitly forbids this side reading as a second staircase.
+    for (const sx of [-1, 1]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.1, LADDER_BACK_LEG_LENGTH), railMat);
+      rail.position.set(sx * (LADDER_UNFOLDED.width / 2 - 0.03), LADDER_UNFOLDED.standHeight / 2, apexZ + LADDER_UNFOLDED.backRun / 2);
+      rail.rotation.x = LADDER_BACK_LEG_ANGLE;
+      unfoldedGroup.add(rail);
+    }
+    // Apex hinge — the metal pivot joining the front and rear leg pairs,
+    // the single most A-defining silhouette cue when viewed from the side.
+    const apexHinge = new THREE.Mesh(new THREE.BoxGeometry(LADDER_UNFOLDED.width * 0.55, 0.08, 0.1), hingeMat);
+    apexHinge.position.set(0, LADDER_UNFOLDED.standHeight, apexZ);
+    unfoldedGroup.add(apexHinge);
+    // Spreader bars — one per side, bracing front rail to rear rail partway
+    // down (spec: "左右擴張桿撐開角度") — prevents the silhouette reading as
+    // two independent leaning boards instead of one splayed frame.
+    const spreaderY = LADDER_UNFOLDED.standHeight * 0.35;
+    const spreaderFrontZ = apexZ * (spreaderY / LADDER_UNFOLDED.standHeight);
+    const spreaderBackZ = apexZ + LADDER_UNFOLDED.backRun * (1 - spreaderY / LADDER_UNFOLDED.standHeight);
+    for (const sx of [-1, 1]) {
+      const spreader = new THREE.Mesh(
+        new THREE.BoxGeometry(0.04, 0.03, spreaderBackZ - spreaderFrontZ),
+        hingeMat
+      );
+      spreader.position.set(sx * (LADDER_UNFOLDED.width / 2 - 0.03), spreaderY, (spreaderFrontZ + spreaderBackZ) / 2);
+      unfoldedGroup.add(spreader);
+    }
+    // Top platform — centered on the apex, spanning slightly fore/aft of the
+    // hinge (spec: "頂部平台深度約0.40-0.45m", "玩家可站在頂部平台上").
     const platform = new THREE.Mesh(
       new THREE.BoxGeometry(LADDER_UNFOLDED.width, 0.06, LADDER_UNFOLDED.platformDepth),
       woodMat
     );
-    platform.position.set(0, LADDER_UNFOLDED.standHeight - 0.03, LADDER_RAMP_RUN + LADDER_UNFOLDED.platformDepth / 2);
+    platform.position.set(0, LADDER_UNFOLDED.standHeight - 0.03, apexZ);
     unfoldedGroup.add(platform);
-    // Base hinge accents where the ramp meets the ground.
+    // Base hinge accents where each leg pair meets the ground (front + rear
+    // feet — four total, spec: "前後腳底都要接觸地面").
     for (const sx of [-1, 1]) {
-      const hinge = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.06, 0.1), hingeMat);
-      hinge.position.set(sx * (LADDER_UNFOLDED.width / 2 - 0.05), 0.03, 0.05);
-      unfoldedGroup.add(hinge);
+      const frontFoot = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.06, 0.1), hingeMat);
+      frontFoot.position.set(sx * (LADDER_UNFOLDED.width / 2 - 0.05), 0.03, 0.05);
+      unfoldedGroup.add(frontFoot);
+      const backFoot = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.06, 0.1), hingeMat);
+      backFoot.position.set(sx * (LADDER_UNFOLDED.width / 2 - 0.05), 0.03, LADDER_TOTAL_DEPTH - 0.05);
+      unfoldedGroup.add(backFoot);
     }
     unfoldedGroup.visible = false;
     mesh.add(unfoldedGroup);
@@ -204,7 +246,7 @@ export class LadderSystem {
     this.physics.setBodyEnabled(body, false);
     this.body = body;
 
-    const ladderObj = createInteractableObject(LADDER_ID, LADDER_DISPLAY_NAME, mesh as unknown as THREE.Mesh, LADDER_UNFOLDED.width, LADDER_UNFOLDED.standHeight, LADDER_UNFOLDED.totalDepth);
+    const ladderObj = createInteractableObject(LADDER_ID, LADDER_DISPLAY_NAME, mesh as unknown as THREE.Mesh, LADDER_UNFOLDED.width, LADDER_UNFOLDED.standHeight, LADDER_TOTAL_DEPTH);
     ladderObj.rigidBody = body;
     this.interactables.set(LADDER_ID, ladderObj);
     this.ladderObj = ladderObj;
@@ -262,8 +304,8 @@ export class LadderSystem {
   private isOccupied(): boolean {
     if (this.state !== 'placed') return false;
     this.mesh.updateMatrixWorld(true);
-    const halfExtents = new THREE.Vector3(LADDER_UNFOLDED.width / 2 + 0.15, LADDER_UNFOLDED.standHeight / 2 + 0.15, LADDER_UNFOLDED.totalDepth / 2 + 0.15);
-    const localCenter = new THREE.Vector3(0, LADDER_UNFOLDED.standHeight / 2, LADDER_UNFOLDED.totalDepth / 2);
+    const halfExtents = new THREE.Vector3(LADDER_UNFOLDED.width / 2 + 0.15, LADDER_UNFOLDED.standHeight / 2 + 0.15, LADDER_TOTAL_DEPTH / 2 + 0.15);
+    const localCenter = new THREE.Vector3(0, LADDER_UNFOLDED.standHeight / 2, LADDER_TOTAL_DEPTH / 2);
     const worldCenter = localCenter.applyMatrix4(this.mesh.matrixWorld);
     const box = new THREE.Box3(
       worldCenter.clone().sub(halfExtents),
@@ -436,10 +478,10 @@ export class LadderSystem {
     this.previewValid = valid;
 
     this.previewMesh.visible = true;
-    const localCenter = new THREE.Vector3(0, CARRY_HALF_EXTENTS.y, LADDER_UNFOLDED.totalDepth / 2);
+    const localCenter = new THREE.Vector3(0, CARRY_HALF_EXTENTS.y, LADDER_TOTAL_DEPTH / 2);
     this.previewMesh.position.copy(this.placementPos).add(localCenter.clone().applyQuaternion(this.placementQuat));
     this.previewMesh.quaternion.copy(this.placementQuat);
-    this.previewMesh.scale.set(LADDER_UNFOLDED.width, LADDER_UNFOLDED.standHeight, LADDER_UNFOLDED.totalDepth);
+    this.previewMesh.scale.set(LADDER_UNFOLDED.width, LADDER_UNFOLDED.standHeight, LADDER_TOTAL_DEPTH);
     const mat = this.previewMesh.material as THREE.MeshBasicMaterial;
     mat.color.setHex(valid ? 0x00ff88 : 0xff3333);
     mat.opacity = valid ? 0.28 : 0.35;
@@ -455,7 +497,7 @@ export class LadderSystem {
   }
 
   /** Checked against the ladder's REAL footprint (base at placementPos, full
-   * width/standHeight/totalDepth envelope at the current yaw) — world
+   * width/standHeight/LADDER_TOTAL_DEPTH envelope at the current yaw) — world
    * bounds, then an AABB overlap scan against every other still-visible,
    * not-held interactable (spec: "不可放在載具內、牆內、其他梯子／托盤／大型
    * 物件內"), then a physics shape-cast against static geometry (walls) —
@@ -464,10 +506,10 @@ export class LadderSystem {
   private checkPlacementValidity(): boolean {
     const cos = Math.abs(Math.cos(this.placementYaw));
     const sin = Math.abs(Math.sin(this.placementYaw));
-    const halfW = (LADDER_UNFOLDED.width / 2) * cos + (LADDER_UNFOLDED.totalDepth / 2) * sin;
-    const halfD = (LADDER_UNFOLDED.width / 2) * sin + (LADDER_UNFOLDED.totalDepth / 2) * cos;
+    const halfW = (LADDER_UNFOLDED.width / 2) * cos + (LADDER_TOTAL_DEPTH / 2) * sin;
+    const halfD = (LADDER_UNFOLDED.width / 2) * sin + (LADDER_TOTAL_DEPTH / 2) * cos;
     const halfH = LADDER_UNFOLDED.standHeight / 2;
-    const localCenter = new THREE.Vector3(0, halfH, LADDER_UNFOLDED.totalDepth / 2);
+    const localCenter = new THREE.Vector3(0, halfH, LADDER_TOTAL_DEPTH / 2);
     const center = this.placementPos.clone().add(localCenter.applyQuaternion(this.placementQuat));
 
     if (center.x - halfW < WORLD_BOUNDS.minX || center.x + halfW > WORLD_BOUNDS.maxX ||
@@ -517,7 +559,7 @@ export class LadderSystem {
 
   /** Builds the walkable staircase as genuinely Fixed colliders at the
    * ladder's CURRENT (just-finalized) placed transform — one per visible
-   * step plus the top platform, mirroring the visual treads' own local
+   * front step plus the top platform, mirroring the visual treads' own local
    * offsets exactly (buildLadder's own unfoldedGroup). Verified directly
    * with a real trusted-input walk test that a KINEMATIC body's colliders
    * do NOT receive the player character controller's autostep/slope-climb
@@ -528,12 +570,21 @@ export class LadderSystem {
    * reused from a previous placement — see clearWalkableColliders, called
    * at the start of every pickUp()). Each step's own depth intentionally
    * overlaps its neighbors slightly so there's no gap a foot could catch
-   * or fall through between them. */
+   * or fall through between them.
+   *
+   * The rear (support) leg pair also gets its OWN collider — spec二: "後側
+   * 支撐腳要有Collider，避免玩家穿過" — but deliberately as a SINGLE solid
+   * tilted panel, not discrete steps: with no separate tread colliders to
+   * autostep onto, and a slope (LADDER_BACK_LEG_ANGLE, ~72° off horizontal)
+   * far steeper than the character controller's climbable slope limit, it
+   * reads to the physics as a steep wall the player collides with and
+   * slides off of — never a second staircase. */
   private buildWalkableColliders(): void {
     const q = this.mesh.quaternion;
-    const stepDepth = (LADDER_RAMP_RUN / LADDER_STEP_COUNT) * 1.6;
+    const apexZ = LADDER_UNFOLDED.frontRun;
+    const stepDepth = (apexZ / LADDER_STEP_COUNT) * 1.6;
     for (let i = 1; i <= LADDER_STEP_COUNT; i++) {
-      const localZ = (i / LADDER_STEP_COUNT) * LADDER_RAMP_RUN;
+      const localZ = (i / LADDER_STEP_COUNT) * apexZ;
       const localY = i * LADDER_STEP_HEIGHT - 0.03;
       const world = new THREE.Vector3(0, localY, localZ).applyQuaternion(q).add(this.mesh.position);
       const body = this.physics.createRemovableStaticCuboid(
@@ -543,13 +594,28 @@ export class LadderSystem {
       this.walkableColliderBodies.push(body);
     }
     const platformLocalY = LADDER_UNFOLDED.standHeight - 0.03;
-    const platformLocalZ = LADDER_RAMP_RUN + LADDER_UNFOLDED.platformDepth / 2;
+    const platformLocalZ = apexZ;
     const platformWorld = new THREE.Vector3(0, platformLocalY, platformLocalZ).applyQuaternion(q).add(this.mesh.position);
     const platformBody = this.physics.createRemovableStaticCuboid(
       platformWorld.x, platformWorld.y, platformWorld.z, q.x, q.y, q.z, q.w,
       LADDER_UNFOLDED.width / 2, 0.03, LADDER_UNFOLDED.platformDepth / 2
     );
     this.walkableColliderBodies.push(platformBody);
+
+    // Rear support-leg blocker — one solid panel spanning apex to back foot,
+    // tilted to match the visual rear rails exactly (rotation.x mirrors
+    // buildLadder's own rear-rail rotation sign).
+    const rearLocalY = LADDER_UNFOLDED.standHeight / 2;
+    const rearLocalZ = apexZ + LADDER_UNFOLDED.backRun / 2;
+    const rearLocalPos = new THREE.Vector3(0, rearLocalY, rearLocalZ);
+    const rearTilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), LADDER_BACK_LEG_ANGLE);
+    const rearWorldQuat = q.clone().multiply(rearTilt);
+    const rearWorldPos = rearLocalPos.applyQuaternion(q).add(this.mesh.position);
+    const rearBody = this.physics.createRemovableStaticCuboid(
+      rearWorldPos.x, rearWorldPos.y, rearWorldPos.z, rearWorldQuat.x, rearWorldQuat.y, rearWorldQuat.z, rearWorldQuat.w,
+      LADDER_UNFOLDED.width / 2 - 0.05, LADDER_BACK_LEG_LENGTH / 2, 0.06
+    );
+    this.walkableColliderBodies.push(rearBody);
   }
 
   private clearWalkableColliders(): void {

@@ -14,6 +14,7 @@ import { VehicleSystem } from './vehicle-system';
 import { LAND_VEHICLE_CONFIGS, SEA_VEHICLE_CONFIGS, VehicleConfig, vehicleAcceptsMailRegion } from './vehicle-data';
 import { MailSystem } from '../mail/mail-system';
 import { MailBagSystem } from '../mail/mail-bag-system';
+import { PackedMailBagSystem } from '../mail/packed-mail-bag-system';
 import { VEHICLE_ROUTES } from './vehicle-route-data';
 import { VEHICLE_CONTROL_WALL_BUTTONS } from '../world-layout';
 import { ScoringSystem, DepartureSettlement, LostFoundSettlementInput } from '../scoring';
@@ -158,6 +159,11 @@ export class VehicleControlSystem {
    * (spec: "結算以每封信計算", envelope state stays owned there). */
   private mailSystem: MailSystem;
   private mailBagSystem: MailBagSystem;
+  /** "Add regional envelope dispatch machine" round — same narrow read/write
+   * surface as mailBagSystem just above, for PackedMailBag's own physical
+   * bay-presence scan (see pressDepartButton's own extended mail-bag block)
+   * and departure teardown (finishSlotDeparture). */
+  private packedMailBagSystem: PackedMailBagSystem;
 
   /** Fixed six slots, built once in the constructor from
    * [...LAND_VEHICLE_CONFIGS, ...SEA_VEHICLE_CONFIGS] — the SAME slot
@@ -191,6 +197,7 @@ export class VehicleControlSystem {
     scoringSystem: ScoringSystem,
     mailSystem: MailSystem,
     mailBagSystem: MailBagSystem,
+    packedMailBagSystem: PackedMailBagSystem,
     onPauseChange: (paused: boolean) => void,
     onVehicleDiscovered?: (config: VehicleConfig) => void,
     onVehicleCalled?: () => void,
@@ -210,6 +217,7 @@ export class VehicleControlSystem {
     this.scoringSystem = scoringSystem;
     this.mailSystem = mailSystem;
     this.mailBagSystem = mailBagSystem;
+    this.packedMailBagSystem = packedMailBagSystem;
     this.onPauseChange = onPauseChange;
     this.onVehicleDiscovered = onVehicleDiscovered;
     this.onVehicleCalled = onVehicleCalled;
@@ -458,6 +466,24 @@ export class VehicleControlSystem {
         break;
       }
     }
+    // Packed mail bags ("Add regional envelope dispatch machine" round十) —
+    // same one-time physical-bay scan as the open mail-bag block just above,
+    // feeding into the SAME correctlyShippedBagIds set: mailSystem.
+    // settleAtDeparture treats any bagId present there as correctly shipped
+    // regardless of which system actually owns that container, so a packed
+    // bag needs no separate settlement call of its own.
+    for (const bagId of this.packedMailBagSystem.getAllBagIds()) {
+      const bagObj = this.interactables.get(bagId);
+      if (!bagObj || bagObj.isHeld || !bagObj.mesh.visible) continue;
+      for (const slot of this.slots) {
+        if (!slot.vehicle || !slot.vehicle.isInCargoBay(bagObj.mesh.position)) continue;
+        slot.pinnedCargo.push(bagObj);
+        if (vehicleAcceptsMailRegion(slot.config, this.packedMailBagSystem.getBagRegion(bagId))) {
+          correctlyShippedBagIds.add(bagId);
+        }
+        break;
+      }
+    }
     const mail = this.mailSystem.settleAtDeparture(correctlyShippedBagIds);
 
     for (const slot of this.slots) {
@@ -662,6 +688,7 @@ export class VehicleControlSystem {
       // MailBagSystem itself so its own bag registry doesn't keep a stale
       // entry pointing at an already-destroyed InteractableObject.
       if (this.mailBagSystem.getBag(obj.id)) { this.mailBagSystem.removeShippedBag(obj.id); continue; }
+      if (this.packedMailBagSystem.isBag(obj.id)) { this.packedMailBagSystem.removeShippedBag(obj.id); continue; }
       this.cargoSystem.removeCargo(obj.id);
     }
     this.pickupSystem.removePlacementSurface(vehicle.cargoBedTopMesh);

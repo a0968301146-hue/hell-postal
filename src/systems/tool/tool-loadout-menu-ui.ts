@@ -142,12 +142,15 @@ export class ToolLoadoutMenuUI {
     this.slotsEl.innerHTML = slotTools.map((tool, i) => {
       const def = TOOL_DEFINITIONS[tool];
       if (i === 0) {
+        // "Add regional envelope dispatch machine" round一: no lock icon —
+        // the "(固定)" suffix alone communicates it can't be replaced.
+        // Still has no data-loadout-slot attribute, so onClick's own
+        // delegated handler never arms it for replacement.
         return `
           <div class="tool-loadout-slot locked">
             <span class="tool-loadout-slot-key">1</span>
             <span class="tool-loadout-slot-icon">${def.icon}</span>
-            <span class="tool-loadout-slot-name">${def.displayName}</span>
-            <span class="tool-loadout-slot-lock">🔒</span>
+            <span class="tool-loadout-slot-name">${def.displayName}（固定）</span>
           </div>`;
       }
       const scratchIndex = i - 1;

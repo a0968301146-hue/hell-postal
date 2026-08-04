@@ -48,3 +48,38 @@ export interface MailBagRecord {
   envelopeIds: string[];
   capacity: number;
 }
+
+/** A snapshot of one envelope's identifying data, frozen into a
+ * PackedMailBag at pack time ("Add regional envelope dispatch machine"
+ * round) — the ORIGINAL EnvelopeRecord stays the single source of truth for
+ * that envelope's own live state (still owned by MailSystem, mirrored via
+ * setEnvelopeBagged exactly like MailBagSystem's own envelopes), this is
+ * only the display-facing copy a bag needs to show/settle without a second
+ * MailSystem lookup per envelope. */
+export interface PackedEnvelopeSnapshot {
+  envelopeId: string;
+  destination: MailDestination;
+  visualPresetId: string;
+}
+
+/** A sealed, already-full regional mail bag ("Add regional envelope dispatch
+ * machine" round九) — unlike MailBagRecord (an open container envelopes can
+ * still be inserted into/removed from after spawn), a PackedMailBag's
+ * contents are FIXED the moment EnvelopeDispatchMachineSystem generates it;
+ * the individual envelope objects that funded it are already gone from the
+ * scene (consumed into the dispatcher's own per-region buffer the instant
+ * they passed through a hole's sensor — see EnvelopeDispatchMachineSystem).
+ * Physical fields (mesh/rigidBody/isHeld) deliberately live on the shared
+ * InteractableObject instead of being duplicated here, mirroring
+ * MailBagRecord's own established split; `isLoaded`/`isSettled` are likewise
+ * never cached here — VehicleControlSystem's own departure-time bay scan
+ * (mirroring its existing MailBagSystem scan) decides both freshly every
+ * time, exactly like every other loadable container in this codebase. */
+export interface PackedMailBagRecord {
+  bagId: string;
+  destination: MailDestination;
+  region: MailRegion;
+  envelopeIds: string[];
+  envelopeData: PackedEnvelopeSnapshot[];
+  envelopeCount: number;
+}

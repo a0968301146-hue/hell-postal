@@ -175,13 +175,28 @@ export interface WestWallShelfConfig {
   depth: number;
 }
 
+/** "Add regional envelope dispatch machine" round四: the genuinely northmost
+ * general cargo shelf (smallest centerZ, per Compass convention North=-Z —
+ * see logistics-layout-data.ts's own convention note above) is removed to
+ * free its wall/floor space for the envelope dispatch machine (spec四:
+ * "移除最北側的一座一般置貨架...空出的牆面/地板空間即為信封出貨器放置處").
+ * Filtered OUT of the generated array by id AFTER generation (not by
+ * shrinking the `[0,1,2]` map range) specifically so `west-shelf-2`/
+ * `west-shelf-3` keep their own ORIGINAL centerZ — the freed gap is exactly
+ * the old west-shelf-1 footprint, nothing re-flows south to fill it — and so
+ * BULLETIN_BOARD below (which derives its own position from
+ * `WEST_WALL_SHELVES[WEST_WALL_SHELVES.length - 1]`, the SOUTHMOST shelf)
+ * still correctly resolves to west-shelf-3, entirely unaffected by this
+ * removal. */
+const REMOVED_NORTH_SHELF_ID = 'west-shelf-1';
+
 export const WEST_WALL_SHELVES: WestWallShelfConfig[] = [0, 1, 2].map((i) => ({
   id: `west-shelf-${i + 1}`,
   centerX: shelfCenterX,
   centerZ: shelfGroupStartZ + SHELF_WIDTH / 2 + i * (SHELF_WIDTH + SHELF_GROUP_GAP),
   width: SHELF_WIDTH,
   depth: SHELF_DEPTH,
-}));
+})).filter((shelf) => shelf.id !== REMOVED_NORTH_SHELF_ID);
 
 /** Wall-mounted bulletin board ("公告欄升級系統" round spec一) — a thin
  * wood-frame+corkboard panel on BACK_AREA's own west wall, facing east into

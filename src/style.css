@@ -167,24 +167,6 @@ canvas {
   transform: scale(1.12);
 }
 
-.hotbar-slot.locked {
-  opacity: 0.45;
-}
-
-.hotbar-slot .hotbar-lock {
-  display: none;
-  font-size: 16px;
-}
-
-.hotbar-slot.locked .hotbar-icon,
-.hotbar-slot.locked .hotbar-name {
-  display: none;
-}
-
-.hotbar-slot.locked .hotbar-lock {
-  display: block;
-}
-
 /* Transient tool-name popup shown just below the crosshair on switch
  * (spec一: "工具切換後，在準心下方短暫顯示工具名稱") — same visual language
  * as #interaction-prompt (sans-serif, white, drop shadow) but its own
@@ -1632,10 +1614,6 @@ body.text-size-large #interaction-prompt { font-size: 17px; }
   flex: 1;
 }
 
-.tool-loadout-slot-lock {
-  font-size: 13px;
-  opacity: 0.7;
-}
 
 .tool-loadout-pool-item {
   display: flex;
