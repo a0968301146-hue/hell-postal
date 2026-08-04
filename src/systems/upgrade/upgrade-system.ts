@@ -20,14 +20,18 @@ import { PalletSize, PALLET_SIZE_ORDER } from '../pallet/pallet-data';
 const UPGRADE_STORAGE_KEY = 'hp_manual_upgrades_v2';
 
 // TEMPORARY TEST GRANT — remove before public demo.
-// A brand-new save starts with this much spendable score (skills all still
-// Lv.0, purchases still deduct normally) instead of 0, so testers have
-// something to actually spend without needing to play a full day first.
-// TEMPORARY_TEST_GRANT_VERSION is a one-time-migration stamp (mirrors this
-// file's own upgradePoints->availableSettlementScore migration just below)
-// — bump it if this grant amount ever needs to be re-applied to saves that
-// already received an earlier version; leave it alone otherwise, or every
-// reload would hand out another 1000.
+// A brand-new save (or an explicit "重新開始第1天" reset, see
+// resetUpgradesForNewRun below) starts with this much spendable score
+// (skills all still Lv.0, purchases still deduct normally) instead of 0, so
+// testers have something to actually spend without needing to play a full
+// day first. This is the ONLY two ways a save's score is ever set to this
+// value — an EXISTING save loading back in (mergeUpgradeSaveState below)
+// never tops itself up to this amount, no matter how low its own score has
+// dropped from spending, so a plain refresh never surprises a tester with
+// free score they didn't earn (spec: "舊周目載入時不再因testGrantVersion反
+// 覆補到1000"). testGrantVersion is carried over as a plain save-shape
+// field (still stamped fresh on every brand-new/reset save) but no longer
+// read as a load-time migration trigger.
 const TEMPORARY_TEST_STARTING_SCORE = 1000;
 const TEMPORARY_TEST_GRANT_VERSION = 1;
 
@@ -74,17 +78,14 @@ function mergeUpgradeSaveState(saved: (Partial<UpgradeSaveState> & { upgradePoin
     availableSettlementScore = saved.upgradePoints;
   }
 
-  // TEMPORARY TEST GRANT — remove before public demo. A save that predates
-  // this grant (testGrantVersion missing or behind the current stamp) gets
-  // topped up ONCE — never below whatever it already had (spec: "使用
-  // testGrantVersion避免重複發放" / "availableSettlementScore =
-  // max(currentScore, 1000)") — and stamped so this branch can never fire
-  // again for the same save.
-  const savedTestGrantVersion = typeof saved.testGrantVersion === 'number' ? saved.testGrantVersion : 0;
-  if (savedTestGrantVersion < TEMPORARY_TEST_GRANT_VERSION) {
-    availableSettlementScore = Math.max(availableSettlementScore, TEMPORARY_TEST_STARTING_SCORE);
-  }
-  const testGrantVersion = Math.max(savedTestGrantVersion, TEMPORARY_TEST_GRANT_VERSION);
+  // TEMPORARY TEST GRANT — remove before public demo. Loading an EXISTING
+  // save never tops its score back up to TEMPORARY_TEST_STARTING_SCORE —
+  // only a genuinely brand-new save (the `!saved` early return above) or an
+  // explicit resetUpgradesForNewRun() call gets that starting amount (spec:
+  // "舊周目載入時不再因testGrantVersion反覆補到1000"). testGrantVersion is
+  // just carried through as-is (or defaulted) — a plain save-shape field,
+  // not a migration trigger.
+  const testGrantVersion = typeof saved.testGrantVersion === 'number' ? saved.testGrantVersion : base.testGrantVersion;
 
   return {
     availableSettlementScore,
@@ -124,17 +125,33 @@ export class UpgradeSystem {
     const rawSaved = this.storage.getJSON<UpgradeSaveState>(UPGRADE_STORAGE_KEY);
     this.state = mergeUpgradeSaveState(rawSaved);
     this.applyAllEffects();
+  }
 
-    // TEMPORARY TEST GRANT — remove before public demo. An existing save
-    // that just received the one-time top-up above must be persisted RIGHT
-    // NOW — otherwise a refresh before the player's next organic save()
-    // (a purchase or a day settling) would still read the old, un-stamped
-    // save from storage and grant it again (spec: "不可每次重新整理重新補
-    // 1000分"). A brand-new save (rawSaved === null) needs no such write —
-    // there's nothing on disk yet to desync from.
-    if (rawSaved && (typeof rawSaved.testGrantVersion !== 'number' || rawSaved.testGrantVersion < this.state.testGrantVersion)) {
-      this.save();
-    }
+  /** The ONLY entry point for wiping this playthrough's upgrade progress
+   * back to a brand-new save ("Reset upgrades when starting day one" round)
+   * — never called from the constructor, page load, or loadSave() (spec:
+   * "不要在UpgradeSystem建構、頁面載入或loadSave()時自動執行重置"), only from
+   * the explicit "重新開始第1天" new-run trigger (see pause-menu-ui.ts's
+   * Data tab). Every skill level back to 0, spendable score back to
+   * TEMPORARY_TEST_STARTING_SCORE, settledDayId cleared so a stale dayId
+   * left over from the PREVIOUS playthrough can never suppress this new
+   * run's own first day-settlement (spec五), persisted immediately (spec
+   *六) so even a refresh a moment later reads the clean state back, and
+   * every downstream effect re-applied right away (spec七) —
+   * multiCarry/heavyHandling/moveSpeed via the same setter-based
+   * applyAllEffects() every purchase/load already goes through;
+   * similarCargoSense/ropeStrap/powerGlovesUpgrade need no separate push
+   * since their own callers (similar-cargo-highlight.ts / pallet-system.ts)
+   * always read isSimilarCargoSenseUnlocked()/isRopeStrapUnlocked()/
+   * getMaxCarryablePalletSize() live off this.state rather than a cached
+   * copy, so resetting this.state alone already reflects everywhere those
+   * are read — same reasoning UpgradeMenuUI's own render() relies on for
+   * showing current levels on open(). */
+  resetUpgradesForNewRun(): void {
+    this.state = createDefaultUpgradeSaveState();
+    this.pendingDayScore = 0;
+    this.applyAllEffects();
+    this.save();
   }
 
   get availableSettlementScore(): number {

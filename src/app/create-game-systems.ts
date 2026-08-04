@@ -424,7 +424,17 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // 異世界物流手冊 — pause menu / tutorial / settings / codex (spec round).
   // Not stored anywhere: nothing else needs to reference it after
   // construction (it manages its own DOM/listeners internally).
-  new ManualUI(pauseManager, settingsManager, hud, hooks.onInterruptPlayerActions);
+  new ManualUI(pauseManager, settingsManager, hud, hooks.onInterruptPlayerActions, () => {
+    // "Reset upgrades when starting day one" round — the ONE explicit
+    // "重新開始第1天" trigger (Data tab's own confirm-armed button). Resets
+    // the upgrade save itself (state/persist/effect-reapply — see
+    // UpgradeSystem.resetUpgradesForNewRun's own doc comment), then reloads
+    // the page so every OTHER system (day/scene/cargo/vehicles/mail/lost-
+    // found/etc.) restarts from its own normal day-1 boot path rather than
+    // needing bespoke reset code written here for each of them.
+    upgradeSystem.resetUpgradesForNewRun();
+    window.location.reload();
+  });
 
   return {
     playerController, interactionSystem, pickupSystem, envelopeStation, envelopeSystem,

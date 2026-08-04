@@ -28,6 +28,15 @@ export class ManualUI {
   private settingsManager: SettingsManager;
   private hud: HUD;
   private interruptPlayerActions: () => void;
+  /** "Reset upgrades when starting day one" round — the one, explicit
+   * "重新開始第1天" trigger (Data tab). Deliberately a plain callback rather
+   * than ManualUI owning an UpgradeSystem reference — the actual reset
+   * (state/save/effect-reapply) plus the day/scene restart both live
+   * entirely in the caller (create-game-systems.ts), same as every other
+   * cross-system action this class already only ever reaches via a passed-
+   * in callback (e.g. interruptPlayerActions above). */
+  private onRestartDayOne: () => void;
+  private restartConfirmArmed = false;
 
   private overlayEl: HTMLElement;
   private leftPageEl: HTMLElement;
@@ -45,11 +54,15 @@ export class ManualUI {
   private captureConflictMsg: string | null = null;
   private noticeMsg: string | null = null;
 
-  constructor(pauseManager: PauseManager, settingsManager: SettingsManager, hud: HUD, interruptPlayerActions: () => void) {
+  constructor(
+    pauseManager: PauseManager, settingsManager: SettingsManager, hud: HUD, interruptPlayerActions: () => void,
+    onRestartDayOne: () => void
+  ) {
     this.pauseManager = pauseManager;
     this.settingsManager = settingsManager;
     this.hud = hud;
     this.interruptPlayerActions = interruptPlayerActions;
+    this.onRestartDayOne = onRestartDayOne;
 
     this.overlayEl = document.createElement('div');
     this.overlayEl.id = 'manual-overlay';
@@ -120,6 +133,7 @@ export class ManualUI {
     this._isOpen = false;
     this.capturingFor = null;
     this.captureConflictMsg = null;
+    this.restartConfirmArmed = false;
     this.overlayEl.classList.remove('open');
     this.pauseManager.remove('manual');
     // Same convention as ending the stamp minigame / vehicle settlement:
@@ -201,6 +215,7 @@ export class ManualUI {
       this.selectedCargoId = null;
       this.captureConflictMsg = null;
       this.noticeMsg = null;
+      this.restartConfirmArmed = false;
       this.render();
       return;
     }
@@ -303,6 +318,20 @@ export class ManualUI {
     if (target.closest('[data-report-issue]') || target.closest('[data-privacy-policy]')) {
       this.noticeMsg = '尚未設定連結';
       this.render();
+      return;
+    }
+
+    if (target.closest('[data-restart-day-one]')) {
+      if (!this.restartConfirmArmed) {
+        // First click only arms the confirm state — the actual reset
+        // (state/save/effect-reapply + day/scene restart) never fires from
+        // a single accidental click.
+        this.restartConfirmArmed = true;
+        this.render();
+        return;
+      }
+      this.restartConfirmArmed = false;
+      this.onRestartDayOne();
       return;
     }
   }
@@ -521,6 +550,11 @@ export class ManualUI {
       <div class="manual-data-row"><span>儲存遊戲</span><button class="manual-btn" data-save-now>立即儲存</button></div>
       <div class="manual-data-row"><span>回報問題</span><button class="manual-btn" data-report-issue>前往回報</button></div>
       <div class="manual-data-row"><span>隱私政策</span><button class="manual-btn" data-privacy-policy>查看</button></div>
+      <div class="manual-data-row">
+        <span>重新開始第 1 天</span>
+        <button class="manual-btn" data-restart-day-one>${this.restartConfirmArmed ? '再次點擊確認重置' : '重新開始'}</button>
+      </div>
+      <p class="manual-hint">重新開始第 1 天會清除目前所有技能等級與可用結算分數，恢復成全新的一輪。</p>
       ${this.noticeMsg ? `<p class="manual-notice">${this.noticeMsg}</p>` : ''}
     `;
   }
