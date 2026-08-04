@@ -7,27 +7,29 @@ import { isPalletId } from '../pallet';
 // import (keeps this file from ever risking a future cycle through anything
 // else the barrel re-exports).
 import { PickupSystem } from '../interaction/pickup-system';
-
-const TOOL_NAME: Record<ActiveTool, string> = {
-  empty: '徒手',
-  powerGloves: '力量手套',
-  cargoHook: '捕貨鉤',
-  sprayCan: '噴漆罐',
-};
+import { ConfigurableTool, TOOL_DEFINITIONS, loadToolLoadout } from './tool-loadout-data';
 
 /** Bottom-center 4-slot hotbar ("Add tool hotbar and cargo hook" round 一,
  * slot 2 unlocked by "Add power gloves and refine cargo hook cooldown"
  * round 三, slot 4 unlocked by "Fix pallet throw and add spray paint tool"
- * round 五) — owns ONLY tool-selection state/input/UI.
+ * round 五, slots 2-4 made SWAPPABLE by "Add ladder tool station and
+ * envelope vacuum" round三) — owns ONLY tool-selection state/input/UI.
  *
- * Deliberately does NOT know about CargoHookSystem at all — CargoHookSystem
- * watches `playerData.activeTool` itself every frame and self-cancels the
- * instant it stops being 'cargoHook', so no callback/import wiring is
- * needed in either direction. It DOES need `isPalletId` (a plain exported
- * data-only helper, not a PalletSystem class reference — see
- * pallet-data.ts's own doc comment on why it's exported this way) purely to
- * block switching tools while a pallet is held (spec四: "搬著托盤時不可切換工
- * 具，提示「請先放下托盤」"). */
+ * Deliberately does NOT know about CargoHookSystem/SpraySystem/
+ * EnvelopeVacuumSystem at all — each of those watches
+ * `playerData.activeTool` itself every frame and self-cancels the instant
+ * it stops being its own id, so no callback/import wiring is needed in
+ * either direction. It DOES need `isPalletId` (a plain exported data-only
+ * helper, not a PalletSystem class reference) purely to block switching
+ * tools while a pallet is held (spec四: "搬著托盤時不可切換工具，提示「請先
+ * 放下托盤」").
+ *
+ * Slot 1 is permanently 'empty', locked. Slots 2-4 hold whichever three
+ * ConfigurableTool ids the CURRENT loadout (tool-loadout-data.ts) assigns —
+ * only ever changed via setLoadout(), called once at construction (reading
+ * the saved/default loadout) and again whenever the tool cart's own
+ * ToolLoadoutMenuUI saves a new configuration (spec三: "儲存後立即刷新
+ * Hotbar圖示與數字鍵對應"). */
 export class ToolSystem {
   private playerData: PlayerInteractionData;
   private hud: HUD;
@@ -35,19 +37,14 @@ export class ToolSystem {
   private isLocked: () => boolean;
   private pickupSystem: PickupSystem;
 
-  private slot1El: HTMLElement;
-  private slot2El: HTMLElement;
-  private slot3El: HTMLElement;
-  private slot4El: HTMLElement;
+  /** Index 0 is always 'empty' (locked slot 1); indices 1-3 mirror the
+   * current loadout (slots 2-4). */
+  private slotTools: ActiveTool[] = ['empty', 'powerGloves', 'cargoHook', 'sprayCan'];
+  private slotEls: HTMLElement[] = [];
   private slot3CooldownOverlay: HTMLElement;
   private slot3CooldownText: HTMLElement;
   private toolNamePopup: HTMLElement;
   private toolNameTimer: number | null = null;
-
-  /** Wheel-cycle order matches the visible slot order left-to-right —
-   * "Fix pallet throw and add spray paint tool" round spec五: "滾輪工具切換
-   * 改為1→2→3→4循環". */
-  private readonly WHEEL_CYCLE: ActiveTool[] = ['empty', 'powerGloves', 'cargoHook', 'sprayCan'];
 
   constructor(playerData: PlayerInteractionData, hud: HUD, pauseManager: PauseManager, isLockedFn: () => boolean, pickupSystem: PickupSystem) {
     this.playerData = playerData;
@@ -61,28 +58,22 @@ export class ToolSystem {
     const hotbar = document.createElement('div');
     hotbar.id = 'hotbar';
 
-    this.slot1El = this.buildSlot('1', '✋', '徒手', false);
-    this.slot2El = this.buildSlot('2', '🧤', '力量手套', false);
-    this.slot3El = this.buildSlot('3', '🪝', '捕貨鉤', false);
-    this.slot4El = this.buildSlot('4', '🎨', '噴漆罐', false);
+    for (let i = 0; i < 4; i++) {
+      const el = this.buildSlotElement(String(i + 1), i === 0);
+      this.slotEls.push(el);
+      hotbar.appendChild(el);
+    }
+    container.appendChild(hotbar);
 
     // "Improve cargo hook aerial pickup" round spec五: "工具欄第3格顯示冷卻
     // 遮罩與剩餘秒數" — a rising dark overlay (height = remaining/total) plus
-    // a centered countdown label, both hidden while off cooldown. Only slot 3
-    // ever needs this (only cargoHook has a cooldown), so it's built directly
-    // here rather than generalizing buildSlot() for a case nothing else uses.
+    // a centered countdown label, hidden while off cooldown. Built once here
+    // (detached until whichever slot currently equips cargoHook exists — see
+    // refreshSlotContents()), since only cargoHook has a cooldown at all.
     this.slot3CooldownOverlay = document.createElement('div');
     this.slot3CooldownOverlay.className = 'hotbar-cooldown-overlay';
-    this.slot3El.appendChild(this.slot3CooldownOverlay);
     this.slot3CooldownText = document.createElement('div');
     this.slot3CooldownText.className = 'hotbar-cooldown-text';
-    this.slot3El.appendChild(this.slot3CooldownText);
-
-    hotbar.appendChild(this.slot1El);
-    hotbar.appendChild(this.slot2El);
-    hotbar.appendChild(this.slot3El);
-    hotbar.appendChild(this.slot4El);
-    container.appendChild(hotbar);
 
     this.toolNamePopup = document.createElement('div');
     this.toolNamePopup.id = 'tool-name-popup';
@@ -90,34 +81,72 @@ export class ToolSystem {
 
     // Every fresh page load starts back on bare-hands (spec一: "不需要保存
     // 最後選擇的工具") — playerData already defaults activeTool to 'empty'
-    // (see createPlayerInteractionData), this just syncs the visuals to it.
-    this.updateSelectionUI();
+    // (see createPlayerInteractionData). The loadout ITSELF does persist
+    // (spec: "重新整理後保留配置") — read once here, same reasoning
+    // upgrade-system.ts reads its own save once at construction.
+    this.setLoadout(loadToolLoadout());
 
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
     document.addEventListener('wheel', (e) => this.onWheel(e));
   }
 
-  private buildSlot(key: string, icon: string, name: string, locked: boolean): HTMLElement {
+  private buildSlotElement(key: string, locked: boolean): HTMLElement {
     const el = document.createElement('div');
     el.className = 'hotbar-slot' + (locked ? ' locked' : '');
     el.innerHTML = `
       <span class="hotbar-key">${key}</span>
-      <span class="hotbar-icon">${icon}</span>
-      <span class="hotbar-name">${name}</span>
+      <span class="hotbar-icon"></span>
+      <span class="hotbar-name"></span>
       <span class="hotbar-lock">🔒</span>
     `;
     return el;
   }
 
+  private renderSlotContent(index: number): void {
+    const el = this.slotEls[index];
+    const tool = this.slotTools[index];
+    const def = TOOL_DEFINITIONS[tool];
+    el.querySelector('.hotbar-icon')!.textContent = def.icon;
+    el.querySelector('.hotbar-name')!.textContent = def.displayName;
+  }
+
+  /** Applies a NEW slots-2-4 loadout ("Add ladder tool station and envelope
+   * vacuum" round三) — called once at construction and again whenever the
+   * tool cart saves a change. If the tool CURRENTLY selected is no longer
+   * in the new loadout, forces back to slot 1 first (spec: "替換目前正在
+   *選中的工具時，關閉UI後自動切回第1格空手") — reusing trySelect's own
+   * empty-handed-normalize logic rather than duplicating it. */
+  setLoadout(loadout: [ConfigurableTool, ConfigurableTool, ConfigurableTool]): void {
+    const current = this.playerData.activeTool;
+    this.slotTools = ['empty', loadout[0], loadout[1], loadout[2]];
+    if (current !== 'empty' && !(this.slotTools as ActiveTool[]).includes(current)) {
+      this.trySelect('empty');
+    }
+    for (let i = 0; i < 4; i++) this.renderSlotContent(i);
+
+    // Re-attach the cooldown mask to whichever slot (if any) currently
+    // equips cargoHook — detaches it entirely if cargoHook isn't equipped
+    // at all right now, so it can never linger visually on an unrelated
+    // tool's slot.
+    const cargoHookIndex = this.slotTools.indexOf('cargoHook');
+    this.slot3CooldownOverlay.remove();
+    this.slot3CooldownText.remove();
+    if (cargoHookIndex !== -1) {
+      this.slotEls[cargoHookIndex].appendChild(this.slot3CooldownOverlay);
+      this.slotEls[cargoHookIndex].appendChild(this.slot3CooldownText);
+    }
+
+    this.updateSelectionUI();
+  }
+
   private updateSelectionUI(): void {
-    this.slot1El.classList.toggle('selected', this.playerData.activeTool === 'empty');
-    this.slot2El.classList.toggle('selected', this.playerData.activeTool === 'powerGloves');
-    this.slot3El.classList.toggle('selected', this.playerData.activeTool === 'cargoHook');
-    this.slot4El.classList.toggle('selected', this.playerData.activeTool === 'sprayCan');
+    for (let i = 0; i < 4; i++) {
+      this.slotEls[i].classList.toggle('selected', this.playerData.activeTool === this.slotTools[i]);
+    }
   }
 
   private showToolNamePopup(tool: ActiveTool): void {
-    this.toolNamePopup.textContent = TOOL_NAME[tool];
+    this.toolNamePopup.textContent = TOOL_DEFINITIONS[tool].displayName;
     this.toolNamePopup.classList.add('visible');
     if (this.toolNameTimer !== null) window.clearTimeout(this.toolNameTimer);
     this.toolNameTimer = window.setTimeout(() => {
@@ -130,14 +159,19 @@ export class ToolSystem {
    * CargoHookSystem could in principle still call it, though it no longer
    * does (the tool stays selected through a catch — see cargo-hook-
    * system.ts's own doc comment). Enforces:
-   * - "搬著托盤時不可切換工具" (spec四, this round) — checked FIRST since it
-   *   applies regardless of which tool is being switched TO or FROM.
-   * - "捕貨鉤必須空手使用...若玩家正在持有任何物品：不可切換至捕貨鉤"
-   *   (prior round; Pallet/dolly holds also set state away from
-   *   'empty-handed', so this one check covers every kind of "currently
-   *   holding something" case, not just PickupSystem's own heldObjectId).
-   * - "噴漆罐必須空手使用" ("Fix pallet throw and add spray paint tool" round
-   *   spec五) — same reasoning/gate as cargoHook above.
+   * - "搬著托盤或梯子時不可切換工具" — checked FIRST since it applies
+   *   regardless of which tool is being switched TO or FROM (pallet/ladder
+   *   carrying both set playerData.state away from 'empty-handed', so the
+   *   second check below already covers the ladder case too; the pallet
+   *   gets its own extra toast since isPalletId is a cheap data-only check
+   *   available here without an import cycle — the ladder has no
+   *   equivalent lightweight id-only helper, so it just falls under the
+   *   generic "must be empty-handed" message instead).
+   * - "捕貨鉤／噴漆罐／信封吸塵器必須空手使用...若玩家正在持有任何物品：不可
+   *   切換" (prior rounds; pallet/ladder/dolly holds also set state away
+   *   from 'empty-handed', so this one check covers every kind of
+   *   "currently holding something" case, not just PickupSystem's own
+   *   heldObjectId).
    * Does NOT gate on cargo-hook cooldown — a cooldown only blocks FIRING
    * (see CargoHookSystem.onMouseDown), the tool can still be selected/
    * deselected freely while it counts down.
@@ -145,25 +179,16 @@ export class ToolSystem {
    * "Fully fix bare-hands NPC interaction" round二: switching TO 'empty'
    * additionally, defensively, force-normalizes playerData.state back to
    * 'empty-handed' (and heldObjectId to null) whenever nothing is actually
-   * held (PickupSystem.heldCount===0 and not a pallet) — a genuinely
-   * exhaustive audit of every heldStack/state writer in this codebase found
-   * every one of them already correctly paired, but InteractionSystem's own
-   * entire empty-handed priority chain (bulletin board / TV / vehicle
-   * buttons / mail rack / pallet racks / the lost-found NPC counter) is
-   * gated behind a single `if (playerData.state !== 'empty-handed') return;`
-   * check — so ANY future desync between "nothing genuinely held" and a
-   * stale non-'empty-handed' state, from this file or any other, would
-   * silently route every one of those E-presses into PickupSystem's
-   * unrelated 'holding-item' branch instead and look exactly like "E does
-   * nothing". This makes returning to slot 1 the one guaranteed place that
-   * class of bug can never survive, regardless of where it originates. */
+   * held (PickupSystem.heldCount===0 and not a pallet) — see this method's
+   * own prior doc comment history for the full reasoning; kept unchanged
+   * this round. */
   trySelect(tool: ActiveTool): void {
     if (this.playerData.activeTool === tool) return;
     if (isPalletId(this.playerData.heldObjectId)) {
       this.hud.showToast('請先放下托盤');
       return;
     }
-    if ((tool === 'cargoHook' || tool === 'sprayCan') && this.playerData.state !== 'empty-handed') {
+    if ((tool === 'cargoHook' || tool === 'sprayCan' || tool === 'envelopeVacuum') && this.playerData.state !== 'empty-handed') {
       this.hud.showToast('請先放下手上的物品');
       return;
     }
@@ -177,8 +202,10 @@ export class ToolSystem {
   }
 
   /** Called every frame by CargoHookSystem regardless of which tool is
-   * currently selected, so the cooldown mask on slot 3 stays visible even
-   * if the player switches away mid-cooldown. */
+   * currently selected, so the cooldown mask stays visible even if the
+   * player switches away mid-cooldown — a no-op if cargoHook isn't
+   * currently equipped in any slot at all (see setLoadout's own detach
+   * logic above). */
   setCooldown(remainingSeconds: number, totalSeconds: number): void {
     if (remainingSeconds <= 0) {
       this.slot3CooldownOverlay.style.height = '0%';
@@ -198,9 +225,9 @@ export class ToolSystem {
     if (this.pauseManager.isPaused) return;
 
     if (event.code === 'Digit1') { this.trySelect('empty'); return; }
-    if (event.code === 'Digit2') { this.trySelect('powerGloves'); return; }
-    if (event.code === 'Digit3') { this.trySelect('cargoHook'); return; }
-    if (event.code === 'Digit4') { this.trySelect('sprayCan'); return; }
+    if (event.code === 'Digit2') { this.trySelect(this.slotTools[1]); return; }
+    if (event.code === 'Digit3') { this.trySelect(this.slotTools[2]); return; }
+    if (event.code === 'Digit4') { this.trySelect(this.slotTools[3]); return; }
   }
 
   private onWheel(event: WheelEvent): void {
@@ -211,7 +238,7 @@ export class ToolSystem {
     // the wheel entirely while placing a normal held item; the pallet's own
     // placement preview is live for the WHOLE time it's held (no separate
     // discrete state — see pallet-system.ts), so carrying it is the second
-    // condition here.
+    // condition here — the ladder's own carry/preview is identical.
     if (this.playerData.state === 'placement-preview') return;
     if (isPalletId(this.playerData.heldObjectId)) return;
     // "Fix pallet throw and add spray paint tool" round spec五: "噴漆預覽存
@@ -227,9 +254,9 @@ export class ToolSystem {
     // Cycles through the four usable slots in visible left-to-right order
     // (spec五: "滾輪工具切換改為1→2→3→4循環"), direction-aware so scrolling
     // back reverses it.
-    const currentIndex = this.WHEEL_CYCLE.indexOf(this.playerData.activeTool);
+    const currentIndex = this.slotTools.indexOf(this.playerData.activeTool);
     const dir = event.deltaY > 0 ? 1 : -1;
-    const nextIndex = (currentIndex + dir + this.WHEEL_CYCLE.length) % this.WHEEL_CYCLE.length;
-    this.trySelect(this.WHEEL_CYCLE[nextIndex]);
+    const nextIndex = (currentIndex + dir + this.slotTools.length) % this.slotTools.length;
+    this.trySelect(this.slotTools[nextIndex]);
   }
 }

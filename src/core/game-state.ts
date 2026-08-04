@@ -14,7 +14,10 @@ export type PlayerInteractionState = 'empty-handed' | 'holding-item' | 'placemen
  * to target a NEW item" invariant true for the whole time any of them is
  * selected, not just at the moment of switching to it) and by PalletSystem
  * (only powerGloves may pick up the pallet). */
-export type ActiveTool = 'empty' | 'cargoHook' | 'powerGloves' | 'sprayCan';
+/** 'envelopeVacuum' added by "Add ladder tool station and envelope vacuum"
+ * round三 — only ever selectable via the tool cart's swappable loadout
+ * (see tool-loadout-data.ts), never a permanently-fixed hotbar slot. */
+export type ActiveTool = 'empty' | 'cargoHook' | 'powerGloves' | 'sprayCan' | 'envelopeVacuum';
 
 export interface PlayerInteractionData {
   state: PlayerInteractionState;

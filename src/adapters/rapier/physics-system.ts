@@ -46,6 +46,34 @@ export class PhysicsSystem implements PhysicsWorldPort {
     this.world.createCollider(colliderDesc, body);
   }
 
+  /** Same as createStaticCuboid, but (a) accepts a rotation and (b) RETURNS
+   * the body so a caller can remove it later via removeRigidBody — for
+   * world fixtures that need to appear/disappear/reposition at runtime
+   * rather than being permanent level geometry (spec: a placed object's own
+   * walkable surface). Verified directly (real trusted-input walk test)
+   * that a KINEMATIC body's own colliders do NOT get the character
+   * controller's autostep/slope-climb treatment the way a genuinely Fixed
+   * body's colliders do — a kinematic staircase left the player stuck
+   * partway up no matter how the steps were sized/spaced, while the exact
+   * same geometry as separate Fixed bodies climbed correctly — so any
+   * walkable surface that isn't part of the permanent level (e.g. the
+   * ladder's own steps/platform once placed) needs genuinely Fixed
+   * colliders, rebuilt at the object's current transform each time it's
+   * placed, not colliders riding along on that object's own carry body. */
+  createRemovableStaticCuboid(
+    x: number, y: number, z: number, qx: number, qy: number, qz: number, qw: number,
+    hx: number, hy: number, hz: number
+  ): RAPIER.RigidBody {
+    const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z).setRotation({ x: qx, y: qy, z: qz, w: qw });
+    const body = this.world.createRigidBody(bodyDesc);
+    const colliderDesc = RAPIER.ColliderDesc.cuboid(hx, hy, hz)
+      .setCollisionGroups((GROUP_STATIC << 16) | (GROUP_PLAYER | GROUP_BOX))
+      .setFriction(0.7)
+      .setRestitution(0.1);
+    this.world.createCollider(colliderDesc, body);
+    return body;
+  }
+
   /** Fixed, non-blocking SENSOR cuboid ("Fix NPC interaction zone and expand
    * fishing pier" round一) — a genuine Rapier trigger volume, not a distance
    * formula: `isPlayerInsideSensor()` below reports real geometric overlap

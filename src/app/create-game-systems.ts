@@ -25,8 +25,13 @@ import { UpgradeSystem, UpgradeMenuUI, SimilarCargoHighlight } from '../systems/
 import { MediaPlayerSystem } from '../systems/media-player/media-player-system';
 import { MediaPlayerUI } from '../systems/media-player/media-player-ui';
 import { ToolSystem } from '../systems/tool';
+import { ToolLoadoutMenuUI } from '../systems/tool/tool-loadout-menu-ui';
 import { CargoHookSystem } from '../systems/cargo-hook';
 import { SpraySystem } from '../systems/spray-paint';
+// "Add ladder tool station and envelope vacuum" round.
+import { LadderSystem } from '../systems/ladder/ladder-system';
+import { ToolStationSystem } from '../systems/tool-station-system';
+import { EnvelopeVacuumSystem } from '../systems/envelope-vacuum-system';
 
 /** Every gameplay system GameApp constructs once at startup and keeps for
  * the rest of the session (Phase 6: "系統建立、建構子注入、註冊" moved out of
@@ -74,6 +79,10 @@ export interface GameSystems {
   cargoHookSystem: CargoHookSystem;
   /** "Fix pallet throw and add spray paint tool" round. */
   spraySystem: SpraySystem;
+  /** "Add ladder tool station and envelope vacuum" round. */
+  ladderSystem: LadderSystem;
+  toolStationSystem: ToolStationSystem;
+  envelopeVacuumSystem: EnvelopeVacuumSystem;
 }
 
 /** Back-references into GameApp's own small orchestration methods — the
@@ -357,6 +366,15 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   for (const mesh of palletSystem.getAllTopMeshes()) {
     pickupSystem.addPlacementSurface(mesh);
   }
+  // Foldable ladder + immovable tool cart ("Add ladder tool station and
+  // envelope vacuum" round一/二) — built near the pallet system since the
+  // ladder's own wall slot is derived from the pallet racks' own wall
+  // cluster (ladder-data.ts). Neither is registered into CargoSystem, so
+  // CargoHookSystem's own target resolution naturally excludes both without
+  // any extra exclusion code (see ladder-system.ts's own class doc comment).
+  const ladderSystem = new LadderSystem(scene, physics, interactables, playerData, hud);
+  const toolStationSystem = new ToolStationSystem(scene, physics, interactables);
+
   // RollerRackSystem removed entirely ("移除滾筒架" round) — roller-shaped
   // cargo is now just a normal special-shape item like 'large', freely
   // placeable/loadable with no dedicated fixture or organizing step of its
@@ -382,6 +400,20 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   const cargoHookSystem = new CargoHookSystem(
     camera, scene, pickupSystem.viewModelScene, physics, interactables, cargoSystem,
     playerData, hud, pauseManager, dailyFlowSystem, pickupSystem, toolSystem, () => playerController.isLocked
+  );
+
+  // Tool cart's own swap UI ("Add ladder tool station and envelope vacuum"
+  // round三) — same PauseManager/pointer-lock convention as
+  // UpgradeMenuUI/MediaPlayerUI, built once toolSystem exists since it
+  // saves directly back into it on close.
+  const toolLoadoutMenuUI = new ToolLoadoutMenuUI(pauseManager, playerController, toolSystem);
+
+  // Envelope vacuum tool (spec四-八) — same "self-contained tool watching
+  // playerData.activeTool" pattern as CargoHookSystem/SpraySystem just
+  // above, sharing the SAME viewModelScene for its own handheld prop.
+  const envelopeVacuumSystem = new EnvelopeVacuumSystem(
+    physics, interactables, playerData, camera, pickupSystem.viewModelScene,
+    mailSystem, pauseManager, () => playerController.isLocked
   );
 
   // Spray paint tool ("Fix pallet throw and add spray paint tool" round
@@ -418,6 +450,9 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     hooks.onStartMailStampUi,
     () => upgradeMenuUI.open(),
     () => mediaPlayerUI.open(),
+    ladderSystem,
+    toolStationSystem,
+    () => toolLoadoutMenuUI.open(),
     () => settingsManager.fireTutorialEvent('dollyUsed')
   );
 
@@ -444,5 +479,6 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     lostFoundSystem, lostFoundUI, mailSystem, mailBagSystem,
     upgradeSystem, similarCargoHighlight, mediaPlayerSystem,
     toolSystem, cargoHookSystem, spraySystem,
+    ladderSystem, toolStationSystem, envelopeVacuumSystem,
   };
 }

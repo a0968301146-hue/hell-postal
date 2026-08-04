@@ -21,6 +21,11 @@ import { MailBagSystem, MAIL_RACK_INTERACTABLE_ID } from '../mail/mail-bag-syste
 import { getMailDestination } from '../mail/mail-data';
 import { BULLETIN_BOARD_INTERACTABLE_ID, TELEVISION_INTERACTABLE_ID } from '../world-layout';
 import { isNpcEDebugEnabled, logNpcEDebug } from './npc-e-debug';
+// "Add ladder tool station and envelope vacuum" round — imported directly
+// from their own system files, not a barrel, matching every other
+// cross-system import in this file's own established convention.
+import { LadderSystem } from '../ladder/ladder-system';
+import { ToolStationSystem } from '../tool-station-system';
 
 export class InteractionSystem {
   private raycaster: THREE.Raycaster;
@@ -74,6 +79,12 @@ export class InteractionSystem {
    * as onOpenUpgradeMenu just above. */
   private onOpenMediaPlayer: () => void;
   private onDollyUsed?: () => void;
+  private ladderSystem: LadderSystem;
+  private toolStationSystem: ToolStationSystem;
+  /** Opens the tool cart's tool-loadout swap UI ("Add ladder tool station
+   * and envelope vacuum" round三) — same plain-callback pattern as
+   * onOpenUpgradeMenu/onOpenMediaPlayer above. */
+  private onOpenToolLoadoutMenu: () => void;
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -100,6 +111,9 @@ export class InteractionSystem {
     onStartMailStampUi: () => void,
     onOpenUpgradeMenu: () => void,
     onOpenMediaPlayer: () => void,
+    ladderSystem: LadderSystem,
+    toolStationSystem: ToolStationSystem,
+    onOpenToolLoadoutMenu: () => void,
     onDollyUsed?: () => void
   ) {
     this.raycaster = new THREE.Raycaster();
@@ -127,6 +141,9 @@ export class InteractionSystem {
     this.onStartMailStampUi = onStartMailStampUi;
     this.onOpenUpgradeMenu = onOpenUpgradeMenu;
     this.onOpenMediaPlayer = onOpenMediaPlayer;
+    this.ladderSystem = ladderSystem;
+    this.toolStationSystem = toolStationSystem;
+    this.onOpenToolLoadoutMenu = onOpenToolLoadoutMenu;
     this.onDollyUsed = onDollyUsed;
 
     // "Fix trusted keyboard NPC interaction" round四: moved from
@@ -357,11 +374,20 @@ export class InteractionSystem {
       // heldObjectId would then point at the wrong item while the pallet is
       // still visibly attached to the player with no way to place it).
       const isHoldingPallet = this.palletSystem.isPalletId(this.playerData.heldObjectId ?? '');
+      // Ladder, same reasoning as the pallet exclusion just above ("Add
+      // ladder tool station and envelope vacuum" round一) — its own
+      // world-space carry (ladder-system.ts) likewise writes
+      // playerData.heldObjectId directly, never through PickupSystem's own
+      // heldStack.
+      const isHoldingLadder = this.ladderSystem.isCarrying;
       if (
         this.currentTarget &&
         !isHoldingPallet &&
+        !isHoldingLadder &&
         !this.palletSystem.isPalletId(this.currentTarget.id) &&
         !this.palletSystem.isRackId(this.currentTarget.id) &&
+        !this.ladderSystem.isLadderTarget(this.currentTarget.id) &&
+        !this.ladderSystem.isLadderRackTarget(this.currentTarget.id) &&
         this.currentTarget.id !== MAIL_RACK_INTERACTABLE_ID &&
         this.currentTarget.id !== VEHICLE_CALL_BUTTON_ID && this.currentTarget.id !== VEHICLE_DEPART_BUTTON_ID &&
         !this.isLostFoundNpcTarget(this.currentTarget) &&
@@ -395,6 +421,18 @@ export class InteractionSystem {
           this.palletSystem.tryReturnToRack(this.lastHoldingItemHitId);
         } else {
           this.palletSystem.tryPlace();
+        }
+        return;
+      }
+      // Ladder: same "own world-space carry/place flow, second E either
+      // hangs it back on its matching wall slot or commits the floor
+      // placement" pattern as the pallet just above ("Add ladder tool
+      // station and envelope vacuum" round一/二).
+      if (isHoldingLadder) {
+        if (this.lastHoldingItemHitId && this.ladderSystem.isLadderRackTarget(this.lastHoldingItemHitId) && this.ladderSystem.canReturnToRack()) {
+          this.ladderSystem.tryReturnToRack();
+        } else {
+          this.ladderSystem.tryPlace();
         }
         return;
       }
@@ -592,18 +630,48 @@ export class InteractionSystem {
       this.currentTarget = null;
       return;
     }
+    // Priority 0.91: wall ladder rack, same "nothing to hang up while
+    // empty-handed" no-op as the pallet racks just above ("Add ladder tool
+    // station and envelope vacuum" round一).
+    if (this.currentTarget && this.ladderSystem.isLadderRackTarget(this.currentTarget.id)) {
+      this.clearHighlight(this.currentTarget);
+      this.currentTarget = null;
+      return;
+    }
+    // Priority 0.92: immovable tool cart — aim + E opens the tool-loadout
+    // swap UI (spec二/三), same "canPickUp only for the raycast filter,
+    // never actually picked up" pattern as every other world-button dummy
+    // target in this file.
+    if (this.currentTarget && this.toolStationSystem.isToolStationTarget(this.currentTarget.id)) {
+      if (this.pickupSystem.heldCount === 0 && this.playerData.state === 'empty-handed') {
+        this.onOpenToolLoadoutMenu();
+      }
+      this.clearHighlight(this.currentTarget);
+      this.currentTarget = null;
+      return;
+    }
 
     // Priority 1: pick up targeted object (envelope, package, crate, or a
     // sorting pallet — resting on the floor OR straight off its wall rack).
     // Pallets go through their own pickUp() (world-space group-carry, not
     // PickupSystem's viewmodel clone) — see pallet-system.ts. pickUp() owns
     // playerData.state/heldObjectId itself and positions the pallet in
-    // front of the camera on this very first held frame.
+    // front of the camera on this very first held frame. The ladder follows
+    // the exact same pattern ("Add ladder tool station and envelope vacuum"
+    // round一) — checked first since it never carries anything of its own.
     if (this.currentTarget) {
       if (this.palletSystem.isPalletId(this.currentTarget.id)) {
         const fwd = new THREE.Vector3();
         this.camera.getWorldDirection(fwd);
         this.palletSystem.pickUp(this.currentTarget.id, this.camera.position, fwd);
+        this.clearHighlight(this.currentTarget);
+        this.currentTarget = null;
+        return;
+      }
+      if (this.ladderSystem.isLadderTarget(this.currentTarget.id)) {
+        const fwd = new THREE.Vector3();
+        this.camera.getWorldDirection(fwd);
+        this.ladderSystem.pickUp(this.camera.position, fwd);
         this.clearHighlight(this.currentTarget);
         this.currentTarget = null;
         return;
@@ -799,8 +867,10 @@ export class InteractionSystem {
       // exists to satisfy this raycast's generic filter, never meant to
       // actually be carried.
       if (
-        hit && !this.palletSystem.isPalletId(this.playerData.heldObjectId ?? '') &&
+        hit && !this.palletSystem.isPalletId(this.playerData.heldObjectId ?? '') && !this.ladderSystem.isCarrying &&
         !this.palletSystem.isPalletId(hit.id) && !this.palletSystem.isRackId(hit.id) && hit.id !== MAIL_RACK_INTERACTABLE_ID &&
+        !this.ladderSystem.isLadderTarget(hit.id) && !this.ladderSystem.isLadderRackTarget(hit.id) &&
+        !this.toolStationSystem.isToolStationTarget(hit.id) &&
         hit.id !== VEHICLE_CALL_BUTTON_ID && hit.id !== VEHICLE_DEPART_BUTTON_ID && !this.isLostFoundNpcTarget(hit) &&
         this.pickupSystem.canAddToHeld(hit)
       ) {
@@ -834,6 +904,20 @@ export class InteractionSystem {
           this.hud.setCrosshairActive(true);
         } else {
           this.hud.showInteractionPrompt('整理托盤', '此處無法放置');
+          this.hud.setCrosshairActive(false);
+        }
+      } else if (this.ladderSystem.isCarrying) {
+        // Same "one canonical judgment shared by prompt and action" pattern
+        // as the pallet block just above ("Add ladder tool station and
+        // envelope vacuum" round一/二).
+        if (hit && this.ladderSystem.isLadderRackTarget(hit.id) && this.ladderSystem.canReturnToRack()) {
+          this.hud.showInteractionPrompt('木梯', 'E 收回梯子');
+          this.hud.setCrosshairActive(true);
+        } else if (this.ladderSystem.previewValid) {
+          this.hud.showInteractionPrompt('木梯', 'E：放置梯子');
+          this.hud.setCrosshairActive(true);
+        } else {
+          this.hud.showInteractionPrompt('木梯', '此處無法放置');
           this.hud.setCrosshairActive(false);
         }
       } else if (this.playerData.heldObjectId && this.playerData.activeTool === 'empty' && hit && this.isLostFoundNpcTarget(hit)) {
@@ -897,6 +981,24 @@ export class InteractionSystem {
           // with E yet, just a neutral label so the crosshair highlight
           // isn't left captionless.
           this.hud.showInteractionPrompt(newTarget.displayName, '空掛架');
+        } else if (this.ladderSystem.isLadderTarget(newTarget.id)) {
+          // Covers both a floor-placed ladder AND one still folded on its
+          // wall rack ("Add ladder tool station and envelope vacuum" round
+          // 一/二) — canPickUp() itself owns the actual occupancy gate
+          // (spec: "梯子上有玩家或任何Cargo時不可拿起"), so this prompt stays
+          // a plain, always-shown hint.
+          this.hud.showInteractionPrompt(newTarget.displayName, this.ladderSystem.canPickUp() ? 'E 取下梯子' : '梯子上有東西，無法拿起');
+        } else if (this.ladderSystem.isLadderRackTarget(newTarget.id)) {
+          // Empty-handed here (carrying the ladder is handled entirely by
+          // the holding-item branch above) — same neutral "nothing to do
+          // yet" label as the pallet racks just above.
+          this.hud.showInteractionPrompt(newTarget.displayName, '空掛架');
+        } else if (this.toolStationSystem.isToolStationTarget(newTarget.id)) {
+          // Empty-handed-and-nothing-held-only ("Add ladder tool station
+          // and envelope vacuum" round二: 工具推車互動不需要特定工具/手持狀
+          // 態以外的額外判定) — mirrors the bulletin board/TV's own
+          // "E opens a UI" pattern.
+          this.hud.showInteractionPrompt(newTarget.displayName, this.pickupSystem.heldCount === 0 ? 'E 開啟工具配置' : '需空手才能使用');
         } else if (this.mailSystem.getEnvelope(newTarget.id)) {
           // Crosshair inspect (spec三) — reuses this SAME raycast/prompt
           // path, no second raycasting system.

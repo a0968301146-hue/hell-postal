@@ -238,6 +238,10 @@ export class GameApp {
         s.dollySystem.update(camera.position, cameraForward);
       }
       s.palletSystem.update(deltaTime, camera.position, cameraForward);
+      // "Add ladder tool station and envelope vacuum" round一 — same
+      // "no-op unless currently being carried" self-guard as
+      // palletSystem.update just above.
+      s.ladderSystem.update(camera.position, cameraForward);
       if (ENABLE_LEGACY_COUNTER) {
         s.counterNpcSystem.update(deltaTime);
         s.counterServiceSystem.update(deltaTime);
@@ -290,6 +294,11 @@ export class GameApp {
     // pauseManager.isPaused/isLocked internally rather than being gated by
     // the caller here).
     s.spraySystem.update();
+    // "Add ladder tool station and envelope vacuum" round四-八: same
+    // unconditional/self-guarding convention as cargoHookSystem/spraySystem
+    // above — runs even while paused so a pause reliably releases any
+    // currently-captured envelope the same frame it begins (spec八).
+    s.envelopeVacuumSystem.update();
     // "同類感知" upgrade ("Revise score upgrades and fix frog walkable
     // colliders" round spec二D: 觸發方式改為手持一件貨物時啟用，不再要求準
     // 心先對準貨物) — driven by the CURRENTLY HELD item instead of the

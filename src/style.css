@@ -1506,3 +1506,176 @@ body.text-size-large #interaction-prompt { font-size: 17px; }
   margin-left: auto;
 }
 
+/* Tool cart's own swap UI ("Add ladder tool station and envelope vacuum"
+ * round三) — same position:fixed/inset:0 full-screen overlay convention as
+ * #upgrade-menu-overlay/#media-player-overlay. */
+#tool-loadout-overlay {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 602;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+#tool-loadout-overlay.open {
+  opacity: 1;
+  pointer-events: all;
+}
+
+.tool-loadout-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 8, 6, 0.75);
+}
+
+.tool-loadout-panel {
+  position: relative;
+  width: min(760px, 92vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  background: #2e3134;
+  border: 3px solid #5a5248;
+  border-radius: 10px;
+  padding: 28px 32px;
+  font-family: sans-serif;
+  color: #e4e6ea;
+}
+
+#tool-loadout-close-btn {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid #7a7268;
+  background: #444a4f;
+  color: #e4e6ea;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+#tool-loadout-close-btn:hover {
+  background: #565e64;
+}
+
+.tool-loadout-title {
+  margin: 0 0 18px;
+  font-size: 24px;
+  color: #f0f2f4;
+}
+
+.tool-loadout-body {
+  display: flex;
+  gap: 24px;
+}
+
+.tool-loadout-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 220px;
+  flex-shrink: 0;
+}
+
+.tool-loadout-pool {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+
+.tool-loadout-slot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #5a5248;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+}
+
+.tool-loadout-slot:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.tool-loadout-slot.locked {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.tool-loadout-slot.armed {
+  border-color: #d8a340;
+  background: rgba(216, 163, 64, 0.18);
+}
+
+.tool-loadout-slot-key {
+  font-size: 12px;
+  color: #a8adb3;
+  width: 16px;
+  text-align: center;
+}
+
+.tool-loadout-slot-icon {
+  font-size: 22px;
+}
+
+.tool-loadout-slot-name {
+  font-size: 14px;
+  flex: 1;
+}
+
+.tool-loadout-slot-lock {
+  font-size: 13px;
+  opacity: 0.7;
+}
+
+.tool-loadout-pool-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #5a5248;
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.tool-loadout-pool-item.equipped {
+  background: rgba(80, 160, 100, 0.12);
+}
+
+.tool-loadout-pool-item.at-cart {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tool-loadout-pool-item:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.tool-loadout-pool-icon {
+  font-size: 22px;
+}
+
+.tool-loadout-pool-name {
+  font-size: 14px;
+  flex: 1;
+}
+
+.tool-loadout-pool-status {
+  font-size: 12px;
+  color: #a8adb3;
+}
+
+.tool-loadout-hint {
+  margin: 18px 0 0;
+  font-size: 12px;
+  color: #a8adb3;
+}
+
