@@ -10,17 +10,11 @@ import { PackedMailBagSystem } from './packed-mail-bag-system';
 import {
   DISPATCH_MACHINE_CENTER, DISPATCH_MACHINE_WIDTH, DISPATCH_MACHINE_DEPTH, DISPATCH_MACHINE_HEIGHT,
   DISPATCH_HOLES, DispatchHoleConfig, DISPATCH_DISPLAY_HEIGHT_ABOVE_HOLE, DISPATCH_DISPLAY_X,
+  DISPATCH_BACK_PANEL_THICKNESS, DISPATCH_RAMP,
   DISPATCH_BUTTON_POSITION, DISPATCH_BUTTON_INTERACT_DISTANCE, DISPATCH_BUTTON_DEBOUNCE_SECONDS,
 } from './envelope-dispatch-machine-data';
 
 const PACK_BUTTON_ID = 'envelope-dispatch-pack-button';
-
-/** Outward bounce velocity for a rejected envelope (spec七: "給予一個較小的
- * 向外速度，讓它彈回") — away from the machine's own interior (+X, back into
- * the room), a little lift, small lateral jitter so repeated wrong throws
- * don't all bounce to the exact same spot. */
-const BOUNCE_OUT_SPEED = 2.0;
-const BOUNCE_UP_SPEED = 1.2;
 
 /** How long a rejection toast ("寄送地區不符"/"請先完成郵票") stays the
  * active reason before the SAME envelope can trigger another one — prevents
@@ -36,29 +30,44 @@ function disposeMaterial(mat: THREE.Material | THREE.Material[]): void {
 
 /**
  * The four-region envelope dispatch machine ("Add regional envelope dispatch
- * machine" round五-八) — a coin-operated-arcade-silhouette cabinet (large
- * upright body, open front throwing chamber, backward-tilted throwing
- * platform, four holes recessed into the interior's lower-back area, a
- * left-side pack button) standing in the gap `west-shelf-1`'s removal freed
- * (see envelope-dispatch-machine-data.ts's own doc comment on the "北牆"
- * wording substitution). Fixed/static geometry only — never registered into
- * `interactables` itself (only its pack button is), so it can never be
- * raycast-targeted, picked up, or hook-affected at all, structurally
- * satisfying spec五's "不可搬運/投擲/被捕貨鉤勾取" without any exclusion code
- * anywhere else.
+ * machine" round五-八, reshaped by its own follow-up round into a genuine
+ * basketball-arcade/chute silhouette per the requester's own sketch) —
+ * standing in the gap `west-shelf-1`'s removal freed (see
+ * envelope-dispatch-machine-data.ts's own doc comment on the "北牆" wording
+ * substitution). Structure: a thick base plinth + open-front left/right side
+ * panels (buildCabinet), ONE upright back panel flush against the real wall
+ * carrying all four holes in a 2x2 grid (buildBackPanel), and a single
+ * continuous ramp rising from the open front entry up to the base of that
+ * panel (buildRamp) — no more four separate boxes protruding across the
+ * front. Fixed/static geometry only — never registered into `interactables`
+ * itself (only its pack button is), so it can never be raycast-targeted,
+ * picked up, or hook-affected at all, structurally satisfying spec's "不可
+ * 搬運/投擲/被捕貨鉤勾取" without any exclusion code anywhere else.
  *
- * Owns its own per-region envelope buffers (spec六/七) — filled by
- * continuously scanning every loose, MailSystem-eligible envelope
- * (mirrors envelope-vacuum-system.ts's own isEligibleEnvelope two-state
- * filter exactly) against each hole's static world-space sensor Box3.
- * Accepted envelopes are fully disposed here (mesh/geometry/material/body/
- * interactables entry) the instant they're buffered — spec七: "從場景/物理
- * 中暫時移除" — but their own EnvelopeRecord is deliberately left alone in
- * MailSystem's registry (still 'stamped', bagId still null) until the pack
- * button actually turns that buffer into a real PackedMailBag (only then
- * does setEnvelopeBagged fire) — so an unpacked buffered envelope still
- * correctly reads as "not yet shipped" to MailSystem.settleAtDeparture's
- * existing logic with zero changes needed there (spec十一).
+ * Owns its own per-region envelope buffers (spec) — filled by continuously
+ * scanning every loose, MailSystem-eligible envelope (mirrors
+ * envelope-vacuum-system.ts's own isEligibleEnvelope two-state filter
+ * exactly) against each hole's static world-space sensor Box3, itself
+ * straddling the back panel's own front face (so an envelope whose physical
+ * collider is stopped flush against the panel still has its CENTER register
+ * inside the sensor). Accepted envelopes are fully disposed here (mesh/
+ * geometry/material/body/interactables entry) the instant they're buffered
+ * — spec: "該信封從場景中移除" — but their own EnvelopeRecord is deliberately
+ * left alone in MailSystem's registry (still 'stamped', bagId still null)
+ * until the pack button actually turns that buffer into a real
+ * PackedMailBag (only then does setEnvelopeBagged fire) — so an unpacked
+ * buffered envelope still correctly reads as "not yet shipped" to
+ * MailSystem.settleAtDeparture's existing logic with zero changes needed
+ * there.
+ *
+ * REJECTED envelopes (wrong region, or not yet stamped) are never touched
+ * physically at all (spec: "不要吞掉...保持物理") — no scripted "bounce"
+ * impulse. The ramp collider itself (real slope, low friction — see
+ * buildRamp) does the entire "slides back to the player" job under ordinary
+ * gravity: anything that doesn't get consumed either lands on the ramp
+ * directly or rests briefly against the panel's own solid face above it and
+ * then falls onto the ramp, both cases sliding back down toward the open
+ * front on their own.
  */
 export class EnvelopeDispatchMachineSystem {
   private scene: THREE.Scene;
@@ -88,108 +97,104 @@ export class EnvelopeDispatchMachineSystem {
     for (const hole of DISPATCH_HOLES) this.buffers.set(hole.region, []);
 
     this.buildCabinet();
-    this.buildHoles();
+    this.buildBackPanel();
+    this.buildRamp();
     this.buildDisplays();
     this.buildButton();
   }
 
   // --- Construction ---
 
-  /** Cabinet shell — back/side/top panels as plain Fixed static colliders
-   * (spec五: "Fixed RigidBody與靜態Collider"), plus a mid-height backward-
-   * tilted throwing platform and a front marquee/header (spec五's own
-   * "投籃機"-silhouette reference: upright cabinet, side panels/net,
-   * tilted throwing platform, open front). No collider at all across the
-   * open front — the player must be able to walk right up to and reach into
-   * the throwing chamber. */
+  /** Base plinth + open-front left/right side panels only (spec: "底部要有
+   * 厚重的機台本體...左右兩側有側板...前方下半部是開放的投遞入口區"). No back
+   * panel, no front panel, no top-heavy protruding boxes — those are exactly
+   * what this rework removes. No collider across the open front — the
+   * player must be able to walk right up to and reach into the throwing
+   * area. */
   private buildCabinet(): void {
     const c = DISPATCH_MACHINE_CENTER;
     const halfW = DISPATCH_MACHINE_WIDTH / 2;
     const halfD = DISPATCH_MACHINE_DEPTH / 2;
-    const wallT = 0.06;
+    const wallT = 0.08;
+    const plinthHeight = 0.15;
 
     const cabinetMat = new THREE.MeshStandardMaterial({ color: 0x3d3630 });
-    const netMat = new THREE.MeshStandardMaterial({ color: 0x1f1c18, roughness: 0.95 });
-    const platformMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2a });
     const marqueeMat = new THREE.MeshStandardMaterial({ color: 0xb0392a, emissive: 0x441008 });
 
     const group = new THREE.Group();
     group.position.set(c.x, c.y, c.z);
     this.scene.add(group);
 
-    // Back panel (flush against the room's own west wall).
-    const back = new THREE.Mesh(new THREE.BoxGeometry(wallT, DISPATCH_MACHINE_HEIGHT, DISPATCH_MACHINE_WIDTH), cabinetMat);
-    back.position.set(-halfD + wallT / 2, 0, 0);
-    group.add(back);
-    this.physics.createStaticCuboid(c.x - halfD + wallT / 2, c.y, c.z, wallT / 2, DISPATCH_MACHINE_HEIGHT / 2, halfW);
+    // Thick base plinth — full footprint, floor level.
+    const plinthLocalY = -DISPATCH_MACHINE_HEIGHT / 2 + plinthHeight / 2;
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(DISPATCH_MACHINE_DEPTH, plinthHeight, DISPATCH_MACHINE_WIDTH), cabinetMat);
+    plinth.position.set(0, plinthLocalY, 0);
+    group.add(plinth);
+    this.physics.createStaticCuboid(c.x, c.y + plinthLocalY, c.z, halfD, plinthHeight / 2, halfW);
 
-    // Left/right side panels — "side panels/net" silhouette (spec五) — solid
-    // wood-toned frame with a darker inset "net" panel.
+    // Left/right side panels — full height, full depth (spec: "左右兩側有側
+    // 板"), leaving the front entirely open below.
     for (const sz of [-1, 1]) {
       const side = new THREE.Mesh(new THREE.BoxGeometry(DISPATCH_MACHINE_DEPTH, DISPATCH_MACHINE_HEIGHT, wallT), cabinetMat);
       side.position.set(0, 0, sz * (halfW - wallT / 2));
       group.add(side);
       this.physics.createStaticCuboid(c.x, c.y, c.z + sz * (halfW - wallT / 2), halfD, DISPATCH_MACHINE_HEIGHT / 2, wallT / 2);
-
-      const net = new THREE.Mesh(new THREE.BoxGeometry(DISPATCH_MACHINE_DEPTH * 0.7, DISPATCH_MACHINE_HEIGHT * 0.4, 0.02), netMat);
-      net.position.set(-DISPATCH_MACHINE_DEPTH * 0.1, DISPATCH_MACHINE_HEIGHT * 0.05, sz * (halfW - wallT - 0.015));
-      group.add(net);
     }
 
-    // Roof.
-    const roof = new THREE.Mesh(new THREE.BoxGeometry(DISPATCH_MACHINE_DEPTH, wallT, DISPATCH_MACHINE_WIDTH), cabinetMat);
-    roof.position.set(0, DISPATCH_MACHINE_HEIGHT / 2 - wallT / 2, 0);
-    group.add(roof);
-    this.physics.createStaticCuboid(c.x, c.y + DISPATCH_MACHINE_HEIGHT / 2 - wallT / 2, c.z, halfD / 2, wallT / 2, halfW);
-
-    // Front marquee header (spec五's own arcade-cabinet reference).
-    const marquee = new THREE.Mesh(new THREE.BoxGeometry(0.15, DISPATCH_MACHINE_HEIGHT * 0.16, DISPATCH_MACHINE_WIDTH * 0.9), marqueeMat);
-    marquee.position.set(halfD - 0.08, DISPATCH_MACHINE_HEIGHT / 2 - DISPATCH_MACHINE_HEIGHT * 0.09, 0);
+    // Front marquee header (basketball-arcade-machine silhouette cue).
+    const marquee = new THREE.Mesh(new THREE.BoxGeometry(0.15, DISPATCH_MACHINE_HEIGHT * 0.14, DISPATCH_MACHINE_WIDTH * 0.9), marqueeMat);
+    marquee.position.set(halfD - 0.08, DISPATCH_MACHINE_HEIGHT / 2 - DISPATCH_MACHINE_HEIGHT * 0.08, 0);
     group.add(marquee);
 
     const marqueeLabel = createFloatingLabel('地區信封出貨器', { width: 1.4, bg: 'rgba(60,10,10,0.8)', fontSize: 28 });
     marqueeLabel.position.set(0, DISPATCH_MACHINE_HEIGHT / 2 + 0.3, 0);
     group.add(marqueeLabel);
 
-    // Throwing platform — mid-height, tilted slightly backward (toward the
-    // holes, spec五: "中央有一個微微向後傾斜的投擲平台"), a real Fixed
-    // collider so a thrown envelope can bounce/roll off it realistically.
-    const platform = new THREE.Mesh(new THREE.BoxGeometry(DISPATCH_MACHINE_DEPTH * 0.55, 0.05, DISPATCH_MACHINE_WIDTH * 0.85), platformMat);
-    const platformLocalX = 0.1;
-    const platformLocalY = -DISPATCH_MACHINE_HEIGHT * 0.12;
-    const platformTilt = THREE.MathUtils.degToRad(-8); // back edge (-X) dips down
-    platform.position.set(platformLocalX, platformLocalY, 0);
-    platform.rotation.z = platformTilt;
-    group.add(platform);
-    const platformQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, platformTilt));
-    this.physics.createRemovableStaticCuboid(
-      c.x + platformLocalX, c.y + platformLocalY, c.z,
-      platformQuat.x, platformQuat.y, platformQuat.z, platformQuat.w,
-      DISPATCH_MACHINE_DEPTH * 0.275, 0.025, DISPATCH_MACHINE_WIDTH * 0.425
-    );
-
-    // Front-bottom output ledge — a low shelf completed mail bags rest on
-    // (spec五: "前方下方有一個輸出/收集槽").
-    const ledge = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.05, DISPATCH_MACHINE_WIDTH * 0.95), platformMat);
+    // Front-bottom output ledge — a low shelf completed mail bags rest on.
+    const ledge = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.05, DISPATCH_MACHINE_WIDTH * 0.95), cabinetMat);
     ledge.position.set(halfD - 0.1, -DISPATCH_MACHINE_HEIGHT / 2 + 0.025, 0);
     group.add(ledge);
   }
 
-  /** Four dark recessed openings on the interior's lower-back face, each
-   * with a light frame outline so they read as distinct holes (spec六: "四個
-   * 投入孔要清楚並排、可辨識") — plus each hole's own genuinely-static
-   * sensor Box3 (world-space, built once — the machine never moves). */
-  private buildHoles(): void {
+  /** The single upright back panel (spec: "出貨器最內側、靠牆的位置做一整面
+   * 直立背板") flush against the real wall, carrying all four holes in a 2x2
+   * grid (spec: "背板上要顯示四個寄送地區名稱...地區配置為2x2"). Holes are
+   * dark recessed openings cut visually into the panel's own front face
+   * (spec: "洞口不要做成前方四個箱體，要做在背板上") with a light frame
+   * outline each, plus each hole's own genuinely-static world-space sensor
+   * Box3 (the machine never moves, so these are built once). The panel's OWN
+   * collider is a single solid slab spanning its whole footprint — an
+   * envelope that misses a hole simply rests flush against this same panel
+   * (its physics collider stops it there) rather than tunneling through, and
+   * from there falls under gravity onto the ramp just below (see
+   * buildRamp). */
+  private buildBackPanel(): void {
+    const c = DISPATCH_MACHINE_CENTER;
+    const halfD = DISPATCH_MACHINE_DEPTH / 2;
+    const panelMat = new THREE.MeshStandardMaterial({ color: 0x4a3f34 });
     const holeMat = new THREE.MeshStandardMaterial({ color: 0x050505 });
     const frameMat = new THREE.MeshStandardMaterial({ color: 0xcfa050, metalness: 0.5, roughness: 0.4 });
 
+    const panelLocalX = -halfD + DISPATCH_BACK_PANEL_THICKNESS / 2;
+    const panel = new THREE.Mesh(
+      new THREE.BoxGeometry(DISPATCH_BACK_PANEL_THICKNESS, DISPATCH_MACHINE_HEIGHT, DISPATCH_MACHINE_WIDTH),
+      panelMat
+    );
+    panel.position.set(panelLocalX, 0, 0);
+    panel.position.add(c);
+    this.scene.add(panel);
+    this.physics.createStaticCuboid(
+      c.x + panelLocalX, c.y, c.z,
+      DISPATCH_BACK_PANEL_THICKNESS / 2, DISPATCH_MACHINE_HEIGHT / 2, DISPATCH_MACHINE_WIDTH / 2
+    );
+
     for (const hole of DISPATCH_HOLES) {
-      const opening = new THREE.Mesh(new THREE.BoxGeometry(hole.depth, hole.height, hole.width), holeMat);
-      opening.position.set(hole.centerX, hole.centerY, hole.centerZ);
+      const opening = new THREE.Mesh(new THREE.BoxGeometry(0.04, hole.height, hole.width), holeMat);
+      opening.position.set(hole.centerX - 0.15, hole.centerY, hole.centerZ);
       this.scene.add(opening);
 
-      const frame = new THREE.Mesh(new THREE.BoxGeometry(hole.depth * 0.3, hole.height + 0.05, hole.width + 0.05), frameMat);
-      frame.position.set(hole.centerX + hole.depth * 0.4, hole.centerY, hole.centerZ);
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(0.03, hole.height + 0.06, hole.width + 0.06), frameMat);
+      frame.position.set(hole.centerX - 0.13, hole.centerY, hole.centerZ);
       this.scene.add(frame);
 
       this.holeBoxes.set(hole.region, new THREE.Box3(
@@ -197,6 +202,41 @@ export class EnvelopeDispatchMachineSystem {
         new THREE.Vector3(hole.centerX + hole.depth / 2, hole.centerY + hole.height / 2, hole.centerZ + hole.width / 2)
       ));
     }
+  }
+
+  /** The ramp ("green zone" in the spec's own sketch) — one continuous
+   * tilted surface from the open front entry up to the base of the back
+   * panel's hole grid, built from the exact same two endpoints
+   * (DISPATCH_RAMP) for both the visual mesh and the physics collider via
+   * THREE.Quaternion.setFromUnitVectors (maps local +X, the box's own long
+   * axis, onto the bottom->top direction — avoids any sign-confusion an
+   * atan2-based Euler angle would risk here). Low collider friction (mirrors
+   * unloading-system.ts's own chute collider, which uses the same low-
+   * friction convention for a surface things are meant to slide down) is
+   * what actually makes "沒投中的信封沿斜坡滑回玩家" happen — with the
+   * ramp's own real slope, gravity's downhill component alone exceeds this
+   * friction, so a resting envelope keeps sliding by itself, no scripted
+   * "slide back" code needed at all. */
+  private buildRamp(): void {
+    const { bottom, top, crossWidth, thickness } = DISPATCH_RAMP;
+    const dir = new THREE.Vector3().subVectors(top, bottom);
+    const length = dir.length();
+    dir.normalize();
+    const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(1, 0, 0), dir);
+    const center = new THREE.Vector3().addVectors(bottom, top).multiplyScalar(0.5);
+
+    const rampMat = new THREE.MeshStandardMaterial({ color: 0x5f7a5a });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(length, thickness, crossWidth), rampMat);
+    mesh.position.copy(center);
+    mesh.quaternion.copy(quat);
+    this.scene.add(mesh);
+
+    const RAMP_FRICTION = 0.2;
+    this.physics.createStaticCuboidRotated(
+      center.x, center.y, center.z,
+      length / 2, thickness / 2, crossWidth / 2,
+      quat, RAMP_FRICTION
+    );
   }
 
   private displayText(region: MailDestination): string {
@@ -319,16 +359,20 @@ export class EnvelopeDispatchMachineSystem {
     }
   }
 
+  /** Rejected envelopes are deliberately left completely untouched
+   * physically (spec: "不要吞掉...保持物理，讓它沿綠色斜坡滑回前方") — no
+   * velocity/impulse is ever applied here; the ramp's own real slope and low
+   * collider friction (buildRamp) are what carry it back to the player under
+   * ordinary gravity, whether it's currently resting on the ramp directly or
+   * momentarily against the back panel's solid face just above it. */
   private processEnvelopeAtHole(
     id: string, obj: InteractableObject, state: string, destination: MailDestination, visualPresetId: string, hole: DispatchHoleConfig
   ): void {
     if (state === 'unstamped') {
-      this.bounce(obj);
       this.showRejectMessage(id, '請先完成郵票');
       return;
     }
     if (destination !== hole.region) {
-      this.bounce(obj);
       this.showRejectMessage(id, '寄送地區不符');
       return;
     }
@@ -341,17 +385,10 @@ export class EnvelopeDispatchMachineSystem {
     this.hud.showToast(text);
   }
 
-  private bounce(obj: InteractableObject): void {
-    if (!obj.rigidBody) return;
-    const lateral = (Math.random() - 0.5) * 0.8;
-    obj.rigidBody.setLinvel({ x: BOUNCE_OUT_SPEED, y: BOUNCE_UP_SPEED, z: lateral }, true);
-    obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
-  }
-
-  /** Correct-hole acceptance (spec七) — dedupe is structural: once disposed
-   * and removed from `interactables`, this same envelope id can never be
-   * found by updateHoleSensors' own live scan again, so there's no separate
-   * "already consumed" set to maintain. */
+  /** Correct-hole acceptance (spec: "該信封從場景中移除...顯示對應提示") —
+   * dedupe is structural: once disposed and removed from `interactables`,
+   * this same envelope id can never be found by updateHoleSensors' own live
+   * scan again, so there's no separate "already consumed" set to maintain. */
   private consumeEnvelope(id: string, obj: InteractableObject, destination: MailDestination, visualPresetId: string, hole: DispatchHoleConfig): void {
     this.scene.remove(obj.mesh);
     obj.mesh.geometry.dispose();
@@ -362,6 +399,7 @@ export class EnvelopeDispatchMachineSystem {
 
     this.buffers.get(hole.region)!.push({ envelopeId: id, destination, visualPresetId });
     this.refreshDisplay(hole.region);
+    this.hud.showToast(`${hole.displayName}信封已投入`);
   }
 
   /** Wired into DailyFlowSystem's resetTools callback, alongside
