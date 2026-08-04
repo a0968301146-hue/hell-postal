@@ -10,7 +10,7 @@ import { PackedMailBagSystem } from './packed-mail-bag-system';
 import {
   DISPATCH_MACHINE_CENTER, DISPATCH_MACHINE_WIDTH, DISPATCH_MACHINE_DEPTH, DISPATCH_MACHINE_HEIGHT,
   DISPATCH_HOLES, DispatchHoleConfig, DISPATCH_DISPLAY_HEIGHT_ABOVE_HOLE, DISPATCH_DISPLAY_X,
-  DISPATCH_BACK_PANEL_THICKNESS, DISPATCH_RAMP,
+  DISPATCH_BACK_PANEL_THICKNESS, DISPATCH_BACK_PANEL_BOUNDS, DISPATCH_RAMP,
   DISPATCH_BUTTON_POSITION, DISPATCH_BUTTON_INTERACT_DISTANCE, DISPATCH_BUTTON_DEBOUNCE_SECONDS,
 } from './envelope-dispatch-machine-data';
 
@@ -82,6 +82,9 @@ export class EnvelopeDispatchMachineSystem {
   private buffers: Map<MailDestination, PackedEnvelopeSnapshot[]> = new Map();
   private rejectMessageCooldowns: Map<string, number> = new Map();
   private packButtonCooldown = 0;
+  /** Generous world-space bounding volume around the ramp surface — see
+   * keepRampEnvelopesAwake's own doc comment for why this exists. */
+  private rampBox!: THREE.Box3;
 
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>,
@@ -158,44 +161,99 @@ export class EnvelopeDispatchMachineSystem {
 
   /** The single upright back panel (spec: "出貨器最內側、靠牆的位置做一整面
    * 直立背板") flush against the real wall, carrying all four holes in a 2x2
-   * grid (spec: "背板上要顯示四個寄送地區名稱...地區配置為2x2"). Holes are
-   * dark recessed openings cut visually into the panel's own front face
-   * (spec: "洞口不要做成前方四個箱體，要做在背板上") with a light frame
-   * outline each, plus each hole's own genuinely-static world-space sensor
-   * Box3 (the machine never moves, so these are built once). The panel's OWN
-   * collider is a single solid slab spanning its whole footprint — an
-   * envelope that misses a hole simply rests flush against this same panel
-   * (its physics collider stops it there) rather than tunneling through, and
-   * from there falls under gravity onto the ramp just below (see
-   * buildRamp). */
+   * grid (spec: "背板上要顯示四個寄送地區名稱...地區配置為2x2").
+   *
+   * Genuinely-recessed holes (spec二: "不可只是貼在背板上的黑色平面...必須有
+   * 明顯深度"): the panel's own SOLID material is sliced into six frame
+   * segments (top / bottom / middle / outer-south / outer-north / center —
+   * spec二: "上方橫條/中間橫條/左右直條/中央直條") via buildFrameSegments,
+   * leaving the four hole rectangles as genuine GAPS with no panel material
+   * at all — never one solid slab that would seal them shut (spec二: "背板
+   * Collider沒有封住洞口"). Each gap gets its own dark recessed cavity mesh
+   * (real depth, a dark end-cap behind it) purely for the "envelope visibly
+   * enters the machine" read — visual only, no collider, so it can never
+   * block anything (spec二: "不可使用會把洞口整面封住的實體Collider"). Each
+   * hole's own sensor Box3 sits INSIDE that visible cavity (DISPATCH_HOLES'
+   * own centerX, see envelope-dispatch-machine-data.ts), so an envelope must
+   * genuinely fly/be placed INTO the recess — not merely touch the panel's
+   * outer face — to register (spec二: "不可讓信封只碰背板表面就被收走"). */
   private buildBackPanel(): void {
     const c = DISPATCH_MACHINE_CENTER;
-    const halfD = DISPATCH_MACHINE_DEPTH / 2;
+    const b = DISPATCH_BACK_PANEL_BOUNDS;
     const panelMat = new THREE.MeshStandardMaterial({ color: 0x4a3f34 });
-    const holeMat = new THREE.MeshStandardMaterial({ color: 0x050505 });
+    const cavityMat = new THREE.MeshStandardMaterial({ color: 0x050505 });
     const frameMat = new THREE.MeshStandardMaterial({ color: 0xcfa050, metalness: 0.5, roughness: 0.4 });
 
-    const panelLocalX = -halfD + DISPATCH_BACK_PANEL_THICKNESS / 2;
-    const panel = new THREE.Mesh(
-      new THREE.BoxGeometry(DISPATCH_BACK_PANEL_THICKNESS, DISPATCH_MACHINE_HEIGHT, DISPATCH_MACHINE_WIDTH),
-      panelMat
-    );
-    panel.position.set(panelLocalX, 0, 0);
-    panel.position.add(c);
-    this.scene.add(panel);
-    this.physics.createStaticCuboid(
-      c.x + panelLocalX, c.y, c.z,
-      DISPATCH_BACK_PANEL_THICKNESS / 2, DISPATCH_MACHINE_HEIGHT / 2, DISPATCH_MACHINE_WIDTH / 2
-    );
+    const panelWorldX = c.x - DISPATCH_MACHINE_DEPTH / 2 + DISPATCH_BACK_PANEL_THICKNESS / 2;
+    const panelTopY = c.y + b.halfHeight;
+    const panelBottomY = c.y - b.halfHeight;
+    const panelSouthZ = c.z + b.halfWidth; // player-left outer edge
+    const panelNorthZ = c.z - b.halfWidth; // player-right outer edge
+
+    /** Adds one solid frame segment (mesh + real Fixed collider) spanning
+     * the given world Y/Z bounds — every one of the six pieces below is
+     * just a call to this with different bounds, so mesh and collider can
+     * never drift apart from each other. */
+    const addSegment = (yMin: number, yMax: number, zMin: number, zMax: number) => {
+      const centerY = (yMin + yMax) / 2;
+      const centerZ = (zMin + zMax) / 2;
+      const halfH = (yMax - yMin) / 2;
+      const halfWZ = (zMax - zMin) / 2;
+      if (halfH <= 0 || halfWZ <= 0) return;
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(DISPATCH_BACK_PANEL_THICKNESS, halfH * 2, halfWZ * 2), panelMat);
+      mesh.position.set(panelWorldX, centerY, centerZ);
+      this.scene.add(mesh);
+      this.physics.createStaticCuboid(panelWorldX, centerY, centerZ, DISPATCH_BACK_PANEL_THICKNESS / 2, halfH, halfWZ);
+    };
+
+    // Top / bottom / middle — each spans the FULL along-wall width (no
+    // holes exist at these Y-ranges at all, so no column split is needed).
+    addSegment(b.topRowTopY, panelTopY, panelNorthZ, panelSouthZ);
+    addSegment(panelBottomY, b.bottomRowBottomY, panelNorthZ, panelSouthZ);
+    addSegment(b.bottomRowTopY, b.topRowBottomY, panelNorthZ, panelSouthZ);
+
+    // Outer-south / outer-north / center — each spans the FULL grid height
+    // (both rows plus the row gap the middle bar already covers above), so
+    // together with the three bars above they seal everything except the
+    // four hole rectangles.
+    addSegment(b.bottomRowBottomY, b.topRowTopY, panelNorthZ, b.rightColOuterZ);
+    addSegment(b.bottomRowBottomY, b.topRowTopY, b.leftColOuterZ, panelSouthZ);
+    addSegment(b.bottomRowBottomY, b.topRowTopY, b.rightColInnerZ, b.leftColInnerZ);
 
     for (const hole of DISPATCH_HOLES) {
-      const opening = new THREE.Mesh(new THREE.BoxGeometry(0.04, hole.height, hole.width), holeMat);
-      opening.position.set(hole.centerX - 0.15, hole.centerY, hole.centerZ);
-      this.scene.add(opening);
+      // Recessed cavity — real depth (HOLE_DEPTH), dark, sitting exactly in
+      // the gap the frame segments above leave empty.
+      const cavity = new THREE.Mesh(new THREE.BoxGeometry(hole.depth, hole.height * 0.94, hole.width * 0.94), cavityMat);
+      cavity.position.set(hole.centerX, hole.centerY, hole.centerZ);
+      this.scene.add(cavity);
 
-      const frame = new THREE.Mesh(new THREE.BoxGeometry(0.03, hole.height + 0.06, hole.width + 0.06), frameMat);
-      frame.position.set(hole.centerX - 0.13, hole.centerY, hole.centerZ);
-      this.scene.add(frame);
+      // Dark end-cap at the back of the cavity — visual terminus only (no
+      // collider), so a genuinely-consumed envelope's own instant removal
+      // always happens well before anything could reach this far in.
+      const endCapX = hole.centerX - hole.depth / 2;
+      const endCap = new THREE.Mesh(new THREE.BoxGeometry(0.02, hole.height * 0.9, hole.width * 0.9), cavityMat);
+      endCap.position.set(endCapX, hole.centerY, hole.centerZ);
+      this.scene.add(endCap);
+
+      // Light metal frame trim right at the panel's own front opening edge
+      // — a genuine thin BORDER (4 separate strips), not a solid plate:
+      // a full-coverage panel here would hide the dark recessed cavity
+      // behind it entirely, defeating the whole "real depth, not a flat
+      // decal" point of this rework.
+      const frameFrontX = panelWorldX + DISPATCH_BACK_PANEL_THICKNESS / 2 + 0.015;
+      const stripT = 0.03;
+      const top = new THREE.Mesh(new THREE.BoxGeometry(stripT, stripT * 2, hole.width + 0.06), frameMat);
+      top.position.set(frameFrontX, hole.centerY + hole.height / 2 + stripT, hole.centerZ);
+      this.scene.add(top);
+      const bottom = new THREE.Mesh(new THREE.BoxGeometry(stripT, stripT * 2, hole.width + 0.06), frameMat);
+      bottom.position.set(frameFrontX, hole.centerY - hole.height / 2 - stripT, hole.centerZ);
+      this.scene.add(bottom);
+      const left = new THREE.Mesh(new THREE.BoxGeometry(stripT, hole.height + 0.06, stripT * 2), frameMat);
+      left.position.set(frameFrontX, hole.centerY, hole.centerZ + hole.width / 2 + stripT);
+      this.scene.add(left);
+      const right = new THREE.Mesh(new THREE.BoxGeometry(stripT, hole.height + 0.06, stripT * 2), frameMat);
+      right.position.set(frameFrontX, hole.centerY, hole.centerZ - hole.width / 2 - stripT);
+      this.scene.add(right);
 
       this.holeBoxes.set(hole.region, new THREE.Box3(
         new THREE.Vector3(hole.centerX - hole.depth / 2, hole.centerY - hole.height / 2, hole.centerZ - hole.width / 2),
@@ -210,13 +268,28 @@ export class EnvelopeDispatchMachineSystem {
    * (DISPATCH_RAMP) for both the visual mesh and the physics collider via
    * THREE.Quaternion.setFromUnitVectors (maps local +X, the box's own long
    * axis, onto the bottom->top direction — avoids any sign-confusion an
-   * atan2-based Euler angle would risk here). Low collider friction (mirrors
-   * unloading-system.ts's own chute collider, which uses the same low-
-   * friction convention for a surface things are meant to slide down) is
-   * what actually makes "沒投中的信封沿斜坡滑回玩家" happen — with the
-   * ramp's own real slope, gravity's downhill component alone exceeds this
-   * friction, so a resting envelope keeps sliding by itself, no scripted
-   * "slide back" code needed at all. */
+   * atan2-based Euler angle would risk here).
+   *
+   * This round's much deeper machine (longer throw distance, per the
+   * requester's own explicit ask) makes for a noticeably shallower ramp
+   * than the previous round's own — only ~14.4° here, down from ~30°. Low
+   * collider friction alone (mirrors unloading-system.ts's own chute
+   * collider) is NOT enough at this shallower angle: verified directly (real
+   * physics test) that a resting envelope's own linearDamping (mail-
+   * system.ts's own spawnEnvelope -> PhysicsSystem.createBoxBody, shared
+   * cargo-physics infrastructure this round is explicitly not allowed to
+   * touch) kills its velocity fast enough, combined with Rapier's own
+   * automatic sleep threshold, that it falls asleep almost the instant it
+   * settles — well before the slope's own weak gravity component (a shallow
+   * ramp's downhill acceleration is small) can build up enough speed to
+   * escape that threshold, leaving it motionless indefinitely regardless of
+   * how low friction goes. keepRampEnvelopesAwake (called every frame from
+   * update()) is the fix — it isn't a scripted "slide back" impulse (still
+   * none exists anywhere in this file), it just repeatedly wakes any
+   * envelope resting in the ramp's own bounding volume so Rapier keeps
+   * actually integrating gravity against it every step instead of freezing
+   * it prematurely; the real slope + low friction are what still do 100% of
+   * the actual sliding work once awake. */
   private buildRamp(): void {
     const { bottom, top, crossWidth, thickness } = DISPATCH_RAMP;
     const dir = new THREE.Vector3().subVectors(top, bottom);
@@ -231,11 +304,27 @@ export class EnvelopeDispatchMachineSystem {
     mesh.quaternion.copy(quat);
     this.scene.add(mesh);
 
-    const RAMP_FRICTION = 0.2;
+    // useMinFrictionCombine=true — without it, Rapier's default Average
+    // combine rule blends this low value with whatever the resting
+    // envelope's own collider declares (0.6, PhysicsSystem.createBoxBody),
+    // landing well above what a shallow ~14° slope needs to actually slide
+    // (verified directly — see PhysicsSystem.createStaticCuboidRotated's
+    // own doc comment).
+    const RAMP_FRICTION = 0.04;
     this.physics.createStaticCuboidRotated(
       center.x, center.y, center.z,
       length / 2, thickness / 2, crossWidth / 2,
-      quat, RAMP_FRICTION
+      quat, RAMP_FRICTION, true
+    );
+
+    // Generous world-space AABB around the tilted ramp (a plain axis-
+    // aligned box comfortably containing it regardless of its own tilt —
+    // padded well past the ramp's own thin thickness so an envelope resting
+    // ON its surface, not just exactly at its centerline, still counts).
+    const pad = 0.5;
+    this.rampBox = new THREE.Box3(
+      new THREE.Vector3(Math.min(bottom.x, top.x) - pad, Math.min(bottom.y, top.y) - pad, DISPATCH_MACHINE_CENTER.z - crossWidth / 2),
+      new THREE.Vector3(Math.max(bottom.x, top.x) + pad, Math.max(bottom.y, top.y) + pad, DISPATCH_MACHINE_CENTER.z + crossWidth / 2)
     );
   }
 
@@ -329,7 +418,24 @@ export class EnvelopeDispatchMachineSystem {
       const next = remaining - deltaTime;
       if (next <= 0) this.rejectMessageCooldowns.delete(id); else this.rejectMessageCooldowns.set(id, next);
     }
+    this.keepRampEnvelopesAwake();
     this.updateHoleSensors();
+  }
+
+  /** See buildRamp's own doc comment for why this exists — a shallow ramp's
+   * own weak gravity component isn't enough to keep a resting envelope's
+   * body from falling asleep before it can build real sliding speed, so
+   * anything currently resting in the ramp's own bounding volume gets
+   * explicitly kept awake every frame. Pure physics-state bookkeeping, no
+   * position/velocity is ever set here — the real slope + low ramp friction
+   * (buildRamp) still do all of the actual sliding. */
+  private keepRampEnvelopesAwake(): void {
+    for (const [id, obj] of this.interactables) {
+      if (!this.isEligibleEnvelope(id, obj)) continue;
+      if (!obj.rigidBody || !obj.rigidBody.isSleeping()) continue;
+      if (!this.rampBox.containsPoint(obj.mesh.position)) continue;
+      obj.rigidBody.wakeUp();
+    }
   }
 
   /** Same combined eligibility filter envelope-vacuum-system.ts's own

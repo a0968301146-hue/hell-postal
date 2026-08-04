@@ -127,8 +127,26 @@ export class PhysicsSystem implements PhysicsWorldPort {
 
   /** Static cuboid tilted by an arbitrary quaternion — same purpose as
    * createStaticCuboidRotatedX but not limited to the X axis (used by the
-   * unload chute, which tilts about Z since it runs along world X). */
-  createStaticCuboidRotated(x: number, y: number, z: number, hx: number, hy: number, hz: number, rotation: THREE.Quaternion, friction = 0.7): void {
+   * unload chute, which tilts about Z since it runs along world X).
+   *
+   * `useMinFrictionCombine` (opt-in, defaults false so every existing caller
+   * keeps Rapier's own default Average combine rule unchanged): a contact's
+   * EFFECTIVE friction is combined from both colliders' own coefficients
+   * (Rapier's default rule averages them), so a shallow slide surface's own
+   * low `friction` here can still end up much higher in practice once
+   * averaged against whatever the resting dynamic body's own collider
+   * already declares (e.g. a spawned envelope's own 0.6, set in
+   * createBoxBody above — verified directly: a friction=0.04 ramp here still
+   * produced an effective ~0.32, comfortably above a shallow slope's own
+   * ~0.26 gravity-component threshold, so nothing actually slid). Passing
+   * true switches this ONE collider's own combine rule to Min, so the
+   * lower of the two coefficients wins instead — lets a deliberately slick
+   * surface (a slide/chute/ramp) stay genuinely slick regardless of what
+   * friction value whatever rests on it happens to declare. */
+  createStaticCuboidRotated(
+    x: number, y: number, z: number, hx: number, hy: number, hz: number, rotation: THREE.Quaternion, friction = 0.7,
+    useMinFrictionCombine = false
+  ): void {
     const bodyDesc = RAPIER.RigidBodyDesc.fixed()
       .setTranslation(x, y, z)
       .setRotation({ x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w });
@@ -137,6 +155,7 @@ export class PhysicsSystem implements PhysicsWorldPort {
       .setCollisionGroups((GROUP_STATIC << 16) | (GROUP_PLAYER | GROUP_BOX))
       .setFriction(friction)
       .setRestitution(0.05);
+    if (useMinFrictionCombine) colliderDesc.setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min);
     this.world.createCollider(colliderDesc, body);
   }
 
