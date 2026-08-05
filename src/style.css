@@ -1096,6 +1096,30 @@ body.text-size-large #interaction-prompt { font-size: 17px; }
   display: block;
 }
 
+/* Envelope stack status ("Add envelope stacks and expand pallet inventory"
+ * round spec二) — same top-right panel convention as #held-count-panel,
+ * stacked just below it. */
+#envelope-stack-panel {
+  position: fixed;
+  top: 138px;
+  right: 16px;
+  z-index: 101;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-family: sans-serif;
+  font-size: 13px;
+  color: #eef0e6;
+  text-align: center;
+  user-select: none;
+  display: none;
+}
+
+#envelope-stack-panel.visible {
+  display: block;
+}
+
 /* Bulletin board upgrade UI ("Add bulletin board upgrade system" round
  * spec三) — full-screen overlay covering the whole HUD, same
  * position:fixed/inset:0 convention as #manual-overlay, deliberately NOT

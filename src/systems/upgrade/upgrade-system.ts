@@ -3,8 +3,36 @@ import { DepartureSettlement } from '../scoring';
 import { PickupSystem } from '../interaction/pickup-system';
 import { PlayerController } from '../player';
 import { UpgradeId, UpgradeSaveState, UpgradeDefinition } from './upgrade-types';
-import { UPGRADE_DEFINITIONS, getUpgradeDefinition, UPGRADE_POINT_REWARD_PER_SHIPPED_ITEM } from './upgrade-data';
+import { UPGRADE_DEFINITIONS, getUpgradeDefinition, UPGRADE_POINT_REWARD_PER_SHIPPED_ITEM, ENVELOPE_CARRY_CAPACITY_BY_LEVEL } from './upgrade-data';
 import { PalletSize, PALLET_SIZE_ORDER } from '../pallet/pallet-data';
+
+/** Narrow push-target for `envelopeCarryLevel` — the real class is
+ * EnvelopeStackSystem (src/systems/mail/envelope-stack-system.ts), matched
+ * structurally rather than imported by name so this file's own import graph
+ * never has to reach into systems/mail at all. */
+export interface EnvelopeCarryCapacityTarget {
+  setMaxCapacity(n: number): void;
+}
+
+/** Narrow push-target for `palletInventoryLevel` — the real class is
+ * PalletSystem, which already holds a live UpgradeSystem reference of its
+ * own (constructor-injected, spec: "使用現有PalletSystem多實例架構"). Since
+ * pallet-system.ts imports UpgradeSystem, UpgradeSystem importing
+ * PalletSystem back would be circular — wired late via setPalletSystem()
+ * instead (mirrors pickupSystem.setMailBoxHooks/setPalletThrowHooks' own
+ * "avoid a constructor-time circular dependency" convention in
+ * create-game-systems.ts), matched structurally the same way as
+ * EnvelopeCarryCapacityTarget above. */
+export interface PalletInventoryExpansionTarget {
+  unlockSecondSet(): void;
+  /** Reverses unlockSecondSet() — tears down/clears the second pallet set
+   * entirely (spec十二/十三: new-playthrough reset must clear the second
+   * set's Cargo/rope/rack-occupancy without touching the first). Called
+   * whenever applyEffect resolves palletInventoryLevel back down to 0 (only
+   * ever happens via resetUpgradesForNewRun — purchases only ever move a
+   * level UP). Must be a safe no-op if the second set was never built. */
+  lockSecondSet(): void;
+}
 
 /** "Rebuild pallet storage and reset upgrade progression" round八: bumped
  * from v1 — a genuine schema/rebalance reset (spec: "本次為技能重製版本...
@@ -38,7 +66,10 @@ const TEMPORARY_TEST_GRANT_VERSION = 1;
 function createDefaultUpgradeSaveState(): UpgradeSaveState {
   return {
     availableSettlementScore: TEMPORARY_TEST_STARTING_SCORE, // TEMPORARY TEST GRANT — remove before public demo
-    levels: { multiCarry: 0, heavyHandling: 0, moveSpeed: 0, similarCargoSense: 0, ropeStrap: 0, powerGlovesUpgrade: 0 },
+    levels: {
+      multiCarry: 0, heavyHandling: 0, moveSpeed: 0, similarCargoSense: 0, ropeStrap: 0, powerGlovesUpgrade: 0,
+      envelopeCarryLevel: 0, palletInventoryLevel: 0,
+    },
     settledDayId: null,
     testGrantVersion: TEMPORARY_TEST_GRANT_VERSION, // TEMPORARY TEST GRANT — remove before public demo
   };
@@ -114,17 +145,30 @@ export class UpgradeSystem {
   private state: UpgradeSaveState;
   private pickupSystem: PickupSystem;
   private playerController: PlayerController;
+  private envelopeCarrySystem: EnvelopeCarryCapacityTarget;
+  /** See PalletInventoryExpansionTarget's own doc comment above — null until
+   * create-game-systems.ts wires it via setPalletSystem() once PalletSystem
+   * exists (constructed after this class, to avoid a circular import). */
+  private palletSystem: PalletInventoryExpansionTarget | null = null;
   /** This day's accumulated (shipped*reward - penalties) tally across
    * however many departures settle before the day actually ends — consumed
    * exactly once by settleDay() and reset to 0 immediately after (spec四). */
   private pendingDayScore = 0;
 
-  constructor(pickupSystem: PickupSystem, playerController: PlayerController) {
+  constructor(pickupSystem: PickupSystem, playerController: PlayerController, envelopeCarrySystem: EnvelopeCarryCapacityTarget) {
     this.pickupSystem = pickupSystem;
     this.playerController = playerController;
+    this.envelopeCarrySystem = envelopeCarrySystem;
     const rawSaved = this.storage.getJSON<UpgradeSaveState>(UPGRADE_STORAGE_KEY);
     this.state = mergeUpgradeSaveState(rawSaved);
     this.applyAllEffects();
+  }
+
+  /** See PalletInventoryExpansionTarget's own doc comment above — called
+   * once from create-game-systems.ts right after PalletSystem is
+   * constructed. */
+  setPalletSystem(palletSystem: PalletInventoryExpansionTarget): void {
+    this.palletSystem = palletSystem;
   }
 
   /** The ONLY entry point for wiping this playthrough's upgrade progress
@@ -282,6 +326,20 @@ export class UpgradeSystem {
       case 'powerGlovesUpgrade':
         // No setter to call — read directly via getMaxCarryablePalletSize()/
         // canCarryPalletSize() by pallet-system.ts's own take-from-rack gate.
+        break;
+      case 'envelopeCarryLevel':
+        this.envelopeCarrySystem.setMaxCapacity(ENVELOPE_CARRY_CAPACITY_BY_LEVEL[level]);
+        break;
+      case 'palletInventoryLevel':
+        // Push, but only once unlocked — PalletSystem's OWN constructor
+        // independently checks getLevel('palletInventoryLevel') to decide
+        // whether to build the second set immediately on a fresh page load
+        // (this.palletSystem is still null at that point, since PalletSystem
+        // is constructed AFTER this class — see setPalletSystem's own doc
+        // comment); this push only matters for the "purchased mid-session"
+        // case, once setPalletSystem() has wired a live reference.
+        if (level >= 1) this.palletSystem?.unlockSecondSet();
+        else this.palletSystem?.lockSecondSet();
         break;
     }
   }

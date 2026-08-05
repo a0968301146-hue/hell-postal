@@ -7,57 +7,58 @@ import { BACK_AREA, WALL_THICKNESS } from '../world-layout';
 import { PALLET_WALL_SLOTS } from '../pallet/pallet-data';
 
 /** "Add ladder tool station and envelope vacuum" round一, reshaped into a
- * genuine A-frame by "Add regional envelope dispatch machine" round二 —
- * a single foldable ladder, NOT disguised as Cargo. Placement/dimension
- * constants live here, mirroring pallet-data.ts's own convention: nothing
- * hardcoded in ladder-system.ts, every wall coordinate DERIVED from
- * BACK_AREA/the pallet rack cluster it must clear rather than a bare
- * literal.
+ * genuine A-frame by "Add regional envelope dispatch machine" round二, then
+ * shrunk 25% and made double-sided (climbable from either the front OR the
+ * back) by a later round — a single foldable ladder, NOT disguised as
+ * Cargo. Placement/dimension constants live here, mirroring pallet-data.ts's
+ * own convention: nothing hardcoded in ladder-system.ts, every wall
+ * coordinate DERIVED from BACK_AREA/the pallet rack cluster it must clear
+ * rather than a bare literal.
  *
- * FOLDED (stored on the wall) — spec: "折疊掛牆", flat slab profile: height
- *   1.8m / width 0.9m / thickness ~0.20-0.24m (a genuine A-frame's folded
- *   front+back legs sit slightly thicker than the old single-face design).
- * UNFOLDED — a real A-frame: front (climbing) legs + rear (support) legs
- *   hinged together at the top apex, spreader bars holding the splay open,
- *   NOT a single ramp/staircase leaning against anything. Standing height
- *   1.8m / width 0.9m / front-to-back footprint ~1.25-1.40m / front 8 steps
- *   @ 0.225m each (8*0.225=1.8m, matching the apex height exactly) / top
- *   platform depth ~0.40-0.45m. The footprint splits into frontRun (front
- *   legs' own horizontal projection, base to apex) + backRun (rear legs'
- *   own horizontal projection, apex to their own foot) — the front steps'
- *   own local frame (climb along +Z from the front foot at the origin) is
- *   UNCHANGED from the previous single-ramp design, just re-scaled to the
- *   new frontRun, so the walkable-step-collider logic in ladder-system.ts
- *   barely changes; only the rear legs (blocking, not climbable — spec:
- *   "不能從後側像走樓梯一樣直接走上去") are genuinely new geometry. */
+ * FOLDED (stored on the wall) — flat slab profile: height 1.35m (spec九:
+ *   "1.8m -> 1.35m，降低25%") / width 0.9m (unchanged) / thickness ~0.22m
+ *   (unchanged).
+ * UNFOLDED — a real A-frame: front (climbing) legs + rear (equally
+ *   climbable, spec十) legs hinged together at the top apex, spreader bars
+ *   holding the splay open. Standing height 1.35m / width 0.9m / front-to-
+ *   back footprint ~0.975m / front AND back both get 8 steps @ 0.16875m
+ *   each (8*0.16875=1.35m, matching the apex height exactly) / top platform
+ *   depth ~0.315m. The footprint splits into frontRun (front legs' own
+ *   horizontal projection, base to apex) + backRun (rear legs' own
+ *   horizontal projection, apex to their own foot) — both sides now carry
+ *   real step tread meshes AND their own independent Fixed step colliders
+ *   (spec十: "前後兩側各有8個可見踏板...共17個主要可踩踏Collider" — 8 front +
+ *   8 back + 1 platform), no more a single blocking-only rear panel. */
 export const LADDER_ID = 'ladder-01';
 export const LADDER_RACK_ID = 'ladder-rack-01';
 export const LADDER_DISPLAY_NAME = 'A字梯';
 
+/** 1.8m * 0.75 = 1.35m (spec九). */
+const LADDER_STAND_HEIGHT = 1.35;
+
 export const LADDER_FOLDED = {
-  height: 1.8,
+  height: LADDER_STAND_HEIGHT,
   width: 0.9,
   thickness: 0.22,
 };
 
 export const LADDER_STEP_COUNT = 8;
-export const LADDER_STEP_HEIGHT = 0.225; // 8 * 0.225 = 1.8m total rise, matches the apex height
+export const LADDER_STEP_HEIGHT = LADDER_STAND_HEIGHT / LADDER_STEP_COUNT; // 1.35/8 = 0.16875m per step
 export const LADDER_UNFOLDED = {
   width: 0.9,
-  standHeight: LADDER_STEP_COUNT * LADDER_STEP_HEIGHT, // 1.8m, the apex/hinge height
-  /** Front legs' own horizontal projection, base foot to apex — replaces
-   * the old single-ramp design's LADDER_RAMP_RUN, same role (the front
-   * steps' own local Z frame is built from this exactly as before). */
-  frontRun: 0.70,
+  standHeight: LADDER_STEP_COUNT * LADDER_STEP_HEIGHT, // 1.35m, the apex/hinge height
+  /** Front legs' own horizontal projection, base foot to apex — 0.70*0.75
+   * (spec九's own 25% shrink applied uniformly to every footprint number). */
+  frontRun: 0.525,
   /** Rear (support) legs' own horizontal projection, apex to their own
-   * foot — genuinely NEW this round (the old design had no rear leg at
-   * all). Steeper than the front run by design (a real A-frame's rear
-   * brace is usually shorter/steeper than its climbing side). */
-  backRun: 0.60,
-  platformDepth: 0.42,
+   * foot — 0.60*0.75. Still steeper than the front run by design, but now
+   * carries its own real step treads too (spec十), not just a blocking
+   * panel. */
+  backRun: 0.45,
+  platformDepth: 0.315,
 };
-/** Total front-foot-to-back-foot footprint depth (spec二: "前後腳底總深度：
- * 約1.25～1.40m") — frontRun + backRun = 0.70 + 0.60 = 1.30m, within range. */
+/** Total front-foot-to-back-foot footprint depth — frontRun + backRun =
+ * 0.525 + 0.45 = 0.975m (spec九: "約0.975m"). */
 export const LADDER_TOTAL_DEPTH = LADDER_UNFOLDED.frontRun + LADDER_UNFOLDED.backRun;
 
 export const LADDER_FRONT_LEG_LENGTH = Math.sqrt(LADDER_UNFOLDED.standHeight ** 2 + LADDER_UNFOLDED.frontRun ** 2);

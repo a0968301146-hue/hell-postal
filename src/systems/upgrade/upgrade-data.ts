@@ -22,6 +22,11 @@ import { UpgradeDefinition, UpgradeId } from './upgrade-types';
  * spec: "升級價格維持目前數值，不在本回合重新平衡"). */
 export const UPGRADE_POINT_REWARD_PER_SHIPPED_ITEM = 1;
 
+/** envelopeCarryLevel's own numeric effect (spec十一: Lv.0-3 -> 5/10/15/20
+ *封) — a lookup table rather than a formula since the steps aren't a fixed
+ * arithmetic progression tied to `level` alone in a way worth deriving. */
+export const ENVELOPE_CARRY_CAPACITY_BY_LEVEL: readonly number[] = [5, 10, 15, 20];
+
 export const UPGRADE_DEFINITIONS: UpgradeDefinition[] = [
   {
     id: 'moveSpeed',
@@ -92,6 +97,30 @@ export const UPGRADE_DEFINITIONS: UpgradeDefinition[] = [
       { level: 0, description: '只能搬運小型托盤' },
       { level: 1, description: '可搬運小型與中型托盤' },
       { level: 2, description: '可搬運小型、中型與大型托盤' },
+    ],
+  },
+  {
+    id: 'envelopeCarryLevel',
+    displayName: '信封搬運',
+    description: '增加一次可拿取與搬運的單封信封數量（僅影響信封堆疊，不影響Cargo多件搬運、信封袋或信封吸塵器捕捉上限）。',
+    maxLevel: 3,
+    costs: [30, 55, 85],
+    levelEffects: [
+      { level: 0, description: '最多同時搬運 5 封' },
+      { level: 1, description: '最多同時搬運 10 封' },
+      { level: 2, description: '最多同時搬運 15 封' },
+      { level: 3, description: '最多同時搬運 20 封' },
+    ],
+  },
+  {
+    id: 'palletInventoryLevel',
+    displayName: '托盤庫存擴充',
+    description: '解鎖第二組小／中／大型整理托盤與對應掛架，購買後立即生成。',
+    maxLevel: 1,
+    costs: [120],
+    levelEffects: [
+      { level: 0, description: '小／中／大型托盤各 1 張' },
+      { level: 1, description: '小／中／大型托盤各 2 張（立即生成第二組）' },
     ],
   },
 ];

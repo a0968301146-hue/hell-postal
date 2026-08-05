@@ -15,6 +15,7 @@ export class HUD {
   private dayTransitionEl: HTMLElement;
   private dayTransitionTimer: number | null = null;
   private heldCountEl: HTMLElement;
+  private envelopeStackEl: HTMLElement;
 
   constructor() {
     const hud = document.createElement('div');
@@ -89,6 +90,15 @@ export class HUD {
     this.heldCountEl = document.createElement('div');
     this.heldCountEl.id = 'held-count-panel';
     hud.appendChild(this.heldCountEl);
+
+    // Envelope stack status ("Add envelope stacks and expand pallet
+    // inventory" round spec二: "信封：目前數量／容量" + 目前模式) —
+    // persistent, same top-right convention as #held-count-panel just above
+    // (a different held-item concept — this tracks EnvelopeStackSystem's own
+    // dedicated carry, never PickupSystem's generic heldStack).
+    this.envelopeStackEl = document.createElement('div');
+    this.envelopeStackEl.id = 'envelope-stack-panel';
+    hud.appendChild(this.envelopeStackEl);
   }
 
   /** "Add tool hotbar and cargo hook" round spec九: "工具欄UI可接入既有HUD容
@@ -168,6 +178,21 @@ export class HUD {
     }
     this.heldCountEl.textContent = `持有 ${count}/${max}`;
     this.heldCountEl.classList.add('visible');
+  }
+
+  /** Envelope stack carry status (spec二: "信封：目前數量／容量" + 目前模式)
+   * — shown only while the player is actually carrying at least one
+   * envelope, mirroring updateHeldCount's own "hide when not relevant"
+   * convention. */
+  updateEnvelopeStackStatus(count: number, capacity: number, mode: 'stack' | 'single'): void {
+    if (count <= 0) {
+      this.envelopeStackEl.classList.remove('visible');
+      return;
+    }
+    const modeText = mode === 'stack' ? '整疊模式' : '單張模式';
+    this.envelopeStackEl.textContent = `信封：${count}／${capacity}\n${modeText}`;
+    this.envelopeStackEl.style.whiteSpace = 'pre-line';
+    this.envelopeStackEl.classList.add('visible');
   }
 
   showInteractionPrompt(name: string, action: string): void {

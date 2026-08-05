@@ -23,6 +23,7 @@ import { MailSystem } from '../systems/mail/mail-system';
 import { MailBagSystem } from '../systems/mail/mail-bag-system';
 import { PackedMailBagSystem } from '../systems/mail/packed-mail-bag-system';
 import { EnvelopeDispatchMachineSystem } from '../systems/mail/envelope-dispatch-machine-system';
+import { EnvelopeStackSystem } from '../systems/mail/envelope-stack-system';
 import { UpgradeSystem, UpgradeMenuUI, SimilarCargoHighlight } from '../systems/upgrade';
 import { MediaPlayerSystem } from '../systems/media-player/media-player-system';
 import { MediaPlayerUI } from '../systems/media-player/media-player-ui';
@@ -71,6 +72,8 @@ export interface GameSystems {
   /** "Add modular envelope stamping and regional mail bag system" round. */
   mailSystem: MailSystem;
   mailBagSystem: MailBagSystem;
+  /** "Add envelope stacks and expand pallet inventory" round. */
+  envelopeStackSystem: EnvelopeStackSystem;
   /** "Add regional envelope dispatch machine" round. */
   packedMailBagSystem: PackedMailBagSystem;
   envelopeDispatchMachineSystem: EnvelopeDispatchMachineSystem;
@@ -173,14 +176,34 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     pauseManager, settingsManager
   );
 
+  // Mail/envelope-stamping loop ("Add modular envelope stamping and
+  // regional mail bag system" round) — MailSystem moved up to construct
+  // here (was previously built much later, right before MailBagSystem)
+  // specifically so it exists in time for EnvelopeStackSystem/UpgradeSystem
+  // just below, both of which need a live reference at their own
+  // construction time. Only needs pickupSystem, already built just above.
+  const mailSystem = new MailSystem(scene, physics, interactables, pickupSystem);
+
+  // Envelope stack carry ("Add envelope stacks and expand pallet inventory"
+  // round一-四) — dedicated world-space carry for multiple loose Envelope
+  // objects at once, entirely separate from PickupSystem's own generic
+  // multi-carry (see envelope-stack-system.ts's own class doc comment for
+  // why). Built here, before UpgradeSystem, so its own setMaxCapacity()
+  // push-setter can be wired into UpgradeSystem's constructor the same way
+  // pickupSystem/playerController already are.
+  const envelopeStackSystem = new EnvelopeStackSystem(
+    scene, physics, interactables, playerData, camera, hud, mailSystem, pauseManager, () => playerController.isLocked
+  );
+
   // Bulletin board upgrade system ("Add bulletin board upgrade system"
   // round) — constructed as early as pickupSystem/playerController exist,
   // since both scoringSystem's onSettlement hook and dailyFlowSystem's
   // onDayCompleted hook (both further below) need to already be able to
   // call into it. UpgradeSystem only ever reaches PickupSystem/
-  // PlayerController through their own narrow public setters (spec三) —
-  // never touches mail/lost-found/vehicle/cargo-generation systems.
-  const upgradeSystem = new UpgradeSystem(pickupSystem, playerController);
+  // PlayerController/EnvelopeStackSystem through their own narrow public
+  // setters (spec三) — never touches mail/lost-found/vehicle/cargo-
+  // generation systems directly.
+  const upgradeSystem = new UpgradeSystem(pickupSystem, playerController, envelopeStackSystem);
   const upgradeMenuUI = new UpgradeMenuUI(pauseManager, hud, playerController, upgradeSystem);
   const similarCargoHighlight = new SimilarCargoHighlight(scene);
 
@@ -242,13 +265,10 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     scene, physics, interactables, pickupSystem, lostFoundUI
   );
 
-  // Mail/envelope-stamping loop ("Add modular envelope stamping and
-  // regional mail bag system" round) — MailSystem owns the envelope
-  // registry + daily spawn + stamp table; MailBagSystem owns the empty-bag
-  // rack + every bag's own lifecycle, calling back into MailSystem to keep
-  // envelope state in ONE place. Built after pickupSystem exists (both
-  // register placement surfaces / call forceDropHeld() on reset).
-  const mailSystem = new MailSystem(scene, physics, interactables, pickupSystem);
+  // MailBagSystem owns the empty-bag rack + every bag's own lifecycle,
+  // calling back into MailSystem (constructed earlier, alongside
+  // EnvelopeStackSystem/UpgradeSystem — see its own comment above) to keep
+  // envelope state in ONE place.
   const mailBagSystem = new MailBagSystem(scene, physics, interactables, pickupSystem, hud, mailSystem);
   // Wired after both exist (avoids a constructor-time circular dependency —
   // MailBagSystem's own constructor already takes pickupSystem) — see
@@ -315,6 +335,12 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
       mailBagSystem.resetDaily();
       envelopeDispatchMachineSystem.resetDaily();
       packedMailBagSystem.resetDaily();
+      // "Add envelope stacks and expand pallet inventory" round — clears
+      // this class's own carry bookkeeping (stack membership/mode) before
+      // MailSystem's own resetDaily disposes the underlying envelope
+      // objects, same ordering reasoning as every other mail-adjacent reset
+      // above.
+      envelopeStackSystem.resetDaily();
       mailSystem.resetDaily();
     },
     (finishedDay) => {
@@ -381,7 +407,17 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   const palletSystem = new PalletSystem(
     scene, physics, cargoSystem, interactables, playerData, hud, pauseManager, upgradeSystem,
     () => settingsManager.fireTutorialEvent('palletUsed'),
-    () => settingsManager.fireTutorialEvent('boxOrganized')
+    () => settingsManager.fireTutorialEvent('boxOrganized'),
+    // "Add envelope stacks and expand pallet inventory" round — registers
+    // every pallet top mesh (still a normal PickupSystem placement surface,
+    // a single cargo item can always be manually placed on top — spec: this
+    // only ever ADDS the ability to pick up the whole pallet) as it's built,
+    // covering BOTH the initial sets built during PalletSystem's own
+    // constructor above AND any later unlockSecondSet() call — replaces the
+    // old one-time post-construction getAllTopMeshes() loop, which only
+    // ever covered whatever existed at boot.
+    (mesh) => pickupSystem.addPlacementSurface(mesh),
+    (mesh) => pickupSystem.removePlacementSurface(mesh)
   );
   // "Add placement rotation and pallet cargo straps" round spec三: lets
   // pickup-system.ts's own generic executeThrow() correctly throw the
@@ -389,15 +425,12 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // PalletThrowHooks' own doc comment in pickup-system.ts. PalletSystem
   // implements the interface directly, so no separate adapter object.
   pickupSystem.setPalletThrowHooks(palletSystem);
-  // Still registered as a normal PickupSystem placement surface — a
-  // single cargo item can still be manually placed onto any pallet's top
-  // the normal way (spec: this round only adds the ABILITY to also pick
-  // up the whole pallet, it doesn't remove normal single-item placement).
-  // "Rebuild pallet storage and reset upgrade progression" round三: now
-  // three separate pallet meshes (small/medium/large), each registered.
-  for (const mesh of palletSystem.getAllTopMeshes()) {
-    pickupSystem.addPlacementSurface(mesh);
-  }
+  // Late-bound the same way pickupSystem.setPalletThrowHooks is just above
+  // — PalletSystem is constructed after UpgradeSystem (avoiding a circular
+  // import, see PalletInventoryExpansionTarget's own doc comment in
+  // upgrade-system.ts), so this wiring can only happen here, post-
+  // construction.
+  upgradeSystem.setPalletSystem(palletSystem);
   // Foldable ladder + immovable tool cart ("Add ladder tool station and
   // envelope vacuum" round一/二) — built near the pallet system since the
   // ladder's own wall slot is derived from the pallet racks' own wall
@@ -481,6 +514,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     mailBagSystem,
     packedMailBagSystem,
     envelopeDispatchMachineSystem,
+    envelopeStackSystem,
     hooks.onStartMailStampUi,
     () => upgradeMenuUI.open(),
     () => mediaPlayerUI.open(),
@@ -511,7 +545,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     scoringSystem, counterNpcSystem, counterServiceSystem, compassUI, dailyFlowSystem,
     unloadingSystem, palletSystem, cargoInspectionSystem, cargoInspectionUI,
     lostFoundSystem, lostFoundUI, mailSystem, mailBagSystem,
-    packedMailBagSystem, envelopeDispatchMachineSystem,
+    packedMailBagSystem, envelopeDispatchMachineSystem, envelopeStackSystem,
     upgradeSystem, similarCargoHighlight, mediaPlayerSystem,
     toolSystem, cargoHookSystem, spraySystem,
     ladderSystem, toolStationSystem, envelopeVacuumSystem,

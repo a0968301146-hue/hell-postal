@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BACK_AREA, WALL_THICKNESS, SEA_GATE } from '../world-layout';
+import { BACK_AREA, WALL_THICKNESS, SEA_GATE, LAND_GATE } from '../world-layout';
 
 /** "Rebuild pallet storage and reset upgrade progression" round三: every
  * pallet-size constant lives here, centralized (spec三: "所有尺寸集中於
@@ -92,8 +92,8 @@ export interface PalletWallSlot {
   /** World position of the pallet's own CENTER when mounted in this slot. */
   position: THREE.Vector3;
   /** World-space mount quaternion — tips the pallet vertical, flush against
-   * the wall, its top surface facing east into the room (spec四: "托盤掛牆時
-   * 垂直貼牆顯示"). */
+   * the wall, its top surface facing into the room (spec四: "托盤掛牆時垂直
+   * 貼牆顯示"). */
   quaternion: THREE.Quaternion;
   /** Bracket/frame outline footprint, for buildWallSlotVisual(). */
   bracketWidth: number;
@@ -115,7 +115,7 @@ const WALL_MOUNT_QUAT = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector
  * 大型" places small at the NORTH end (closer to the sea gate) and large at
  * the SOUTH end (closer to the corner, where there's the most floor
  * clearance for its bigger footprint). */
-function buildWallSlots(): Record<PalletSize, PalletWallSlot> {
+function buildWallSlots(ids: Record<PalletSize, string>): Record<PalletSize, PalletWallSlot> {
   const slots = {} as Record<PalletSize, PalletWallSlot>;
   let cursorZ = rackClusterNorthZ;
   for (const size of PALLET_SIZE_ORDER) {
@@ -126,7 +126,7 @@ function buildWallSlots(): Record<PalletSize, PalletWallSlot> {
     const centerX = eastWallInnerFaceX - RACK_WALL_STANDOFF - dims.height / 2;
     const centerY = BACK_AREA.floorY + RACK_BOTTOM_CLEARANCE + dims.width / 2;
     slots[size] = {
-      id: `pallet-rack-${size}`,
+      id: ids[size],
       size,
       position: new THREE.Vector3(centerX, centerY, centerZ),
       quaternion: WALL_MOUNT_QUAT.clone(),
@@ -143,8 +143,6 @@ function buildWallSlots(): Record<PalletSize, PalletWallSlot> {
   }
   return slots;
 }
-
-export const PALLET_WALL_SLOTS: Record<PalletSize, PalletWallSlot> = buildWallSlots();
 
 export const PALLET_SIZE_DISPLAY_NAME: Record<PalletSize, string> = {
   small: '小型托盤',
@@ -167,21 +165,126 @@ export const PALLET_IDS: Record<PalletSize, string> = {
   large: 'pallet-large',
 };
 
-export const ALL_PALLET_IDS: string[] = PALLET_SIZE_ORDER.map((size) => PALLET_IDS[size]);
+/** Rack ids are their own stable identity, independent of the pallet ids —
+ * `buildWallSlots` stamps this record's own values onto each slot's `id`
+ * field (a rack's OWN id, never to be confused with the pallet id it might
+ * currently be holding). Declared before PALLET_WALL_SLOTS specifically so
+ * it can be passed in as buildWallSlots' own `ids` param, rather than (the
+ * bug this replaced) accidentally deriving rack ids FROM PALLET_IDS. */
+export const RACK_IDS: Record<PalletSize, string> = {
+  small: 'pallet-rack-small',
+  medium: 'pallet-rack-medium',
+  large: 'pallet-rack-large',
+};
+
+export const PALLET_WALL_SLOTS: Record<PalletSize, PalletWallSlot> = buildWallSlots(RACK_IDS);
+
+// --- Second pallet set ("Add envelope stacks and expand pallet inventory"
+// round spec十二: "托盤庫存擴充" skill, Lv.1 = each size +1) ---
+//
+// Mounted on the BACK_AREA SOUTH wall's WEST segment (x -10..-6, the solid
+// run west of LAND_GATE's own open span [-6,6] — entirely clear of every
+// LAND_DOCK_SLOTS footprint, see vehicle-dock-data.ts) rather than the east
+// wall (already fully occupied by the first set + the ladder rack) or the
+// south wall's EAST segment (occupied by TOOL_STATION_POSITION, see
+// tool-station-system.ts, centered x=8). This segment is only 4m wide raw
+// (BACK_AREA.minX=-10 to LAND_GATE's own left edge -6) — noticeably tighter
+// than the east-wall cluster's 8m run — so this cluster uses its own,
+// smaller clearance/gap constants (below) rather than reusing
+// RACK_GATE_CLEARANCE/RACK_CORNER_CLEARANCE/RACK_SLOT_GAP, verified by
+// direct calculation to still leave >=0.1m daylight at both the west-wall
+// corner and the gate edge.
+const RACK_SLOT_GAP_SET2 = 0.1;
+const RACK_CORNER_CLEARANCE_SET2 = 0.15;
+
+const southWallInnerFaceZ = BACK_AREA.maxZ - WALL_THICKNESS / 2;
+const westWallInnerFaceX = BACK_AREA.minX + WALL_THICKNESS / 2;
+const landGateLeftEdgeX = LAND_GATE.centerX - LAND_GATE.halfWidth;
+
+/** Rotating -90° about world X maps local Y (top-face normal) to world -Z
+ * (out of the SOUTH wall into the room) and leaves local X (width) as the
+ * along-wall axis; local Z (depth) becomes the now-vertical span — same
+ * width===depth interchangeability as WALL_MOUNT_QUAT above, so reusing
+ * `dims.width` for the vertical term below is equally valid here. */
+const SOUTH_WALL_MOUNT_QUAT = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+
+/** West-to-east layout along the south wall's west segment (mirrors
+ * buildWallSlots' own north-to-south east-wall layout): small nearest the
+ * corner, large nearest the gate — the gate side has more approach room for
+ * the player to walk up to the biggest pallet. */
+function buildSouthWestWallSlots(ids: Record<PalletSize, string>): Record<PalletSize, PalletWallSlot> {
+  const slots = {} as Record<PalletSize, PalletWallSlot>;
+  let cursorX = westWallInnerFaceX + RACK_CORNER_CLEARANCE_SET2;
+  for (const size of PALLET_SIZE_ORDER) {
+    const dims = PALLET_DIMENSIONS[size];
+    const centerX = cursorX + dims.width / 2;
+    const centerZ = southWallInnerFaceZ - RACK_WALL_STANDOFF - dims.height / 2;
+    const centerY = BACK_AREA.floorY + RACK_BOTTOM_CLEARANCE + dims.width / 2;
+    slots[size] = {
+      id: ids[size],
+      size,
+      position: new THREE.Vector3(centerX, centerY, centerZ),
+      quaternion: SOUTH_WALL_MOUNT_QUAT.clone(),
+      bracketWidth: dims.depth + RACK_BRACKET_MARGIN * 2,
+      bracketHeight: dims.width + RACK_BRACKET_MARGIN * 2,
+    };
+    cursorX += dims.width + RACK_SLOT_GAP_SET2;
+  }
+  if (cursorX - RACK_SLOT_GAP_SET2 > landGateLeftEdgeX) {
+    console.error('[pallet-data] second wall rack cluster overflows into the land-gate opening');
+  }
+  return slots;
+}
+
+export const PALLET_IDS_SET2: Record<PalletSize, string> = {
+  small: 'pallet-small-2',
+  medium: 'pallet-medium-2',
+  large: 'pallet-large-2',
+};
+
+/** Same "declare the rack's own id independently, never derive it from the
+ * pallet id" fix as RACK_IDS above. */
+export const RACK_IDS_SET2: Record<PalletSize, string> = {
+  small: 'pallet-rack-small-2',
+  medium: 'pallet-rack-medium-2',
+  large: 'pallet-rack-large-2',
+};
+
+export const PALLET_WALL_SLOTS_SET2: Record<PalletSize, PalletWallSlot> = buildSouthWestWallSlots(RACK_IDS_SET2);
+
+/** One entry per pallet "set" (the original 3 + the skill-gated second 3) —
+ * PalletSystem iterates this to build instances generically rather than
+ * hardcoding two separate construction passes. `unlocked: false` sets are
+ * never built until UpgradeSystem's own palletInventoryLevel effect (or a
+ * restored save already at Lv.1+) calls PalletSystem.unlockSecondSet()
+ * (spec十二: "未購買時...優先選擇完全不生成，而非生成但禁用"). */
+export interface PalletSetDefinition {
+  setIndex: number;
+  ids: Record<PalletSize, string>;
+  rackIds: Record<PalletSize, string>;
+  wallSlots: Record<PalletSize, PalletWallSlot>;
+}
+
+export const PALLET_SET_DEFINITIONS: PalletSetDefinition[] = [
+  { setIndex: 0, ids: PALLET_IDS, rackIds: RACK_IDS, wallSlots: PALLET_WALL_SLOTS },
+  { setIndex: 1, ids: PALLET_IDS_SET2, rackIds: RACK_IDS_SET2, wallSlots: PALLET_WALL_SLOTS_SET2 },
+];
+
+/** Every pallet/rack id across BOTH sets, pre-declared regardless of whether
+ * the second set has actually been unlocked/constructed yet (spec十二's own
+ * "第二組...尚未生成" state) — every consumer of isPalletId/isRackId
+ * (tool-system.ts, vehicle-control-system.ts, interaction-system.ts) already
+ * null-checks via `interactables.get(id)` before doing anything with a
+ * recognized id, so recognizing an id that doesn't exist in the world YET is
+ * safe; the alternative (recomputing these arrays at unlock time) would risk
+ * a stale array if any consumer cached it before the module re-evaluates. */
+export const ALL_PALLET_IDS: string[] = PALLET_SET_DEFINITIONS.flatMap((set) => PALLET_SIZE_ORDER.map((size) => set.ids[size]));
 
 export function isPalletId(id: string | null | undefined): boolean {
   return !!id && ALL_PALLET_IDS.includes(id);
 }
 
-export const RACK_IDS: Record<PalletSize, string> = PALLET_SIZE_ORDER.reduce(
-  (acc, size) => {
-    acc[size] = PALLET_WALL_SLOTS[size].id;
-    return acc;
-  },
-  {} as Record<PalletSize, string>
-);
-
-export const ALL_RACK_IDS: string[] = PALLET_SIZE_ORDER.map((size) => RACK_IDS[size]);
+export const ALL_RACK_IDS: string[] = PALLET_SET_DEFINITIONS.flatMap((set) => PALLET_SIZE_ORDER.map((size) => set.rackIds[size]));
 
 export function isRackId(id: string | null | undefined): boolean {
   return !!id && ALL_RACK_IDS.includes(id);

@@ -15,8 +15,8 @@ import { PalletThrowHooks } from '../interaction/pickup-system';
 import { BACK_AREA, WORLD_BOUNDS, SCENE_CONFIG } from '../world-layout';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
 import {
-  PalletSize, PalletDimensions, PALLET_SIZE_ORDER, PALLET_DIMENSIONS, PALLET_DETECT_HEIGHT,
-  PALLET_SAFETY_DROP_POS, PALLET_WALL_SLOTS, PALLET_SIZE_DISPLAY_NAME, PALLET_IDS, RACK_IDS,
+  PalletSize, PalletDimensions, PalletWallSlot, PalletSetDefinition, PALLET_SIZE_ORDER, PALLET_DIMENSIONS,
+  PALLET_DETECT_HEIGHT, PALLET_SAFETY_DROP_POS, PALLET_SIZE_DISPLAY_NAME, PALLET_SET_DEFINITIONS,
   RACK_BRACKET_THICKNESS, isPalletId, isRackId,
 } from './pallet-data';
 
@@ -88,10 +88,18 @@ interface PalletInstance {
    * kinematic-while-parked pallet behavior. 'held' = currently being
    * carried — mirrors `heldPalletId` at the class level, kept in sync. */
   storageState: 'stored' | 'placed' | 'held';
-  /** The wall slot id it's currently docked in — only non-null while
-   * storageState==='stored' (each size has exactly one matching slot, so
-   * this is really just `RACK_IDS[size]` whenever stored, null otherwise). */
+  /** The wall slot id it's CURRENTLY docked in — only non-null while
+   * storageState==='stored'. "Add envelope stacks and expand pallet
+   * inventory" round: with a second pallet set now sharing each size, any
+   * rack whose size matches may accept ANY pallet of that size (spec十二:
+   * "每個slot只接受對應尺寸的托盤" — size-only, not fixed instance
+   * ownership), so this can legitimately differ from `homeSlot.id` if the
+   * player hangs a pallet on a same-size rack from the OTHER set. */
   wallSlotId: string | null;
+  /** The FIXED rack this pallet always returns to at end-of-day reset
+   * (resetToStart), regardless of which matching-size rack it was last
+   * manually hung on — set once at construction, never reassigned. */
+  homeSlot: PalletWallSlot;
   stableTimers: Map<string, number>;
 }
 
@@ -155,9 +163,23 @@ export class PalletSystem implements PalletThrowHooks {
   private upgradeSystem: UpgradeSystem;
   private onFirstUse?: () => void;
   private onFirstOrganized?: () => void;
+  private onPalletBuilt?: (mesh: THREE.Mesh) => void;
+  private onPalletDestroyed?: (mesh: THREE.Mesh) => void;
 
   private pallets: Map<string, PalletInstance> = new Map();
   private heldPalletId: string | null = null;
+  /** Every rack slot ever built, across both sets, keyed by rack id — the
+   * ONE source isMatchingEmptyRack/tryReturnToRack read to resolve a rack id
+   * back to its (size, position, quaternion) regardless of which set built
+   * it, so a same-size pallet from EITHER set can be hung on EITHER set's
+   * rack (spec十二: size-only matching — see PalletInstance.wallSlotId's own
+   * doc comment). Entries are added by buildSet(), removed by
+   * destroyRackVisual() (lockSecondSet). */
+  private rackSlotById: Map<string, PalletWallSlot> = new Map();
+  /** Floating text labels built by buildRackVisual() — tracked separately
+   * from `interactables` (which only holds the backing-plate mesh) so
+   * lockSecondSet's own teardown can find and dispose them too. */
+  private rackLabels: Map<string, THREE.Sprite> = new Map();
 
   private labelWorldPosScratch = new THREE.Vector3();
   private hasFiredUse = false;
@@ -205,7 +227,21 @@ export class PalletSystem implements PalletThrowHooks {
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, cargoSystem: CargoSystem, interactables: Map<string, InteractableObject>,
     playerData: PlayerInteractionData, hud: HUD, pauseManager: PauseManager, upgradeSystem: UpgradeSystem,
-    onFirstUse?: () => void, onFirstOrganized?: () => void
+    onFirstUse?: () => void, onFirstOrganized?: () => void,
+    // "Add envelope stacks and expand pallet inventory" round — fired once
+    // per pallet instance actually built (both the initial construction-time
+    // sets AND any later unlockSecondSet() call), so create-game-systems.ts
+    // can register each new top mesh as a PickupSystem placement surface
+    // (pickupSystem.addPlacementSurface) without PalletSystem needing its
+    // own PickupSystem reference. Replaces the old one-time post-construction
+    // `for (const mesh of palletSystem.getAllTopMeshes())` loop, which only
+    // ever covered whatever existed at boot.
+    onPalletBuilt?: (mesh: THREE.Mesh) => void,
+    // Symmetric teardown hook — fired once per instance from
+    // destroyPalletInstance (lockSecondSet only), so create-game-systems.ts
+    // can unregister the mesh via pickupSystem.removePlacementSurface before
+    // it's disposed.
+    onPalletDestroyed?: (mesh: THREE.Mesh) => void
   ) {
     this.scene = scene;
     this.physics = physics;
@@ -217,13 +253,17 @@ export class PalletSystem implements PalletThrowHooks {
     this.upgradeSystem = upgradeSystem;
     this.onFirstUse = onFirstUse;
     this.onFirstOrganized = onFirstOrganized;
+    this.onPalletBuilt = onPalletBuilt;
+    this.onPalletDestroyed = onPalletDestroyed;
 
-    for (const size of PALLET_SIZE_ORDER) {
-      const instance = this.buildPallet(size);
-      this.pallets.set(instance.id, instance);
-    }
-    for (const size of PALLET_SIZE_ORDER) {
-      this.buildRackVisual(size);
+    // "Add envelope stacks and expand pallet inventory" round spec十二: the
+    // first set always exists; the second set only gets built here if a
+    // restored save is already at palletInventoryLevel>=1 (a fresh page
+    // load after a previous purchase) — otherwise it's built later, on
+    // demand, by unlockSecondSet() (UpgradeSystem's own applyEffect push).
+    this.buildSet(PALLET_SET_DEFINITIONS[0]);
+    if (this.upgradeSystem.getLevel('palletInventoryLevel') >= 1) {
+      this.buildSet(PALLET_SET_DEFINITIONS[1]);
     }
     this.previewMesh = this.buildPreviewMesh();
 
@@ -231,11 +271,114 @@ export class PalletSystem implements PalletThrowHooks {
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
   }
 
-  private buildPallet(size: PalletSize): PalletInstance {
-    const id = PALLET_IDS[size];
+  /** Builds every pallet+rack in one set (spec十二's own "第二組...使用現有
+   * PalletSystem多實例架構") — id/size/slot all come from the passed-in
+   * PalletSetDefinition (pallet-data.ts) rather than being re-derived here,
+   * so this same method builds BOTH the always-on first set (constructor)
+   * and the skill-gated second set (unlockSecondSet). Idempotent — skips
+   * any id that's already built, so a redundant call (e.g. applyAllEffects
+   * re-pushing palletInventoryLevel on every load once already unlocked)
+   * never double-constructs. */
+  private buildSet(def: PalletSetDefinition): void {
+    for (const size of PALLET_SIZE_ORDER) {
+      const id = def.ids[size];
+      if (this.pallets.has(id)) continue;
+      const slot = def.wallSlots[size];
+      const instance = this.buildPallet(id, size, slot, def.setIndex);
+      this.pallets.set(id, instance);
+      this.rackSlotById.set(def.rackIds[size], slot);
+      this.onPalletBuilt?.(instance.mesh);
+    }
+    for (const size of PALLET_SIZE_ORDER) {
+      const rackId = def.rackIds[size];
+      if (this.interactables.has(rackId)) continue;
+      this.buildRackVisual(rackId, def.wallSlots[size], def.setIndex);
+    }
+  }
+
+  /** Called by UpgradeSystem's own applyEffect (palletInventoryLevel>=1) —
+   * either right after purchase (mid-session, spec十二: "購買後立即spawn第二
+   * 組...不需要重新整理頁面") or redundantly on every subsequent load once
+   * already unlocked (a harmless no-op via buildSet's own idempotency). */
+  unlockSecondSet(): void {
+    this.buildSet(PALLET_SET_DEFINITIONS[1]);
+  }
+
+  /** Reverses unlockSecondSet() — see PalletInventoryExpansionTarget's own
+   * doc comment (upgrade-system.ts) for when this fires. A safe no-op if
+   * the second set was never built (destroyPalletInstance/destroyRackVisual
+   * both tolerate a missing id). */
+  lockSecondSet(): void {
+    const def = PALLET_SET_DEFINITIONS[1];
+    for (const size of PALLET_SIZE_ORDER) {
+      const instance = this.pallets.get(def.ids[size]);
+      if (instance) this.destroyPalletInstance(instance);
+      this.destroyRackVisual(def.rackIds[size]);
+    }
+  }
+
+  /** Full teardown of one pallet instance (lockSecondSet only — the first
+   * set is never torn down) — force-releases it first if currently held or
+   * rope-bound (spec十二: "清除第二組托盤的Cargo綁定/繩索/掛架佔用資料，且
+   * 不影響第一組"), then disposes every Three.js resource and removes it
+   * from both `pallets` and `interactables`. */
+  private destroyPalletInstance(instance: PalletInstance): void {
+    if (this.heldPalletId === instance.id) {
+      this.forceReleaseToSafePosition(instance);
+    }
+    this.removeAllCargoJoints(instance);
+    for (const id of instance.boundCargoIds) {
+      const obj = this.interactables.get(id);
+      if (obj) obj.isHeld = false;
+    }
+
+    this.onPalletDestroyed?.(instance.mesh);
+    this.scene.remove(instance.mesh);
+    instance.mesh.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      child.geometry.dispose();
+      const mats = child.material as THREE.Material | THREE.Material[];
+      if (Array.isArray(mats)) mats.forEach((m) => m.dispose());
+      else mats.dispose();
+    });
+    this.scene.remove(instance.floatingLabel);
+    const labelMat = instance.floatingLabel.material as THREE.SpriteMaterial;
+    labelMat.map?.dispose();
+    labelMat.dispose();
+
+    this.physics.removeRigidBody(instance.body);
+    this.interactables.delete(instance.id);
+    this.pallets.delete(instance.id);
+  }
+
+  /** Full teardown of one rack's backing-plate mesh + floating label
+   * (lockSecondSet only) — mirrors destroyPalletInstance above. */
+  private destroyRackVisual(rackId: string): void {
+    const rackObj = this.interactables.get(rackId);
+    if (rackObj) {
+      this.scene.remove(rackObj.mesh);
+      rackObj.mesh.geometry.dispose();
+      const mats = rackObj.mesh.material as THREE.Material | THREE.Material[];
+      if (Array.isArray(mats)) mats.forEach((m) => m.dispose());
+      else mats.dispose();
+      this.interactables.delete(rackId);
+    }
+    const label = this.rackLabels.get(rackId);
+    if (label) {
+      this.scene.remove(label);
+      const labelMat = label.material as THREE.SpriteMaterial;
+      labelMat.map?.dispose();
+      labelMat.dispose();
+      this.rackLabels.delete(rackId);
+    }
+    this.rackSlotById.delete(rackId);
+  }
+
+  private buildPallet(id: string, size: PalletSize, slot: PalletWallSlot, setIndex: number): PalletInstance {
     const dims = PALLET_DIMENSIONS[size];
-    const slot = PALLET_WALL_SLOTS[size];
-    const displayName = `整理托盤（${PALLET_SIZE_DISPLAY_NAME[size]}）`;
+    const displayName = setIndex > 0
+      ? `整理托盤（${PALLET_SIZE_DISPLAY_NAME[size]}・二）`
+      : `整理托盤（${PALLET_SIZE_DISPLAY_NAME[size]}）`;
 
     // The base board is the hierarchy root — the ONLY object ever added to
     // the scene for this whole pallet. Starts mounted at its wall slot
@@ -304,7 +447,7 @@ export class PalletSystem implements PalletThrowHooks {
       id, size, dimensions: dims, mesh, body, palletObj, uiAnchor, floatingLabel, ropeVisualX, ropeVisualZ,
       pinned: [], unionHalfExtents: new THREE.Vector3(), unionLocalCenterOffset: new THREE.Vector3(),
       isRopeBound: false, boundCargoIds: [], cargoJointHandles: new Map(), pendingThrowCargoIds: [],
-      storageState: 'stored', wallSlotId: slot.id, stableTimers: new Map(),
+      storageState: 'stored', wallSlotId: slot.id, homeSlot: slot, stableTimers: new Map(),
     };
 
     this.updateLabelFollow(instance);
@@ -323,15 +466,18 @@ export class PalletSystem implements PalletThrowHooks {
    * for the "E 掛回托盤" return-to-rack prompt, the same "canPickUp=true
    * only to satisfy the raycast filter, never meant to actually be picked
    * up" pattern the mail rack / vehicle buttons already established. */
-  private buildRackVisual(size: PalletSize): void {
-    const slot = PALLET_WALL_SLOTS[size];
-    const dims = PALLET_DIMENSIONS[size];
+  private buildRackVisual(rackId: string, slot: PalletWallSlot, setIndex: number): void {
+    const dims = PALLET_DIMENSIONS[slot.size];
+    const labelText = setIndex > 0 ? `${PALLET_SIZE_DISPLAY_NAME[slot.size]}架（二）` : `${PALLET_SIZE_DISPLAY_NAME[slot.size]}架`;
 
     const frameMat = new THREE.MeshStandardMaterial({ color: 0x5a5248 });
     // Local axes here intentionally mirror the pallet mesh's own convention
     // (X=width, becomes world-vertical after the slot's mount rotation;
     // Y=thickness, becomes world wall-normal; Z=depth, stays world-along-
-    // wall) so "behind the pallet" is a simple negative local-Y offset.
+    // wall) so "behind the pallet" is a simple negative local-Y offset. Holds
+    // for BOTH the east-wall (Z-rotation) and south-wall (X-rotation) mount
+    // quaternions — see pallet-data.ts's own SOUTH_WALL_MOUNT_QUAT doc
+    // comment on why bracketWidth/bracketHeight are interchangeable there.
     const backingGeo = new THREE.BoxGeometry(slot.bracketHeight, RACK_BRACKET_THICKNESS, slot.bracketWidth);
     const backing = new THREE.Mesh(backingGeo, frameMat);
     const localOffset = new THREE.Vector3(0, -(dims.height / 2 + RACK_BRACKET_THICKNESS / 2 + 0.01), 0);
@@ -339,15 +485,16 @@ export class PalletSystem implements PalletThrowHooks {
     backing.quaternion.copy(slot.quaternion);
     this.scene.add(backing);
 
-    const rackObj = createInteractableObject(RACK_IDS[size], `${PALLET_SIZE_DISPLAY_NAME[size]}架`, backing, slot.bracketHeight, RACK_BRACKET_THICKNESS, slot.bracketWidth);
+    const rackObj = createInteractableObject(rackId, labelText, backing, slot.bracketHeight, RACK_BRACKET_THICKNESS, slot.bracketWidth);
     rackObj.canPickUp = true;
-    this.interactables.set(RACK_IDS[size], rackObj);
+    this.interactables.set(rackId, rackObj);
 
-    const label = createFloatingLabel(`${PALLET_SIZE_DISPLAY_NAME[size]}架`, { width: 0.55, bg: 'rgba(20,20,20,0.7)', fontSize: 20 });
+    const label = createFloatingLabel(labelText, { width: 0.55, bg: 'rgba(20,20,20,0.7)', fontSize: 20 });
     const labelPos = slot.position.clone();
     labelPos.y += slot.bracketHeight / 2 + 0.25;
     label.position.copy(labelPos);
     this.scene.add(label);
+    this.rackLabels.set(rackId, label);
   }
 
   /** Semi-transparent ghost representing the currently-held pallet's own
@@ -1138,14 +1285,22 @@ export class PalletSystem implements PalletThrowHooks {
   /** True while aiming at a rack whose size matches the held pallet AND
    * that slot is currently empty — the ONE extra condition
    * updateRackReturnPrompt/InteractionSystem need to decide whether E
-   * should mean "掛回托盤" instead of the normal tryPlace(). */
+   * should mean "掛回托盤" instead of the normal tryPlace(). "Add envelope
+   * stacks and expand pallet inventory" round: with a second pallet set now
+   * sharing each size, "empty" is resolved by scanning for whichever pallet
+   * (from EITHER set) is currently docked at this exact rack id (its own
+   * `wallSlotId === rackId`) — size-only matching, not fixed instance
+   * ownership (spec十二: "每個slot只接受對應尺寸的托盤"), so a set-2 pallet
+   * can be hung on a set-1 rack of the same size and vice versa. */
   isMatchingEmptyRack(rackId: string, heldPalletId: string): boolean {
-    const size = (Object.entries(RACK_IDS).find(([, id]) => id === rackId) ?? [])[0] as PalletSize | undefined;
-    if (!size) return false;
+    const slot = this.rackSlotById.get(rackId);
+    if (!slot) return false;
     const heldInstance = this.pallets.get(heldPalletId);
-    if (!heldInstance || heldInstance.size !== size) return false;
-    const slotOccupant = this.pallets.get(PALLET_IDS[size]);
-    return !!slotOccupant && slotOccupant.storageState !== 'stored';
+    if (!heldInstance || heldInstance.size !== slot.size) return false;
+    for (const inst of this.pallets.values()) {
+      if (inst.wallSlotId === rackId) return false;
+    }
+    return true;
   }
 
   /** ONE canonical judgment for "can the CURRENTLY HELD pallet be hung back
@@ -1190,7 +1345,11 @@ export class PalletSystem implements PalletThrowHooks {
       return false;
     }
 
-    const slot = PALLET_WALL_SLOTS[instance.size];
+    // The rack actually aimed at — may be a DIFFERENT set's same-size slot
+    // than `instance.homeSlot` (spec十二: size-only matching, see
+    // isMatchingEmptyRack's own doc comment); resetToStart() is what always
+    // sends it back to its own fixed homeSlot regardless of this.
+    const slot = this.rackSlotById.get(rackId)!;
     instance.body.setNextKinematicTranslation({ x: slot.position.x, y: slot.position.y, z: slot.position.z });
     instance.body.setNextKinematicRotation({ x: slot.quaternion.x, y: slot.quaternion.y, z: slot.quaternion.z, w: slot.quaternion.w });
     instance.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -1354,7 +1513,11 @@ export class PalletSystem implements PalletThrowHooks {
       instance.pendingThrowCargoIds = [];
       instance.pinned = [];
 
-      const slot = PALLET_WALL_SLOTS[instance.size];
+      // Always the pallet's own FIXED home slot (never wherever it was last
+      // manually hung — spec十二 allows cross-set same-size hanging during
+      // play, but every daily reset re-establishes each pallet's own
+      // canonical starting slot).
+      const slot = instance.homeSlot;
       if (instance.body.bodyType() !== RAPIER.RigidBodyType.KinematicPositionBased) {
         instance.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
       }

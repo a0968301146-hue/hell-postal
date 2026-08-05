@@ -149,6 +149,13 @@ export class GameApp {
    * one, and applies the stamp via MailSystem.applyStamp on success. */
   private startMailStampUi(): void {
     const { mailSystem } = this.systems;
+    // Queue auto-advance (spec六): if nothing is currently on the active
+    // slot, pull the next envelope off pendingEnvelopeIds first. A no-op
+    // if something is already active (mid-queue re-entry from the
+    // 0.3s setTimeout in endMailStampUi below).
+    if (!mailSystem.readyEnvelopeId) {
+      mailSystem.advanceQueue();
+    }
     const envelopeId = mailSystem.readyEnvelopeId;
     if (!envelopeId) return;
     const rec = mailSystem.getEnvelope(envelopeId);
@@ -166,11 +173,34 @@ export class GameApp {
     );
   }
 
-  private endMailStampUi(_result: StampUiResult): void {
+  private endMailStampUi(result: StampUiResult): void {
     if (this.mailStampUi) this.mailStampUi = null;
-    this.context.pauseManager.remove('stampMinigame');
-    this.systems.mailSystem.releaseFromTable();
+    const { mailSystem } = this.systems;
 
+    // spec六/七: file the just-finished (or just-abandoned) envelope into
+    // whichever pile it belongs to BEFORE releasing the active slot —
+    // releaseFromTable only clears processingEnvelopeId, it no longer
+    // owns physics/position handling itself.
+    if (result === 'completed') {
+      mailSystem.moveActiveToCompleted();
+    } else {
+      mailSystem.returnActiveToPendingFront();
+    }
+    mailSystem.releaseFromTable();
+
+    // spec六: consecutive stamping — if the pile still has unfinished
+    // envelopes after a completion, auto-load the next one instead of
+    // tearing the whole minigame down. A short transition delay (spec六:
+    // ~0.25-0.4s) so the completed envelope's own finish animation/UI can
+    // be seen before the next one appears; the player never has to leave
+    // and re-enter the table between envelopes. An aborted ('cancelled')
+    // result always falls through to the full teardown below (spec七).
+    if (result === 'completed' && mailSystem.pendingCount > 0) {
+      setTimeout(() => this.startMailStampUi(), 300);
+      return;
+    }
+
+    this.context.pauseManager.remove('stampMinigame');
     this.context.playerData.state = 'empty-handed';
     this.context.playerData.heldObjectId = null;
     this.systems.playerController.setInputEnabled(true);
@@ -242,6 +272,11 @@ export class GameApp {
       // "no-op unless currently being carried" self-guard as
       // palletSystem.update just above.
       s.ladderSystem.update(camera.position, cameraForward);
+      // "Add envelope stacks and expand pallet inventory" round — same
+      // no-op-unless-carrying self-guard as palletSystem/ladderSystem just
+      // above; repositions each held envelope's real mesh/body in front of
+      // the camera every frame (spec二).
+      s.envelopeStackSystem.update();
       if (ENABLE_LEGACY_COUNTER) {
         s.counterNpcSystem.update(deltaTime);
         s.counterServiceSystem.update(deltaTime);

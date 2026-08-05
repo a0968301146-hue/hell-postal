@@ -20,6 +20,7 @@ import { MailSystem } from '../mail/mail-system';
 import { MailBagSystem, MAIL_RACK_INTERACTABLE_ID } from '../mail/mail-bag-system';
 import { PackedMailBagSystem } from '../mail/packed-mail-bag-system';
 import { EnvelopeDispatchMachineSystem } from '../mail/envelope-dispatch-machine-system';
+import { EnvelopeStackSystem } from '../mail/envelope-stack-system';
 import { getMailDestination } from '../mail/mail-data';
 import { BULLETIN_BOARD_INTERACTABLE_ID, TELEVISION_INTERACTABLE_ID } from '../world-layout';
 import { isNpcEDebugEnabled, logNpcEDebug } from './npc-e-debug';
@@ -74,6 +75,8 @@ export class InteractionSystem {
   /** "Add regional envelope dispatch machine" round. */
   private packedMailBagSystem: PackedMailBagSystem;
   private envelopeDispatchMachineSystem: EnvelopeDispatchMachineSystem;
+  /** "Add envelope stacks and expand pallet inventory" round. */
+  private envelopeStackSystem: EnvelopeStackSystem;
   private onStartMailStampUi: () => void;
   /** Opens the bulletin board's full-screen upgrade UI ("Add bulletin board
    * upgrade system" round spec二/三) — called ONLY from the empty-handed
@@ -115,6 +118,7 @@ export class InteractionSystem {
     mailBagSystem: MailBagSystem,
     packedMailBagSystem: PackedMailBagSystem,
     envelopeDispatchMachineSystem: EnvelopeDispatchMachineSystem,
+    envelopeStackSystem: EnvelopeStackSystem,
     onStartMailStampUi: () => void,
     onOpenUpgradeMenu: () => void,
     onOpenMediaPlayer: () => void,
@@ -147,6 +151,7 @@ export class InteractionSystem {
     this.mailBagSystem = mailBagSystem;
     this.packedMailBagSystem = packedMailBagSystem;
     this.envelopeDispatchMachineSystem = envelopeDispatchMachineSystem;
+    this.envelopeStackSystem = envelopeStackSystem;
     this.onStartMailStampUi = onStartMailStampUi;
     this.onOpenUpgradeMenu = onOpenUpgradeMenu;
     this.onOpenMediaPlayer = onOpenMediaPlayer;
@@ -389,10 +394,17 @@ export class InteractionSystem {
       // playerData.heldObjectId directly, never through PickupSystem's own
       // heldStack.
       const isHoldingLadder = this.ladderSystem.isCarrying;
+      // Envelope stack, same reasoning as pallet/ladder just above ("Add
+      // envelope stacks and expand pallet inventory" round) — its own
+      // world-space carry (envelope-stack-system.ts) likewise writes
+      // playerData.heldObjectId directly (a fixed sentinel, never a real
+      // envelope id), never through PickupSystem's own heldStack.
+      const isHoldingEnvelopeStack = this.envelopeStackSystem.isCarryingViaHeldId;
       if (
         this.currentTarget &&
         !isHoldingPallet &&
         !isHoldingLadder &&
+        !isHoldingEnvelopeStack &&
         !this.palletSystem.isPalletId(this.currentTarget.id) &&
         !this.palletSystem.isRackId(this.currentTarget.id) &&
         !this.ladderSystem.isLadderTarget(this.currentTarget.id) &&
@@ -443,6 +455,29 @@ export class InteractionSystem {
         } else {
           this.ladderSystem.tryPlace();
         }
+        return;
+      }
+      // Envelope stack: own world-space carry/place flow, same "dedicated
+      // system, bypasses PickupSystem's generic path" pattern as the
+      // pallet/ladder blocks just above ("Add envelope stacks and expand
+      // pallet inventory" round一-四). Priority: hand off to the stamp table
+      // if close enough (spec五, unstamped stacks only — canHandToTable
+      // itself gates on that) — else gather more matching envelopes if
+      // aiming at an eligible one (spec四, reads lastHoldingItemHitId, NOT
+      // this.currentTarget, same reasoning as the pallet-rack-return fix
+      // above) — else place the release-batch on the floor/surface ahead.
+      if (isHoldingEnvelopeStack) {
+        if (this.envelopeStackSystem.canHandToTable(this.camera.position)) {
+          this.envelopeStackSystem.tryHandToTable(this.camera.position);
+          return;
+        }
+        if (this.lastHoldingItemHitId && this.envelopeStackSystem.canPickUpTarget(this.lastHoldingItemHitId)) {
+          this.envelopeStackSystem.pickUpTarget(this.lastHoldingItemHitId);
+          return;
+        }
+        const fwd = new THREE.Vector3();
+        this.camera.getWorldDirection(fwd);
+        this.envelopeStackSystem.tryPlaceOnGround(this.camera.position, fwd);
         return;
       }
       // Insert held envelope into a targeted OPEN mail bag (spec二/三) —
@@ -700,6 +735,17 @@ export class InteractionSystem {
         this.currentTarget = null;
         return;
       }
+      // Envelope stack: empty-handed E on a loose envelope (or one
+      // currently sitting in either stamp-table queue pile, spec七) starts
+      // a new stack via EnvelopeStackSystem — same "checked before the
+      // generic fallback" precedence as pallet/ladder just above ("Add
+      // envelope stacks and expand pallet inventory" round一).
+      if (this.envelopeStackSystem.canPickUpTarget(this.currentTarget.id)) {
+        this.envelopeStackSystem.pickUpTarget(this.currentTarget.id);
+        this.clearHighlight(this.currentTarget);
+        this.currentTarget = null;
+        return;
+      }
       this.pickupSystem.pickUp(this.currentTarget);
       this.clearHighlight(this.currentTarget);
       this.currentTarget = null;
@@ -892,6 +938,7 @@ export class InteractionSystem {
       // actually be carried.
       if (
         hit && !this.palletSystem.isPalletId(this.playerData.heldObjectId ?? '') && !this.ladderSystem.isCarrying &&
+        !this.envelopeStackSystem.isCarryingViaHeldId &&
         !this.palletSystem.isPalletId(hit.id) && !this.palletSystem.isRackId(hit.id) && hit.id !== MAIL_RACK_INTERACTABLE_ID &&
         !this.ladderSystem.isLadderTarget(hit.id) && !this.ladderSystem.isLadderRackTarget(hit.id) &&
         !this.toolStationSystem.isToolStationTarget(hit.id) &&
@@ -943,6 +990,22 @@ export class InteractionSystem {
           this.hud.setCrosshairActive(true);
         } else {
           this.hud.showInteractionPrompt('木梯', '此處無法放置');
+          this.hud.setCrosshairActive(false);
+        }
+      } else if (this.envelopeStackSystem.isCarryingViaHeldId) {
+        // Same "one canonical judgment shared by prompt and action" pattern
+        // as the pallet/ladder blocks just above ("Add envelope stacks and
+        // expand pallet inventory" round). Priority mirrors onKeyDown's own:
+        // hand-to-table, then gather-more, then generic place.
+        if (this.envelopeStackSystem.canHandToTable(this.camera.position)) {
+          this.hud.showInteractionPrompt('信件工作台', 'E 放入信件');
+          this.hud.setCrosshairActive(true);
+        } else if (hit && this.envelopeStackSystem.canPickUpTarget(hit.id)) {
+          const modeText = this.envelopeStackSystem.mode === 'stack' ? 'E 加入信封疊' : 'E 加入（單張）';
+          this.hud.showInteractionPrompt(hit.displayName, modeText);
+          this.hud.setCrosshairActive(true);
+        } else {
+          this.hud.showInteractionPrompt('信封', 'E 放下　Q 丟出　F 切換模式');
           this.hud.setCrosshairActive(false);
         }
       } else if (this.playerData.heldObjectId && this.playerData.activeTool === 'empty' && hit && this.isLostFoundNpcTarget(hit)) {

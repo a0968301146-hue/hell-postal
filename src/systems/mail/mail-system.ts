@@ -16,6 +16,19 @@ const ENVELOPE_ID_PREFIX = 'envelope-';
 const STABLE_THRESHOLD = 0.3;
 const VELOCITY_THRESHOLD = 0.4;
 
+/** "Add envelope stacks and expand pallet inventory" round五: the stamp
+ * table's own combined pending+completed+active capacity (spec五: "最多容納
+ * 20封未貼郵票信封"). */
+const STAMP_TABLE_CAPACITY = 20;
+/** How far left/right of the table's own single-slot center (STAMP_TABLE.
+ * posX, unchanged — still where the ACTIVE/currently-processing envelope
+ * snaps to, exactly as before this round) the two queue piles sit (spec五:
+ * "待處理堆位於工作台左側/已完成堆位於工作台右側...兩堆不可重疊"). */
+const QUEUE_PILE_X_OFFSET = 0.5;
+/** Vertical gap between stacked envelopes in a pending/completed pile —
+ * ENVELOPE_SIZE.height plus a hair of daylight so faces don't z-fight. */
+const QUEUE_PILE_STEP = ENVELOPE_SIZE.height + 0.003;
+
 function randRange(min: number, max: number): number {
   return min + Math.random() * (max - min);
 }
@@ -70,9 +83,26 @@ export class MailSystem {
 
   private sensorBox!: THREE.Box3;
   private stableTimer = 0;
-  /** The one envelope currently snapped onto the table, ready for the stamp
-   * UI (spec四: "一次只能處理一封") — null when the table is free. */
+  /** The one envelope currently snapped onto the table's own single ACTIVE
+   * slot (STAMP_TABLE.posX/posZ, unchanged from before this round), ready
+   * for the stamp UI (spec四: "一次只能處理一封") — null when nothing is
+   * actively being stamped right now. Distinct from pendingEnvelopeIds/
+   * completedEnvelopeIds below — this is specifically "on stage right now",
+   * those two are "waiting in the wings". */
   private processingEnvelopeId: string | null = null;
+  /** "Add envelope stacks and expand pallet inventory" round五/六: the
+   * table's own two queue piles — pending (left, still unstamped, front =
+   * index 0 = next up) and completed (right, already stamped). Both are
+   * physically REAL envelope objects positioned in a manual stack (physics
+   * disabled, same treatment as processingEnvelopeId's own envelope) rather
+   * than a data-only list, so the player can see the two piles and pick
+   * either back up directly. Deliberately disabled physics (not merely
+   * repositioned) doubles as how these stay excluded from the envelope
+   * vacuum for free — envelope-vacuum-system.ts's own isEligibleEnvelope
+   * already skips any envelope whose rigidBody is disabled, so nothing in
+   * that file needs to change (spec八: "工作台上的信封不可被吸塵器吸走"). */
+  private pendingEnvelopeIds: string[] = [];
+  private completedEnvelopeIds: string[] = [];
 
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>, pickupSystem: PickupPort
@@ -227,6 +257,186 @@ export class MailSystem {
     return Math.sqrt(dx * dx + dz * dz) < SCENE_CONFIG.interactionDistance + 1;
   }
 
+  // --- Stamp table queue (spec五/六/七) ---
+
+  get pendingCount(): number { return this.pendingEnvelopeIds.length; }
+  get completedCount(): number { return this.completedEnvelopeIds.length; }
+
+  getPendingEnvelopeIds(): string[] { return [...this.pendingEnvelopeIds]; }
+  getCompletedEnvelopeIds(): string[] { return [...this.completedEnvelopeIds]; }
+
+  /** True while `id` is anywhere on the table right now (active slot, or
+   * either queue pile) — read by EnvelopeStackSystem so its own ground-pile
+   * gather logic never scoops up a table-owned envelope alongside loose
+   * ones (spec八 in spirit: table contents are a separate collection from
+   * the floor), and so a picked-back-up envelope can be correctly removed
+   * from whichever collection currently owns it. */
+  isOnStampTable(id: string): boolean {
+    return id === this.processingEnvelopeId || this.pendingEnvelopeIds.includes(id) || this.completedEnvelopeIds.includes(id);
+  }
+
+  /** How many MORE envelopes the table can currently accept across both
+   * piles plus the active slot combined (spec五: "capacity = 20"). */
+  get tableRemainingCapacity(): number {
+    const occupied = this.pendingEnvelopeIds.length + this.completedEnvelopeIds.length + (this.processingEnvelopeId ? 1 : 0);
+    return Math.max(0, STAMP_TABLE_CAPACITY - occupied);
+  }
+
+  /** Snaps a single envelope into its own pending-pile slot (index = its own
+   * position within pendingEnvelopeIds) — physics disabled, same "artificial
+   * stack" treatment the active slot already used before this round (see
+   * this class's own doc comment on why disabled-physics is also what keeps
+   * it vacuum-proof for free). */
+  private snapToPendingSlot(id: string, index: number): void {
+    const obj = this.interactables.get(id);
+    if (!obj) return;
+    const x = STAMP_TABLE.posX - QUEUE_PILE_X_OFFSET;
+    const y = BACK_AREA.floorY + STAMP_TABLE.height + ENVELOPE_SIZE.height / 2 + 0.005 + index * QUEUE_PILE_STEP;
+    const z = STAMP_TABLE.posZ;
+    obj.mesh.position.set(x, y, z);
+    obj.mesh.rotation.set(0, 0, 0);
+    if (obj.rigidBody) {
+      obj.rigidBody.setTranslation({ x, y, z }, true);
+      obj.rigidBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+      obj.rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      this.physics.setBodyEnabled(obj.rigidBody, false);
+    }
+  }
+
+  private snapToCompletedSlot(id: string, index: number): void {
+    const obj = this.interactables.get(id);
+    if (!obj) return;
+    const x = STAMP_TABLE.posX + QUEUE_PILE_X_OFFSET;
+    const y = BACK_AREA.floorY + STAMP_TABLE.height + ENVELOPE_SIZE.height / 2 + 0.005 + index * QUEUE_PILE_STEP;
+    const z = STAMP_TABLE.posZ;
+    obj.mesh.position.set(x, y, z);
+    obj.mesh.rotation.set(0, 0, 0);
+    if (obj.rigidBody) {
+      obj.rigidBody.setTranslation({ x, y, z }, true);
+      obj.rigidBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+      obj.rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      this.physics.setBodyEnabled(obj.rigidBody, false);
+    }
+  }
+
+  /** Re-snaps every envelope currently in a pile to its own index-based
+   * slot — called after any push/splice so the visual stack never has gaps
+   * (spec五: "每封依厚度向上排列"). */
+  private refreshPendingVisual(): void { this.pendingEnvelopeIds.forEach((id, i) => this.snapToPendingSlot(id, i)); }
+  private refreshCompletedVisual(): void { this.completedEnvelopeIds.forEach((id, i) => this.snapToCompletedSlot(id, i)); }
+
+  /** Admits as many of the given (already-unstamped, already-loose)
+   * envelope ids into the pending pile as the table's own remaining
+   * capacity allows, in the given order — called by EnvelopeStackSystem
+   * when the player hands over a batch at the table (spec五: "若工作台剩餘
+   * 容量不足，只放入可容納數量，其他信封留在玩家手上"). Returns the ids that
+   * were actually admitted, in order — the caller is responsible for
+   * removing exactly those from whatever held it was carrying them. Silently
+   * skips (does not admit, does not error) any id that isn't a genuinely
+   * unstamped envelope — the caller is expected to have already filtered for
+   * that, this is just a defensive re-check. */
+  admitEnvelopesToPending(envelopeIds: string[]): string[] {
+    const admitted: string[] = [];
+    for (const id of envelopeIds) {
+      if (this.tableRemainingCapacity <= 0) break;
+      const rec = this.envelopes.get(id);
+      if (!rec || rec.state !== 'unstamped') continue;
+      this.pendingEnvelopeIds.push(id);
+      admitted.push(id);
+    }
+    this.refreshPendingVisual();
+    return admitted;
+  }
+
+  /** Removes `id` from whichever pile currently holds it (does NOT touch the
+   * active processingEnvelopeId slot — that's releaseFromTable's own job) —
+   * called by EnvelopeStackSystem when the player picks a specific envelope
+   * back up off the table (spec七: "玩家可分別拿取兩疊"). Re-enables its
+   * physics (mirrors releaseFromTable's own restoration) — the caller (
+   * EnvelopeStackSystem) immediately disables it again anyway once it's
+   * added to the player's own held stack, same as picking up any loose
+   * envelope. */
+  removeFromQueue(id: string): boolean {
+    const pendingIdx = this.pendingEnvelopeIds.indexOf(id);
+    if (pendingIdx !== -1) {
+      this.pendingEnvelopeIds.splice(pendingIdx, 1);
+      this.refreshPendingVisual();
+      this.reenablePhysics(id);
+      return true;
+    }
+    const completedIdx = this.completedEnvelopeIds.indexOf(id);
+    if (completedIdx !== -1) {
+      this.completedEnvelopeIds.splice(completedIdx, 1);
+      this.refreshCompletedVisual();
+      this.reenablePhysics(id);
+      return true;
+    }
+    return false;
+  }
+
+  private reenablePhysics(id: string): void {
+    const obj = this.interactables.get(id);
+    if (obj?.rigidBody) this.physics.setBodyEnabled(obj.rigidBody, true);
+  }
+
+  /** If nothing is currently active AND at least one envelope is pending,
+   * pops the front of the pending pile onto the table's own single active
+   * slot (exactly the same snap transform updateTableSensor's own physical-
+   * sensor path already used) and returns its id; otherwise returns null.
+   * Called both by the physical sensor (updateTableSensor, once it admits a
+   * hand-placed envelope into pending) and directly by game-app.ts's own
+   * startMailStampUi()/endMailStampUi() to drive the queue forward (spec六:
+   * "若pending仍有信：自動載入下一封"). */
+  advanceQueue(): string | null {
+    if (this.processingEnvelopeId) return null;
+    const id = this.pendingEnvelopeIds.shift();
+    if (!id) return null;
+    this.refreshPendingVisual();
+    const obj = this.interactables.get(id);
+    if (obj) {
+      const snapY = BACK_AREA.floorY + STAMP_TABLE.height + ENVELOPE_SIZE.height / 2 + 0.005;
+      obj.mesh.position.set(STAMP_TABLE.posX, snapY, STAMP_TABLE.posZ);
+      obj.mesh.rotation.set(0, 0, 0);
+      // Already physics-disabled from sitting in the pending pile — no
+      // separate re-snap of the rigidBody transform needed beyond position,
+      // but set it anyway for consistency/defensiveness.
+      if (obj.rigidBody) {
+        obj.rigidBody.setTranslation({ x: STAMP_TABLE.posX, y: snapY, z: STAMP_TABLE.posZ }, true);
+        obj.rigidBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+      }
+    }
+    this.processingEnvelopeId = id;
+    return id;
+  }
+
+  /** Called on a SUCCESSFUL stamp completion (spec六 step 3) — moves the
+   * just-finished active envelope into the completed pile. Does NOT clear
+   * processingEnvelopeId itself (releaseFromTable, called right after by
+   * game-app.ts exactly as before, still owns that) — this only handles the
+   * queue-bookkeeping side of "completed". */
+  moveActiveToCompleted(): void {
+    const id = this.processingEnvelopeId;
+    if (!id) return;
+    this.completedEnvelopeIds.push(id);
+    this.refreshCompletedVisual();
+  }
+
+  /** Called when the player leaves the table mid-processing (Escape/cancel,
+   * spec七: "正在處理但尚未完成的信封回到待處理堆最前方...不可把未完成信封誤
+   * 標記完成"). Puts the currently-active (still-unstamped) envelope back at
+   * the FRONT of the pending pile rather than the back, so re-entering the
+   * table resumes with the same envelope next. Does NOT clear
+   * processingEnvelopeId itself — releaseFromTable (called right after by
+   * game-app.ts, unchanged) still owns that. */
+  returnActiveToPendingFront(): void {
+    const id = this.processingEnvelopeId;
+    if (!id) return;
+    this.pendingEnvelopeIds.unshift(id);
+    this.refreshPendingVisual();
+  }
+
   /** Applies `stamp` to the envelope currently on the table — correctness
    * judged purely by requiredStamp match (spec五). Wrong stamps are a pure
    * no-op here (caller/UI shows the failure feedback; nothing about the
@@ -254,14 +464,18 @@ export class MailSystem {
     return true;
   }
 
-  /** Called once the stamp UI closes (success or cancel) — restores the
-   * envelope to a normal pickupable/physical object and frees the table for
-   * the next one (spec四: "信封恢復為可拾取物件"). */
+  /** Called once the stamp UI closes for the active envelope (success or
+   * cancel) — clears the "who's on stage right now" pointer. "Add envelope
+   * stacks and expand pallet inventory" round五/七: the envelope itself is
+   * NOT restored to a free physical object here anymore — the caller
+   * (game-app.ts's endMailStampUi) is responsible for calling EITHER
+   * moveActiveToCompleted() (success) OR returnActiveToPendingFront()
+   * (cancel/leave) FIRST, both of which already re-snap it into the
+   * appropriate pile with physics still deliberately disabled (spec七: "不
+   * 可把未完成信封誤標記完成", "不可遺失目前處理中的信封") — this method
+   * would otherwise re-enable physics out from under whichever pile just
+   * claimed it. */
   releaseFromTable(): void {
-    const id = this.processingEnvelopeId;
-    if (!id) return;
-    const obj = this.interactables.get(id);
-    if (obj?.rigidBody) this.physics.setBodyEnabled(obj.rigidBody, true);
     this.processingEnvelopeId = null;
   }
 
@@ -351,6 +565,8 @@ export class MailSystem {
     this.envelopeInstanceCounter = 0;
     this.envelopeSpawnTimer = null;
     this.processingEnvelopeId = null;
+    this.pendingEnvelopeIds = [];
+    this.completedEnvelopeIds = [];
     this.stableTimer = 0;
   }
 
@@ -398,19 +614,15 @@ export class MailSystem {
     this.stableTimer = stable ? this.stableTimer + deltaTime : 0;
 
     if (this.stableTimer >= STABLE_THRESHOLD) {
-      // Snap flat, centered, face-up (spec四: "信封吸附到桌面/自動平放/正面
-      // 朝上/暫停該信封物理").
-      const snapY = BACK_AREA.floorY + STAMP_TABLE.height + ENVELOPE_SIZE.height / 2 + 0.005;
-      obj.mesh.position.set(STAMP_TABLE.posX, snapY, STAMP_TABLE.posZ);
-      obj.mesh.rotation.set(0, 0, 0);
-      if (obj.rigidBody) {
-        obj.rigidBody.setTranslation({ x: STAMP_TABLE.posX, y: snapY, z: STAMP_TABLE.posZ }, true);
-        obj.rigidBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
-        obj.rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
-        obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
-        this.physics.setBodyEnabled(obj.rigidBody, false);
-      }
-      this.processingEnvelopeId = id;
+      // "Add envelope stacks and expand pallet inventory" round五: a
+      // hand-placed envelope now joins the PENDING queue (admitEnvelopesTo
+      // Pending itself re-snaps it into that pile's own slot, physics
+      // disabled) rather than becoming the active/processing envelope
+      // directly — starting the actual minigame is now always an explicit
+      // player E-press at the table (game-app.ts's startMailStampUi calling
+      // advanceQueue()), whether that pending entry arrived via this
+      // physical sensor or via EnvelopeStackSystem's own bulk hand-in.
+      this.admitEnvelopesToPending([id]);
       this.stableTimer = 0;
     }
   }

@@ -8,6 +8,7 @@ import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { HUD } from '../hud';
 import { PauseManager } from '../../core/pause-manager';
 import { SettingsManager } from '../settings';
+import { ENVELOPE_STACK_HELD_ID } from '../mail/envelope-stack-system';
 
 /** "Remove sealing and add physical mail box contents" round三/十: a narrow,
  * mail-box-specific parallel to this file's own EXISTING generic container
@@ -893,6 +894,16 @@ export class PickupSystem implements PickupPort {
 
   private startCharge(): void {
     if (this.playerData.state !== 'holding-item') return;
+    // "Add envelope stacks and expand pallet inventory" round — an envelope
+    // stack's own Q-throw is entirely owned by EnvelopeStackSystem's own
+    // dedicated handling (spec四), never this generic path: unlike the
+    // ladder/pallet's own world-space carry (whose heldObjectId always
+    // names a REAL registered interactable, so getActiveHeldItem() below
+    // would actually resolve one), the stack's sentinel id never does,
+    // which already makes this path a silent no-op on release — but
+    // without this early bail it would still show a live, dangling charge
+    // bar the whole time Q is held for nothing, which reads as a real bug.
+    if (this.playerData.heldObjectId === ENVELOPE_STACK_HELD_ID) return;
     // Generic opt-out for held objects that must never be thrown (spec
     // "貨品外型與比例有更多變化" round 十一: the sorting pallet — throwing a
     // whole loaded pallet would fling every pinned cargo item with it).
