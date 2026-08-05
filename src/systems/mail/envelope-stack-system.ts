@@ -362,10 +362,14 @@ export class EnvelopeStackSystem {
     this.removeFromStack(ids);
   }
 
-  // --- F: stack/single mode toggle ---
+  // --- F: stack/single mode toggle / Q: throw ---
 
   private onKeyDown(event: KeyboardEvent): void {
-    if (event.code !== 'KeyF') return;
+    if (event.code === 'KeyF') { this.handleModeToggleKey(event); return; }
+    if (event.code === 'KeyQ') { this.handleThrowKey(event); return; }
+  }
+
+  private handleModeToggleKey(event: KeyboardEvent): void {
     if (!this.isLocked() || this.pauseManager.isPaused) return;
     // spec三: only while carrying a stack, OR empty-handed and aiming at an
     // eligible envelope (crosshair target resolved by InteractionSystem via
@@ -382,6 +386,31 @@ export class EnvelopeStackSystem {
     this.actionMode = this.actionMode === 'stack' ? 'single' : 'stack';
     this.hud.showToast(this.actionMode === 'stack' ? '已切換：整疊模式' : '已切換：單張模式');
     this.refreshHud();
+  }
+
+  /** "Fix envelope stack throw routing" round — root cause: throwRelease()
+   * (above) has always existed and was already correctly excluded from
+   * PickupSystem's own generic Q-charge-throw (see pickup-system.ts's
+   * startCharge() own ENVELOPE_STACK_HELD_ID early-return, from the original
+   * "Add envelope stacks and expand pallet inventory" round), but nothing
+   * ever actually WIRED Q to this class's own throwRelease — no keydown
+   * listener called it, so Q silently did nothing at all while carrying a
+   * stack. Own independent listener, mirroring handleModeToggleKey's own F
+   * handler right above (and pallet-system.ts's own independent Q/F
+   * listeners) — never touches PickupSystem's own chargeThrow flow, which
+   * stays a harmless no-op for this sentinel either way. Instant on keydown
+   * (not a hold-to-charge mechanic like PickupSystem's own Q) — matches
+   * throwRelease's own "kept simple/fixed" design (see its own doc
+   * comment). `event.repeat` guarded so a held-down key can never fire more
+   * than once (spec七). */
+  private handleThrowKey(event: KeyboardEvent): void {
+    if (event.repeat) return;
+    if (!this.isLocked() || this.pauseManager.isPaused) return;
+    if (!this.isCarrying) return;
+    event.preventDefault();
+    const fwd = new THREE.Vector3();
+    this.camera.getWorldDirection(fwd);
+    this.throwRelease(this.camera.position, fwd);
   }
 
   // --- Per-frame carry visual ---
