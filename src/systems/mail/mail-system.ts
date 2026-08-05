@@ -282,6 +282,77 @@ export class MailSystem {
     return Math.max(0, STAMP_TABLE_CAPACITY - occupied);
   }
 
+  /** "Fix mail workbench envelope intake" round — read-only existence check
+   * (never admits/mutates) for whether at least one eligible-but-not-yet-
+   * registered envelope is physically resting on the desk right now. Reuses
+   * the SAME sensorBox volume the passive per-frame sensor already tests
+   * against (updateTableSensor below), and the same eligibility rules as
+   * scanDeskForUnregisteredEnvelopes (unstamped, not already on the table in
+   * any pile/active slot, not held, visible) — kept as its own cheap query
+   * (no mutation) so canStartMailTable can be called every frame for the
+   * crosshair prompt without side effects. */
+  private hasUnregisteredDeskEnvelope(): boolean {
+    for (const [id, rec] of this.envelopes) {
+      if (rec.state !== 'unstamped') continue;
+      if (this.isOnStampTable(id)) continue;
+      const obj = this.interactables.get(id);
+      if (!obj || obj.isHeld || !obj.mesh.visible) continue;
+      if (this.sensorBox.containsPoint(obj.mesh.position)) return true;
+    }
+    return false;
+  }
+
+  /** ONE canonical judgment for whether pressing E at the table right now
+   * should start/resume stamping — shared by BOTH the crosshair prompt
+   * (InteractionSystem.updateStationPrompts) and the actual E-press action
+   * (InteractionSystem.onKeyDown), so the two can never disagree ("Fix mail
+   * workbench envelope intake" round spec三 — root cause of "已有信封在桌上
+   * 但按E無效": the two used to gate on `readyEnvelopeId` alone, which only
+   * ever became true via advanceQueue(), and nothing ever called
+   * advanceQueue() from a purely-pending state — a dead end). True whenever
+   * something is already active, the pending pile already has at least one
+   * envelope, OR at least one eligible envelope is sitting on the desk
+   * physically but not yet registered (scanDeskForUnregisteredEnvelopes
+   * below is what actually registers it, called by the caller right before
+   * starting the UI). */
+  canStartMailTable(cameraPosition: THREE.Vector3): boolean {
+    if (!this.isPlayerNearTable(cameraPosition)) return false;
+    return this.processingEnvelopeId !== null || this.pendingEnvelopeIds.length > 0 || this.hasUnregisteredDeskEnvelope();
+  }
+
+  /** Scans the table's own desk volume for unstamped envelopes that are
+   * physically resting there but not yet registered into pendingEnvelopeIds
+   * (spec: "掃描工作台桌面範圍內實際放置的未貼票Envelope"), and admits as
+   * many as the table's remaining capacity allows — called by
+   * InteractionSystem's empty-handed E-press handler right before starting/
+   * resuming the stamp flow, so "the mesh is visibly on the desk but was
+   * never actually queued" (spec: "不可只顯示信封Mesh在桌面，卻沒有登記進工
+   * 作台佇列") can never happen, regardless of how the envelope got there
+   * (a stack-mode Q-throw that happened to land on the desk, several
+   * envelopes arriving at once — the passive per-frame sensor in
+   * updateTableSensor below only ever auto-admits when EXACTLY one stable
+   * envelope occupies the box — or any other path that never went through
+   * EnvelopeStackSystem.tryHandToTable). Exclusions are enforced entirely by
+   * the existing state machine, not special-cased here: already-stamped
+   * envelopes fail the unstamped check, PackedMailBag/bagged/shipped
+   * envelopes are never 'unstamped', dispatch-machine-consumed envelopes are
+   * already removed from `interactables` entirely, and isOnStampTable
+   * excludes anything already pending/completed/active — so a repeat scan
+   * (e.g. the next E press) never double-registers the same id (spec: "以
+   * Envelope ID去重，不可複製或重複登記"). */
+  scanDeskForUnregisteredEnvelopes(): string[] {
+    const candidates: string[] = [];
+    for (const [id, rec] of this.envelopes) {
+      if (rec.state !== 'unstamped') continue;
+      if (this.isOnStampTable(id)) continue;
+      const obj = this.interactables.get(id);
+      if (!obj || obj.isHeld || !obj.mesh.visible) continue;
+      if (!this.sensorBox.containsPoint(obj.mesh.position)) continue;
+      candidates.push(id);
+    }
+    return this.admitEnvelopesToPending(candidates);
+  }
+
   /** Snaps a single envelope into its own pending-pile slot (index = its own
    * position within pendingEnvelopeIds) — physics disabled, same "artificial
    * stack" treatment the active slot already used before this round (see

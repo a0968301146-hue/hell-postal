@@ -759,7 +759,14 @@ export class InteractionSystem {
       this.onStartEnvelopeMinigame();
       return;
     }
-    if (this.mailSystem.readyEnvelopeId && this.mailSystem.isPlayerNearTable(this.camera.position)) {
+    if (this.mailSystem.canStartMailTable(this.camera.position)) {
+      // "Fix mail workbench envelope intake" round spec四B: empty-handed E
+      // at the table first registers whatever unstamped envelopes are
+      // physically sitting on the desk but not yet in pendingEnvelopeIds
+      // (a no-op if there's nothing new — e.g. the pending-only case,
+      // spec四C), THEN opens/resumes the stamp UI (which itself calls
+      // MailSystem.advanceQueue() if nothing is active yet).
+      this.mailSystem.scanDeskForUnregisteredEnvelopes();
       this.onStartMailStampUi();
       return;
     }
@@ -1221,8 +1228,18 @@ export class InteractionSystem {
     // covers "just standing at the table with a ready envelope", matching
     // the old envelope station's own pattern above.
     if (this.mailSystem.isPlayerNearTable(this.camera.position)) {
-      if (this.mailSystem.readyEnvelopeId) {
-        this.hud.showInteractionPrompt('信封貼郵票工作桌', '按 E 開始貼郵票');
+      // "Fix mail workbench envelope intake" round spec三: the SAME
+      // canStartMailTable judgment the E-press handler (onKeyDown, above)
+      // reads, so the prompt and the actual action can never disagree —
+      // true whenever something's active, pending already has envelopes, OR
+      // at least one eligible envelope is sitting on the desk waiting to be
+      // scanned in (onKeyDown's own scanDeskForUnregisteredEnvelopes call is
+      // what actually registers it).
+      if (this.mailSystem.canStartMailTable(this.camera.position)) {
+        this.hud.showInteractionPrompt(
+          '信封貼郵票工作桌',
+          `待處理：${this.mailSystem.pendingCount}封／已完成：${this.mailSystem.completedCount}封\nE 開始／繼續貼郵票`
+        );
         this.hud.setCrosshairActive(true);
       } else {
         this.hud.showInteractionPrompt('信封貼郵票工作桌', '請先將信封放到桌面');
