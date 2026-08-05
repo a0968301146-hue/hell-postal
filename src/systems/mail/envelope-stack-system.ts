@@ -170,9 +170,9 @@ export class EnvelopeStackSystem {
 
   /** True if `id` is a valid E-target right now — either a loose ground
    * envelope, or an envelope currently sitting in one of the stamp table's
-   * own queue piles (spec七: "拿取規則沿用整疊／單張模式") — both routed
-   * through the same pickUpFromGround() below, since "gather same-pile
-   * matches" applies equally to either collection. */
+   * own queue piles. Every E press only ever adds `id` itself (see
+   * pickUpTarget below — "Make envelope pickup one at a time" round),
+   * regardless of which collection it came from. */
   canPickUpTarget(id: string): boolean {
     const obj = this.interactables.get(id);
     if (!obj) return false;
@@ -191,53 +191,21 @@ export class EnvelopeStackSystem {
 
   // --- Pickup (E, empty-handed or already carrying, aimed at an envelope) ---
 
-  /** spec一/四: stack mode gathers `targetId` plus other SAME-collection
-   * (loose-ground OR the SAME table pile — never mixed) same-state
-   * envelopes up to remaining capacity; single mode takes only `targetId`
-   * itself. */
+  /** "Make envelope pickup one at a time" round — every E press ever adds
+   * exactly ONE envelope, regardless of stack/single actionMode (spec:
+   * "玩家每按一次E，只能拿起1封信件，不論目前是整疊模式或單張模式"). This is
+   * pickup-only: actionMode still fully governs the RELEASE side (place/
+   * throw/hand-to-table — see takeForRelease below), stack mode there still
+   * acts on the whole stackIds array, single mode still only the top one. */
   pickUpTarget(targetId: string): void {
     if (!this.canPickUpTarget(targetId)) return;
     const onTable = this.mailSystem.isOnStampTable(targetId);
     const state = (this.mailSystem.getEnvelope(targetId)?.state ?? null) as EnvelopeState | null;
     if (!state) return;
 
-    const ids = this.actionMode === 'single' ? [targetId] : this.gatherMatchingIds(targetId, state, onTable);
-    let added = 0;
-    for (const id of ids) {
-      if (this.stackIds.length >= this.maxCapacity) break;
-      if (onTable) this.mailSystem.removeFromQueue(id);
-      this.addToStack(id, state);
-      added++;
-    }
-    if (added === 0) return;
+    if (onTable) this.mailSystem.removeFromQueue(targetId);
+    this.addToStack(targetId, state);
     if (this.stackIds.length >= this.maxCapacity) this.hud.showToast('信封攜帶量已達上限');
-  }
-
-  /** Stack-mode gather — `targetId` first, then other eligible ids from the
-   * SAME collection (loose ground, or specifically whichever table pile
-   * `targetId` itself belongs to), in stable insertion order, capped by
-   * remaining capacity by the caller. */
-  private gatherMatchingIds(targetId: string, state: EnvelopeState, onTable: boolean): string[] {
-    const result = [targetId];
-    const remaining = this.maxCapacity - this.stackIds.length;
-    if (remaining <= 1) return result;
-
-    if (onTable) {
-      const pile = state === 'unstamped' ? this.mailSystem.getPendingEnvelopeIds() : this.mailSystem.getCompletedEnvelopeIds();
-      for (const id of pile) {
-        if (id === targetId) continue;
-        if (result.length >= remaining) break;
-        result.push(id);
-      }
-      return result;
-    }
-
-    for (const [id, obj] of this.interactables) {
-      if (id === targetId) continue;
-      if (result.length >= remaining) break;
-      if (this.eligibleGroundState(id, obj) === state) result.push(id);
-    }
-    return result;
   }
 
   private addToStack(id: string, state: EnvelopeState): void {

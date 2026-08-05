@@ -1001,8 +1001,11 @@ export class InteractionSystem {
           this.hud.showInteractionPrompt('信件工作台', 'E 放入信件');
           this.hud.setCrosshairActive(true);
         } else if (hit && this.envelopeStackSystem.canPickUpTarget(hit.id)) {
-          const modeText = this.envelopeStackSystem.mode === 'stack' ? 'E 加入信封疊' : 'E 加入（單張）';
-          this.hud.showInteractionPrompt(hit.displayName, modeText);
+          // "Make envelope pickup one at a time" round — every E press only
+          // ever adds 1 envelope now, regardless of actionMode, so the
+          // prompt is no longer mode-dependent (spec: "提示改為「E 拿起1封
+          // 信」").
+          this.hud.showInteractionPrompt(hit.displayName, 'E 拿起1封信');
           this.hud.setCrosshairActive(true);
         } else {
           this.hud.showInteractionPrompt('信封', 'E 放下　Q 丟出　F 切換模式');
@@ -1111,7 +1114,7 @@ export class InteractionSystem {
           const stampText = rec.state === 'unstamped' ? '未貼票' : '已貼票';
           this.hud.showInteractionPrompt(
             newTarget.displayName,
-            `目的地：${dest.displayName}\n地區：${regionText}\n狀態：${stampText}\n按 E 拿起`
+            `目的地：${dest.displayName}\n地區：${regionText}\n狀態：${stampText}\nE 拿起1封信`
           );
         } else if (this.mailBagSystem.isBag(newTarget.id)) {
           // "Remove sealing and add physical mail box contents" round八: no
