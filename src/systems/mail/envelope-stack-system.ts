@@ -7,6 +7,10 @@ import { PauseManager } from '../../core/pause-manager';
 import { ENVELOPE_SIZE } from '../../data/world/mail-layout-data';
 import { MailSystem } from './mail-system';
 import { EnvelopeState } from './mail-types';
+// "Add charged envelope stack throwing" round — reuses PickupSystem's own
+// charge-time/impulse-range constants (spec: "只引用相同常數，不要重構
+// PickupSystem") rather than inventing a second set of numbers.
+import { SCENE_CONFIG } from '../world-layout';
 
 /** Sentinel `playerData.heldObjectId` while carrying an envelope stack —
  * mirrors LadderSystem/PalletSystem's own convention of writing a known id
@@ -91,6 +95,15 @@ export class EnvelopeStackSystem {
   private maxCapacity = DEFAULT_MAX_CAPACITY;
   private downRaycaster = new THREE.Raycaster();
 
+  /** "Add charged envelope stack throwing" round — this class's own
+   * independent charge state (never reaches into PickupSystem's private
+   * isCharging/chargeTime fields — the two are mutually exclusive anyway,
+   * since PickupSystem.startCharge() already no-ops for the envelope-stack
+   * sentinel). Same shape/semantics as PickupSystem's own fields, just a
+   * separate instance of them. */
+  private isCharging = false;
+  private chargeTime = 0;
+
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>,
     playerData: PlayerInteractionData, camera: THREE.PerspectiveCamera, hud: HUD, mailSystem: MailSystem,
@@ -106,15 +119,29 @@ export class EnvelopeStackSystem {
     this.pauseManager = pauseManager;
     this.isLocked = isLockedFn;
 
-    // Independent F-listener (spec三) — mirrors pallet-system.ts's own F-key
-    // rope-strap toggle, a SEPARATE document-level 'keydown' listener rather
-    // than threading through InteractionSystem's own existing F handler
-    // (which only ever fires for mail-bag pattern cycling / the legacy
-    // crate, both structurally unable to match an envelope-stack scenario —
-    // see this method's own guard). This is how the codebase already keeps
-    // multiple independent F-key consumers from colliding (spec三: "不可同時
-    // 觸發其他F互動...不可破壞力量手套對地面托盤使用固定繩索的F功能").
+    // Independent F/Q-listener (spec三, and "Add charged envelope stack
+    // throwing" round for Q) — mirrors pallet-system.ts's own independent
+    // F-key rope-strap toggle, SEPARATE document-level listeners rather than
+    // threading through InteractionSystem's own existing F handler (which
+    // only ever fires for mail-bag pattern cycling / the legacy crate, both
+    // structurally unable to match an envelope-stack scenario — see this
+    // method's own guard) or PickupSystem's own Q-charge-throw (which
+    // already no-ops for this sentinel — see its own startCharge doc
+    // comment). This is how the codebase already keeps multiple independent
+    // key consumers from colliding (spec三: "不可同時觸發其他F互動...不可破
+    // 壞力量手套對地面托盤使用固定繩索的F功能").
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
+    document.addEventListener('keyup', (e) => this.onKeyUp(e));
+    // Cancel-charge conditions (spec: "取消蓄力：暫停／開啟UI／失去Pointer
+    // Lock"): PauseManager.onChange fires whenever ANY pause reason is
+    // added/removed (every menu/minigame routes through the same reasons
+    // set — see pause-manager.ts), so this one subscription covers BOTH
+    // "暫停" and "開啟UI" without needing to enumerate every UI system
+    // individually. pointerlockchange covers "失去Pointer Lock" directly.
+    pauseManager.onChange((paused) => { if (paused) this.cancelCharge(); });
+    document.addEventListener('pointerlockchange', () => {
+      if (!this.isLocked()) this.cancelCharge();
+    });
   }
 
   // --- Upgrade hook ---
@@ -334,14 +361,22 @@ export class EnvelopeStackSystem {
     return true;
   }
 
-  /** Q: throw the current release-batch (mirrors PickupSystem's own
-   * charge-throw impulse scale loosely — kept simple/fixed here since a
-   * thrown envelope is trivially light, spec四: "放出後每封恢復個別物理，可
-   * 自然散開"). */
-  throwRelease(cameraPosition: THREE.Vector3, cameraForward: THREE.Vector3): void {
+  /** Q (on release): throw the current release-batch. `chargeRatio` (0-1,
+   * 0 if omitted) scales the throw speed from PickupSystem's own
+   * minThrowImpulse up to maxThrowImpulse (spec5: "投擲速度依chargeRatio由
+   * 最低投擲力平滑增加至既有最大投擲力") — same SCENE_CONFIG constants
+   * PickupSystem's own executeThrow reads, just applied as a direct
+   * setLinvel speed rather than an applyImpulse (an envelope has no
+   * meaningful mass to divide out, unlike PickupSystem's own cargo throw).
+   * Each envelope still gets its own small forward-offset stagger (spec6:
+   * "加入小幅位置／方向錯開") so a whole stack never spawns exactly
+   * overlapping (spec四: "放出後每封恢復個別物理，可自然散開"). */
+  throwRelease(cameraPosition: THREE.Vector3, cameraForward: THREE.Vector3, chargeRatio = 0): void {
     if (!this.isCarrying) return;
     const ids = this.takeForRelease();
     const dir = cameraForward.clone().normalize();
+    const ratio = THREE.MathUtils.clamp(chargeRatio, 0, 1);
+    const throwSpeed = SCENE_CONFIG.minThrowImpulse + ratio * (SCENE_CONFIG.maxThrowImpulse - SCENE_CONFIG.minThrowImpulse);
     let i = 0;
     for (const id of ids) {
       const obj = this.interactables.get(id);
@@ -354,7 +389,7 @@ export class EnvelopeStackSystem {
         obj.rigidBody.setTranslation({ x: spawnPos.x, y: spawnPos.y, z: spawnPos.z }, true);
         obj.rigidBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
         const jitter = () => (Math.random() - 0.5) * 1.2;
-        obj.rigidBody.setLinvel({ x: dir.x * 4.5 + jitter(), y: 2.0 + jitter() * 0.3, z: dir.z * 4.5 + jitter() }, true);
+        obj.rigidBody.setLinvel({ x: dir.x * throwSpeed + jitter(), y: 2.0 + jitter() * 0.3, z: dir.z * throwSpeed + jitter() }, true);
         obj.rigidBody.setAngvel({ x: jitter(), y: jitter(), z: jitter() }, true);
       }
       i++;
@@ -362,11 +397,15 @@ export class EnvelopeStackSystem {
     this.removeFromStack(ids);
   }
 
-  // --- F: stack/single mode toggle / Q: throw ---
+  // --- F: stack/single mode toggle / Q: hold-to-charge throw ---
 
   private onKeyDown(event: KeyboardEvent): void {
     if (event.code === 'KeyF') { this.handleModeToggleKey(event); return; }
-    if (event.code === 'KeyQ') { this.handleThrowKey(event); return; }
+    if (event.code === 'KeyQ') { this.handleThrowKeyDown(event); return; }
+  }
+
+  private onKeyUp(event: KeyboardEvent): void {
+    if (event.code === 'KeyQ') this.handleThrowKeyUp();
   }
 
   private handleModeToggleKey(event: KeyboardEvent): void {
@@ -388,34 +427,75 @@ export class EnvelopeStackSystem {
     this.refreshHud();
   }
 
-  /** "Fix envelope stack throw routing" round — root cause: throwRelease()
-   * (above) has always existed and was already correctly excluded from
-   * PickupSystem's own generic Q-charge-throw (see pickup-system.ts's
-   * startCharge() own ENVELOPE_STACK_HELD_ID early-return, from the original
-   * "Add envelope stacks and expand pallet inventory" round), but nothing
-   * ever actually WIRED Q to this class's own throwRelease — no keydown
-   * listener called it, so Q silently did nothing at all while carrying a
-   * stack. Own independent listener, mirroring handleModeToggleKey's own F
-   * handler right above (and pallet-system.ts's own independent Q/F
-   * listeners) — never touches PickupSystem's own chargeThrow flow, which
-   * stays a harmless no-op for this sentinel either way. Instant on keydown
-   * (not a hold-to-charge mechanic like PickupSystem's own Q) — matches
-   * throwRelease's own "kept simple/fixed" design (see its own doc
-   * comment). `event.repeat` guarded so a held-down key can never fire more
-   * than once (spec七). */
-  private handleThrowKey(event: KeyboardEvent): void {
+  /** "Add charged envelope stack throwing" round — Q now charges like
+   * PickupSystem's own generic throw instead of firing instantly (spec:
+   * "優先沿用一般PickupSystem既有的蓄力時間、力度曲線與蓄力UI，不另做第二套
+   * 規格"). KEYDOWN only ever STARTS charging, never throws immediately
+   * (spec流程1) — `event.repeat` guarded so a held-down key can't repeatedly
+   * restart the charge (spec7). PickupSystem's own startCharge() already
+   * no-ops for this sentinel (see its own doc comment), so the two can never
+   * both charge from the same key press. */
+  private handleThrowKeyDown(event: KeyboardEvent): void {
     if (event.repeat) return;
     if (!this.isLocked() || this.pauseManager.isPaused) return;
     if (!this.isCarrying) return;
     event.preventDefault();
-    const fwd = new THREE.Vector3();
-    this.camera.getWorldDirection(fwd);
-    this.throwRelease(this.camera.position, fwd);
+    this.isCharging = true;
+    this.chargeTime = 0;
   }
 
-  // --- Per-frame carry visual ---
+  /** KEYUP commits the throw at whatever chargeRatio was reached (spec流程
+   * 2) — a no-op (never throws) if charging was never active, or was
+   * already cancelled mid-hold by cancelCharge() below (pause/UI opened,
+   * pointer lock lost, or the stack emptied out from under the player). */
+  private handleThrowKeyUp(): void {
+    if (!this.isCharging) return;
+    const ratio = this.chargeRatio;
+    this.isCharging = false;
+    this.chargeTime = 0;
+    this.hud.hideChargeBar();
+    if (!this.isCarrying) return;
+    const fwd = new THREE.Vector3();
+    this.camera.getWorldDirection(fwd);
+    this.throwRelease(this.camera.position, fwd, ratio);
+  }
 
-  update(): void {
+  /** Same 0-1 shape as PickupSystem's own chargeRatio getter, reading the
+   * SAME SCENE_CONFIG.maxChargeTime constant. */
+  get chargeRatio(): number {
+    if (!this.isCharging) return 0;
+    return Math.min(this.chargeTime / SCENE_CONFIG.maxChargeTime, 1);
+  }
+
+  /** Cancels an in-progress charge WITHOUT throwing anything (spec: "取消時
+   * 不可丟出信封，並清除蓄力UI") — wired to every cancel condition spec
+   * lists: pauseManager.onChange (covers both "暫停" and "開啟UI", see the
+   * constructor's own doc comment), pointerlockchange (covers "失去Pointer
+   * Lock"), and update()'s own per-frame isCarrying re-check plus
+   * resetDaily() below (cover "信封數量歸零"/"玩家不再持有信封疊"). A safe
+   * no-op if nothing is currently charging. */
+  private cancelCharge(): void {
+    if (!this.isCharging) return;
+    this.isCharging = false;
+    this.chargeTime = 0;
+    this.hud.hideChargeBar();
+  }
+
+  // --- Per-frame carry visual + charge accumulation ---
+
+  update(deltaTime: number): void {
+    if (this.isCharging) {
+      if (!this.isCarrying) {
+        // spec: "取消蓄力：...信封數量歸零／玩家不再持有信封疊" — something
+        // else emptied the stack out from under an in-progress charge (e.g.
+        // resetDaily below already calls cancelCharge directly too, this is
+        // the defensive per-frame fallback).
+        this.cancelCharge();
+      } else {
+        this.chargeTime = Math.min(this.chargeTime + deltaTime, SCENE_CONFIG.maxChargeTime);
+        this.hud.showChargeBar(this.chargeRatio);
+      }
+    }
     if (this.stackIds.length === 0) return;
     const camPos = this.camera.position;
     const camQuat = this.camera.quaternion;
@@ -455,6 +535,7 @@ export class EnvelopeStackSystem {
    * — called BEFORE mailSystem.resetDaily() in create-game-systems.ts's
    * reset callback, mirroring mailBagSystem's own ordering. */
   resetDaily(): void {
+    this.cancelCharge();
     this.stackIds = [];
     this.processingState = null;
     this.actionMode = 'stack';

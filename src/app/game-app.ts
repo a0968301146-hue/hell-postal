@@ -275,8 +275,10 @@ export class GameApp {
       // "Add envelope stacks and expand pallet inventory" round — same
       // no-op-unless-carrying self-guard as palletSystem/ladderSystem just
       // above; repositions each held envelope's real mesh/body in front of
-      // the camera every frame (spec二).
-      s.envelopeStackSystem.update();
+      // the camera every frame (spec二). "Add charged envelope stack
+      // throwing" round: now also takes deltaTime to accumulate its own
+      // independent Q-hold charge timer.
+      s.envelopeStackSystem.update(deltaTime);
       if (ENABLE_LEGACY_COUNTER) {
         s.counterNpcSystem.update(deltaTime);
         s.counterServiceSystem.update(deltaTime);
