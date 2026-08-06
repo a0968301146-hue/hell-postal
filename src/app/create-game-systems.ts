@@ -497,7 +497,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // "Add freezer shelves and frozen cargo freshness system" round — built
   // once both cargoSystem and palletSystem already exist (needs
   // palletSystem's own getRackedPalletIds/getCargoIdsOnPallet getters).
-  const freezerSystem = new FreezerSystem(scene, cargoSystem, palletSystem, playerData, hud);
+  const freezerSystem = new FreezerSystem(scene, physics, cargoSystem, palletSystem, playerData, hud);
   // Foldable ladder + immovable tool cart ("Add ladder tool station and
   // envelope vacuum" round一/二) — built near the pallet system since the
   // ladder's own wall slot is derived from the pallet racks' own wall

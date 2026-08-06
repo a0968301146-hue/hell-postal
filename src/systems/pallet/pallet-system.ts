@@ -971,16 +971,21 @@ export class PalletSystem implements PalletThrowHooks {
     return this.heldPalletId;
   }
 
-  /** "Add freezer shelves and frozen cargo freshness system" round — every
-   * pallet currently mounted on its wall rack (spec五: "若托盤放在冷凍貨架
-   * 上"). FreezerSystem's own ONE read of pallet mount state — never reaches
-   * into `pallets`/`storageState` directly itself. */
-  getRackedPalletIds(): string[] {
-    const ids: string[] = [];
+  /** "Add freezer shelves and frozen cargo freshness system" round follow-up
+   * — which pallet (if any) is CURRENTLY genuinely mounted at this exact
+   * rack slot id (spec五: "若托盤放在冷凍貨架上"), null otherwise. Replaces
+   * this round's own earlier getRackedPalletIds() — FreezerSystem no longer
+   * needs "every racked pallet across the whole room" every frame, only "is
+   * MY OWN rack slot occupied right now", cheaply diffed frame-to-frame to
+   * detect a mount/unmount TRANSITION rather than re-scanning continuously
+   * (spec: "貨物只在進入／離開貨架時更新isInsideFreezerShelf"). A plain
+   * linear scan over `pallets` (≤6 total) is cheap enough to call once per
+   * rack per frame regardless. */
+  getPalletIdAtRackSlot(slotId: string): string | null {
     for (const [id, instance] of this.pallets) {
-      if (instance.storageState === 'stored') ids.push(id);
+      if (instance.storageState === 'stored' && instance.wallSlotId === slotId) return id;
     }
-    return ids;
+    return null;
   }
 
   /** "Add freezer shelves and frozen cargo freshness system" round — every

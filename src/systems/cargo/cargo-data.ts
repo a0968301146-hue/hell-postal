@@ -265,6 +265,88 @@ export function createDailyCargoData(id: string, preset: CargoShapePreset, regio
   };
 }
 
+/** "Add freezer shelves and frozen cargo freshness system" round follow-up
+ * — a save-ready snapshot of one cargo item's data, kept as its OWN named
+ * type + an explicit serialize/deserialize pair (spec: "把coldValue納入
+ * Cargo的序列化／反序列化架構，即使目前沒有localStorage，也要保證之後加入
+ * 存檔時可以直接保存，不要等到未來再補").
+ *
+ * Every CargoData field is ALREADY a plain JSON-safe primitive, array, or
+ * plain object today (no THREE.js instances, no circular references) — so
+ * `serializeCargoData`/`deserializeCargoData` below are currently trivial
+ * passthroughs. They exist anyway, as this ONE explicit conversion
+ * boundary, so a future save system has a single already-defined contract
+ * to call into (`cargoSystem.cargoDataMap.values()` -> serializeCargoData ->
+ * JSON -> localStorage, and the reverse on load) rather than either
+ * assuming CargoData itself is safe to JSON.stringify() directly (an
+ * assumption that would silently break the moment CargoData ever gains a
+ * non-serializable field) or having to retrofit coldValue/
+ * isInsideFreezerShelf into a save format invented later without this
+ * round's own context. coldValue/isInsideFreezerShelf are listed explicitly
+ * below (not just `...data`) so adding a new CargoData field in the future
+ * forces a conscious decision about whether it belongs in a save file too,
+ * rather than silently riding along. */
+export interface SerializedCargoData {
+  id: string;
+  cargoType: CargoType;
+  routeType: RouteType;
+  labels: CargoLabel[];
+  displayName: string;
+  dimensions: CargoDimensions;
+  loadedVehicleId: string | null;
+  correctlyShipped: boolean;
+  shapeType: CargoShapeType;
+  organized: boolean;
+  shapePresetId: string | null;
+  sizeClass: CargoSizeClass | null;
+  category: CargoCategory | null;
+  region: CargoRegion | null;
+  coldValue: number;
+  isInsideFreezerShelf: boolean;
+}
+
+export function serializeCargoData(data: CargoData): SerializedCargoData {
+  return {
+    id: data.id,
+    cargoType: data.cargoType,
+    routeType: data.routeType,
+    labels: [...data.labels],
+    displayName: data.displayName,
+    dimensions: { ...data.dimensions },
+    loadedVehicleId: data.loadedVehicleId,
+    correctlyShipped: data.correctlyShipped,
+    shapeType: data.shapeType,
+    organized: data.organized,
+    shapePresetId: data.shapePresetId,
+    sizeClass: data.sizeClass,
+    category: data.category,
+    region: data.region,
+    coldValue: data.coldValue,
+    isInsideFreezerShelf: data.isInsideFreezerShelf,
+  };
+}
+
+export function deserializeCargoData(saved: SerializedCargoData): CargoData {
+  return {
+    id: saved.id,
+    cargoType: saved.cargoType,
+    routeType: saved.routeType,
+    labels: [...saved.labels],
+    displayName: saved.displayName,
+    dimensions: { ...saved.dimensions },
+    loadedVehicleId: saved.loadedVehicleId,
+    correctlyShipped: saved.correctlyShipped,
+    shapeType: saved.shapeType,
+    organized: saved.organized,
+    shapePresetId: saved.shapePresetId,
+    sizeClass: saved.sizeClass,
+    category: saved.category,
+    region: saved.region,
+    coldValue: saved.coldValue,
+    isInsideFreezerShelf: saved.isInsideFreezerShelf,
+  };
+}
+
 export interface CargoSize {
   width: number;
   height: number;

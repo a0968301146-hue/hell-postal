@@ -111,6 +111,42 @@ export class PhysicsSystem implements PhysicsWorldPort {
     return this.world.intersectionPair(this.playerCollider, sensor);
   }
 
+  /** Fixed, non-blocking SENSOR cuboid that detects GROUP_BOX (cargo)
+   * colliders specifically — a sibling to createSensorCuboid above (left
+   * completely untouched: its own filter is hardcoded to GROUP_PLAYER only,
+   * per that method's own spec, and has other real callers outside this
+   * round's scope). "Add freezer shelves and frozen cargo freshness system"
+   * round follow-up: FreezerSystem's own real Rapier trigger volume for
+   * each rack slot (spec: "沿用碰撞Trigger或進出事件... 避免每幀距離掃描") —
+   * a genuine sensor query via getCollidersInsideCargoSensor below, backed
+   * by Rapier's own broad-phase, rather than manual per-item distance math. */
+  createCargoSensorCuboid(x: number, y: number, z: number, hx: number, hy: number, hz: number): RAPIER.Collider {
+    const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z);
+    const body = this.world.createRigidBody(bodyDesc);
+    const colliderDesc = RAPIER.ColliderDesc.cuboid(hx, hy, hz)
+      .setSensor(true)
+      .setCollisionGroups((GROUP_STATIC << 16) | GROUP_BOX)
+      // Cargo bodies are Dynamic (createBoxBody/createCylinderBody), so the
+      // Fixed-sensor/Dynamic-cargo pair is already covered by Rapier's own
+      // ActiveCollisionTypes.DEFAULT alone — KINEMATIC_FIXED is included
+      // anyway, defensively, for the moments cargo is pinned/disabled
+      // (shipping animation) rather than genuinely dynamic, mirroring
+      // createSensorCuboid's own defensive choice above.
+      .setActiveCollisionTypes(RAPIER.ActiveCollisionTypes.DEFAULT | RAPIER.ActiveCollisionTypes.KINEMATIC_FIXED);
+    return this.world.createCollider(colliderDesc, body);
+  }
+
+  /** Every cargo collider currently genuinely overlapping the given sensor
+   * (created via createCargoSensorCuboid above) — the ONE way a caller asks
+   * "what's inside this trigger volume right now", backed by Rapier's own
+   * persistent intersection graph (world.intersectionPairsWith), not a
+   * manual scan of every object's position. */
+  getCollidersInsideCargoSensor(sensor: RAPIER.Collider): RAPIER.Collider[] {
+    const result: RAPIER.Collider[] = [];
+    this.world.intersectionPairsWith(sensor, (other) => result.push(other));
+    return result;
+  }
+
   /** Static cuboid tilted around the X axis (radians) — used for sloped surfaces like the cargo ramp. */
   createStaticCuboidRotatedX(x: number, y: number, z: number, hx: number, hy: number, hz: number, rotX: number, friction = 0.7): void {
     const quat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), rotX);
