@@ -17,7 +17,7 @@ import { MailBagSystem } from '../mail/mail-bag-system';
 import { PackedMailBagSystem } from '../mail/packed-mail-bag-system';
 import { VEHICLE_ROUTES } from './vehicle-route-data';
 import { VEHICLE_CONTROL_WALL_BUTTONS } from '../world-layout';
-import { ScoringSystem, DepartureSettlement, LostFoundSettlementInput } from '../scoring';
+import { ScoringSystem, DepartureSettlement, LostFoundSettlementInput, MailSettlementInput } from '../scoring';
 import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/world-label-system';
 import { HUD } from '../hud';
 import { DailyFlowSystem } from '../daily-flow';
@@ -743,5 +743,21 @@ export class VehicleControlSystem {
         this.onPauseChange(false);
       },
     });
+  }
+
+  /** TEMPORARY TEST CHEAT — remove before public demo. The settlement half
+   * of the "完成當日" cheat button (complete-day-cheat-system.ts) — bypasses
+   * the real six-vehicle dock/load/depart animation sequence entirely, but
+   * still computes the settlement via the SAME ScoringSystem.settleDeparture()
+   * the real departure flow uses (never touches CargoData.correctlyShipped
+   * or fabricates a score directly) and opens the SAME real day-complete
+   * summary screen via the exact private showDayCompleteSummary() the real
+   * flow itself calls from checkAllDeparted(). The caller (the cheat system)
+   * has already marked every daily cargo/envelope/NPC as complete via each
+   * system's own real API before calling this — `cargoTotal`/`lostFound`/
+   * `mail` are those already-computed real tallies, not fabricated here. */
+  forceSettleDayForTesting(cargoTotal: number, lostFound: LostFoundSettlementInput, mail: MailSettlementInput): void {
+    this.pendingSettlement = this.scoringSystem.settleDeparture(cargoTotal, cargoTotal, 0, lostFound, mail);
+    this.showDayCompleteSummary();
   }
 }

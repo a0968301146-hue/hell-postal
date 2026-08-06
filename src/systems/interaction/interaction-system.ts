@@ -29,6 +29,7 @@ import { isNpcEDebugEnabled, logNpcEDebug } from './npc-e-debug';
 // cross-system import in this file's own established convention.
 import { LadderSystem } from '../ladder/ladder-system';
 import { ToolStationSystem } from '../tool-station-system';
+import { CompleteDayCheatSystem } from '../cheat/complete-day-cheat-system';
 
 export class InteractionSystem {
   private raycaster: THREE.Raycaster;
@@ -93,6 +94,8 @@ export class InteractionSystem {
    * and envelope vacuum" round三) — same plain-callback pattern as
    * onOpenUpgradeMenu/onOpenMediaPlayer above. */
   private onOpenToolLoadoutMenu: () => void;
+  /** "Add complete day testing cheat button" round. */
+  private completeDayCheatSystem: CompleteDayCheatSystem;
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -125,6 +128,7 @@ export class InteractionSystem {
     ladderSystem: LadderSystem,
     toolStationSystem: ToolStationSystem,
     onOpenToolLoadoutMenu: () => void,
+    completeDayCheatSystem: CompleteDayCheatSystem,
     onDollyUsed?: () => void
   ) {
     this.raycaster = new THREE.Raycaster();
@@ -158,6 +162,7 @@ export class InteractionSystem {
     this.ladderSystem = ladderSystem;
     this.toolStationSystem = toolStationSystem;
     this.onOpenToolLoadoutMenu = onOpenToolLoadoutMenu;
+    this.completeDayCheatSystem = completeDayCheatSystem;
     this.onDollyUsed = onDollyUsed;
 
     // "Fix trusted keyboard NPC interaction" round四: moved from
@@ -411,6 +416,7 @@ export class InteractionSystem {
         !this.ladderSystem.isLadderRackTarget(this.currentTarget.id) &&
         this.currentTarget.id !== MAIL_RACK_INTERACTABLE_ID &&
         this.currentTarget.id !== VEHICLE_CALL_BUTTON_ID && this.currentTarget.id !== VEHICLE_DEPART_BUTTON_ID &&
+        !this.completeDayCheatSystem.isCheatButtonTarget(this.currentTarget.id) &&
         !this.isLostFoundNpcTarget(this.currentTarget) &&
         !(this.mailBagSystem.isBag(this.currentTarget.id) && isHoldingEnvelope) &&
         this.pickupSystem.canAddToHeld(this.currentTarget)
@@ -659,6 +665,22 @@ export class InteractionSystem {
     }
     if (this.currentTarget && this.currentTarget.id === VEHICLE_DEPART_BUTTON_ID) {
       this.vehicleControlSystem.pressDepartButton();
+      this.clearHighlight(this.currentTarget);
+      this.currentTarget = null;
+      return;
+    }
+
+    // Priority 0.85: "完成當日" test cheat button (lost-found room north
+    // wall — "Add complete day testing cheat button" round). Same
+    // raycast-precise, canPickUp-only-for-the-filter pattern as the mail
+    // rack/vehicle buttons just above; canPressCheatButton is the ONE
+    // canonical judgment this same class's own prompt-update loop below
+    // also reads, so the prompt and the actual E-press can never disagree
+    // (spec六: "提示與實際操作共用同一個Raycast Target").
+    if (this.currentTarget && this.completeDayCheatSystem.isCheatButtonTarget(this.currentTarget.id)) {
+      if (this.completeDayCheatSystem.canPressCheatButton(this.camera.position)) {
+        this.completeDayCheatSystem.pressCheatButton();
+      }
       this.clearHighlight(this.currentTarget);
       this.currentTarget = null;
       return;
@@ -951,6 +973,7 @@ export class InteractionSystem {
         !this.toolStationSystem.isToolStationTarget(hit.id) &&
         !this.envelopeDispatchMachineSystem.isPackButtonTarget(hit.id) &&
         hit.id !== VEHICLE_CALL_BUTTON_ID && hit.id !== VEHICLE_DEPART_BUTTON_ID && !this.isLostFoundNpcTarget(hit) &&
+        !this.completeDayCheatSystem.isCheatButtonTarget(hit.id) &&
         this.pickupSystem.canAddToHeld(hit)
       ) {
         if (this.currentTarget !== hit) {
@@ -1175,6 +1198,12 @@ export class InteractionSystem {
             '載具出發',
             this.vehicleControlSystem.canDepart ? '按 E 讓兩台載具一起離場' : this.vehicleControlSystem.departBlockedMessage()
           );
+        } else if (this.completeDayCheatSystem.isCheatButtonTarget(newTarget.id)) {
+          // TEMPORARY TEST CHEAT — remove before public demo. Same crosshair-
+          // hit-only prompt convention as the other wall buttons above; text
+          // is centrally owned by CompleteDayCheatSystem.getPromptText() so
+          // this branch and the actual E-action (onKeyDown) never disagree.
+          this.hud.showInteractionPrompt(newTarget.displayName, this.completeDayCheatSystem.getPromptText());
         } else if (newTarget && this.isLostFoundNpcTarget(newTarget)) {
           // "Fix NPC direct interaction and pallet stack handling" round二:
           // crosshair directly on the NPC's own hitbox, empty-handed. Not-

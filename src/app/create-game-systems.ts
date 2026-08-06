@@ -37,6 +37,8 @@ import { ToolStationSystem } from '../systems/tool-station-system';
 import { EnvelopeVacuumSystem } from '../systems/envelope-vacuum-system';
 // "Add day one dock story event" round.
 import { AfterWorkStorySystem } from '../systems/story/after-work-story-system';
+// "Add complete day testing cheat button" round.
+import { CompleteDayCheatSystem } from '../systems/cheat/complete-day-cheat-system';
 
 /** Every gameplay system GameApp constructs once at startup and keeps for
  * the rest of the session (Phase 6: "系統建立、建構子注入、註冊" moved out of
@@ -95,6 +97,8 @@ export interface GameSystems {
   envelopeVacuumSystem: EnvelopeVacuumSystem;
   /** "Add day one dock story event" round. */
   afterWorkStorySystem: AfterWorkStorySystem;
+  /** "Add complete day testing cheat button" round. */
+  completeDayCheatSystem: CompleteDayCheatSystem;
 }
 
 /** Back-references into GameApp's own small orchestration methods — the
@@ -519,6 +523,19 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     () => playerController.isLocked
   );
 
+  // "Add complete day testing cheat button" round — a single wall-mounted
+  // test button (lost-found room's own north wall) that force-completes
+  // today's cargo/mail/lost-found-NPC work through each owning system's own
+  // real public API, then opens the real settlement screen. Built after
+  // every system it orchestrates already exists (ladderSystem, the last
+  // dependency, is constructed just above).
+  const completeDayCheatSystem = new CompleteDayCheatSystem(
+    scene, interactables, playerData, hud,
+    pickupSystem, palletSystem, ladderSystem, envelopeStackSystem, cargoSystem, dailyFlowSystem,
+    mailSystem, mailBagSystem, packedMailBagSystem, envelopeDispatchMachineSystem, lostFoundSystem,
+    vehicleControlSystem
+  );
+
   // Interaction system
   const interactionSystem = new InteractionSystem(
     camera, interactables, playerData, pickupSystem, hud,
@@ -547,6 +564,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     ladderSystem,
     toolStationSystem,
     () => toolLoadoutMenuUI.open(),
+    completeDayCheatSystem,
     () => settingsManager.fireTutorialEvent('dollyUsed')
   );
 
@@ -579,6 +597,6 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     upgradeSystem, similarCargoHighlight, mediaPlayerSystem,
     toolSystem, cargoHookSystem, spraySystem,
     ladderSystem, toolStationSystem, envelopeVacuumSystem,
-    afterWorkStorySystem,
+    afterWorkStorySystem, completeDayCheatSystem,
   };
 }

@@ -372,6 +372,56 @@ export class LostFoundSystem {
     return this.npcSystem.state === 'waiting';
   }
 
+  /** True once today's 3-NPC queue has actually been built (spec: "尚未生成
+   * 今日NPC時：請先開始今日工作") — the cheat button's own caller checks this
+   * BEFORE calling completeAllNpcForTesting below, so the cheat never
+   * silently generates today's content itself. */
+  get hasTodaysQueue(): boolean {
+    return this.todaysQueue.length > 0;
+  }
+
+  /** TEMPORARY TEST CHEAT — remove before public demo. Force-completes
+   * EVERY entry in today's queue as a successful hand-over (spec: "當日3位
+   * NPC全部視為成功完成"), regardless of which stage each is currently in —
+   * mirrors settleAtDeparture's own "force-dismiss whatever's currently
+   * active" pattern but marks success instead of failure, and additionally
+   * resolves every still-'queued' entry (never even spawned) straight to
+   * 'completed' too, so no NPC needs a real visit for testing purposes.
+   * Also clears every still-existing lost item (targets + decoys) so no
+   * "unstored lost item" penalty applies either (settleAtDeparture's own
+   * stored/unstored scan only ever considers items still present in
+   * `interactables`/todaysDecoyItemIds). Removes the current NPC's own
+   * model/hitbox/bubble immediately via the existing forceRemove() (no
+   * walk-out animation), and resets activeIndex to -1 so update()'s own
+   * leaving->gone auto-advance can never fire again afterward (spec: "不要
+   * 生成下一位NPC後又重複完成") — the caller is expected to follow this with
+   * ONE settleAtDeparture() call (the same real API normal departure uses)
+   * to read back the resulting all-zero-missed snapshot; this method itself
+   * never touches score. */
+  completeAllNpcForTesting(): void {
+    if (this.activeIndex !== -1) {
+      const entry = this.todaysQueue[this.activeIndex];
+      if (entry.outcome !== 'completed') {
+        this.npcSystem.forceRemove();
+        entry.outcome = 'completed';
+      }
+      entry.state = 'completed';
+      this.activeIndex = -1;
+      this.thankingTimer = null;
+    }
+    for (const entry of this.todaysQueue) {
+      if (entry.outcome !== 'completed') entry.outcome = 'completed';
+      entry.state = 'completed';
+    }
+    for (const entry of this.todaysQueue) {
+      if (entry.targetItemId) this.disposeLostItem(entry.targetItemId);
+    }
+    for (const id of [...this.todaysDecoyItemIds]) {
+      if (this.interactables.has(id)) this.disposeLostItem(id);
+    }
+    this.refreshQueueStatusUI();
+  }
+
   /** Debug-only structured snapshot ("Trace and fix NPC E interaction
    * routing" round) — read by interaction-system.ts's own NPC-E tracer via
    * npc-e-debug.ts. Never used by real gameplay logic; a no-op cost when
