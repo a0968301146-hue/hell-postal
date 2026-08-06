@@ -1,8 +1,8 @@
 /** "Add freezer shelves and frozen cargo freshness system" round — the ONE
  * place coldValue's own constants/tier math live, shared by FreezerSystem
- * (per-frame decay/recovery + HUD color), VehicleControlSystem (real
- * departure settlement tallying), and CompleteDayCheatSystem (test-cheat
- * settlement tallying) — never duplicated across those call sites. */
+ * (per-frame decay/recovery), VehicleControlSystem (real departure
+ * settlement tallying), and CompleteDayCheatSystem (test-cheat settlement
+ * tallying) — never duplicated across those call sites. */
 
 export const COLD_VALUE_MIN = 0;
 export const COLD_VALUE_MAX = 100;
@@ -35,20 +35,6 @@ export function coldValueTierMultiplier(coldValue: number): number {
   return getColdValueTier(coldValue) / 100;
 }
 
-/** spec七 UI color tiers — same four boundaries as getColdValueTier above
- * (100~75 綠, 75~50 黃, 50~25 橘, 25以下 紅), kept as its own function (rather
- * than a tier->color lookup keyed on getColdValueTier's return value) only
- * because 100~75 and 75~50 both map to different colors than 50~25/25以下
- * despite the SCORE tiers treating 100~75 as a single "full value" bracket —
- * the UI is a finer-grained warning signal, the score payout is a coarser
- * one; they intentionally read the same underlying number two different
- * ways rather than sharing one lookup. */
-export function coldValueColor(coldValue: number): string {
-  if (coldValue > 75) return '#4CAF50'; // green
-  if (coldValue > 50) return '#FFEB3B'; // yellow
-  if (coldValue > 25) return '#FF9800'; // orange
-  return '#F44336'; // red
-}
 
 /** One departure's worth of frozen-cargo tier tallies (spec六) — the
  * contract ScoringSystem.settleDeparture() takes in, mirroring

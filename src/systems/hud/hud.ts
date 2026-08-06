@@ -16,7 +16,8 @@ export class HUD {
   private dayTransitionTimer: number | null = null;
   private heldCountEl: HTMLElement;
   private envelopeStackEl: HTMLElement;
-  private coldValueEl: HTMLElement;
+  private coldValueTrackEl: HTMLElement;
+  private coldValueFillEl: HTMLElement;
 
   constructor() {
     const hud = document.createElement('div');
@@ -101,12 +102,21 @@ export class HUD {
     this.envelopeStackEl.id = 'envelope-stack-panel';
     hud.appendChild(this.envelopeStackEl);
 
-    // "Add freezer shelves and frozen cargo freshness system" round spec七 —
-    // same persistent "visible only while relevant" convention as
-    // heldCountEl/envelopeStackEl above.
-    this.coldValueEl = document.createElement('div');
-    this.coldValueEl.id = 'cold-value-panel';
-    hud.appendChild(this.coldValueEl);
+    // "Add freezer shelves and frozen cargo freshness system" round
+    // (correction pass spec二/三/四/五) — a screen right-center VERTICAL
+    // slider, completely hidden unless holding frozen cargo (same "visible"
+    // class toggle convention as heldCountEl/envelopeStackEl above). The
+    // fill is a plain top-anchored solid-blue div inside the track — never
+    // color-tiered — whose own height *is* the coldValue percentage
+    // (updateColdValueStatus below), so the filled portion shrinks
+    // top-to-bottom as coldValue drops, exactly matching spec三's ASCII
+    // examples.
+    this.coldValueTrackEl = document.createElement('div');
+    this.coldValueTrackEl.id = 'cold-value-slider';
+    this.coldValueFillEl = document.createElement('div');
+    this.coldValueFillEl.id = 'cold-value-slider-fill';
+    this.coldValueTrackEl.appendChild(this.coldValueFillEl);
+    hud.appendChild(this.coldValueTrackEl);
   }
 
   /** "Add tool hotbar and cargo hook" round spec九: "工具欄UI可接入既有HUD容
@@ -214,18 +224,18 @@ export class HUD {
     this.envelopeStackEl.classList.add('visible');
   }
 
-  /** "Add freezer shelves and frozen cargo freshness system" round spec七 —
-   * shown only while actively holding a frozen-category item (caller passes
-   * null otherwise), color-tiered per cold-value-data.ts's own
-   * coldValueColor(). */
-  updateColdValueStatus(coldValue: number | null, color?: string): void {
+  /** "Add freezer shelves and frozen cargo freshness system" round
+   * (correction pass spec五/六) — shown only while actively holding a
+   * frozen-category item (caller passes null otherwise); the fill height is
+   * set DIRECTLY from coldValue every frame, e.g. coldValue=82 -> 82% fill
+   * height, no color tiers. */
+  updateColdValueStatus(coldValue: number | null): void {
     if (coldValue === null) {
-      this.coldValueEl.classList.remove('visible');
+      this.coldValueTrackEl.classList.remove('visible');
       return;
     }
-    this.coldValueEl.textContent = `冷藏值：${Math.round(coldValue)}%`;
-    this.coldValueEl.style.color = color ?? '';
-    this.coldValueEl.classList.add('visible');
+    this.coldValueFillEl.style.height = `${Math.max(0, Math.min(100, coldValue))}%`;
+    this.coldValueTrackEl.classList.add('visible');
   }
 
   showInteractionPrompt(name: string, action: string): void {

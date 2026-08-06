@@ -494,10 +494,10 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // upgrade-system.ts), so this wiring can only happen here, post-
   // construction.
   upgradeSystem.setPalletSystem(palletSystem);
-  // "Add freezer shelves and frozen cargo freshness system" round — built
-  // once both cargoSystem and palletSystem already exist (needs
-  // palletSystem's own getRackedPalletIds/getCargoIdsOnPallet getters).
-  const freezerSystem = new FreezerSystem(scene, physics, cargoSystem, palletSystem, playerData, hud);
+  // "Add freezer shelves and frozen cargo freshness system" round
+  // (correction pass) — every existing west-wall 置物架 level gets its own
+  // cold-recovery-zone sensor; no dependency on PalletSystem at all.
+  const freezerSystem = new FreezerSystem(physics, cargoSystem, playerData, hud);
   // Foldable ladder + immovable tool cart ("Add ladder tool station and
   // envelope vacuum" round一/二) — built near the pallet system since the
   // ladder's own wall slot is derived from the pallet racks' own wall
