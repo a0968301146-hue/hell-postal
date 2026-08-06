@@ -16,6 +16,8 @@ export class HUD {
   private dayTransitionTimer: number | null = null;
   private heldCountEl: HTMLElement;
   private envelopeStackEl: HTMLElement;
+  private coldValuePanelEl: HTMLElement;
+  private coldValuePercentEl: HTMLElement;
   private coldValueTrackEl: HTMLElement;
   private coldValueFillEl: HTMLElement;
 
@@ -102,21 +104,32 @@ export class HUD {
     this.envelopeStackEl.id = 'envelope-stack-panel';
     hud.appendChild(this.envelopeStackEl);
 
-    // "Add freezer shelves and frozen cargo freshness system" round
-    // (correction pass spec二/三/四/五) — a screen right-center VERTICAL
-    // slider, completely hidden unless holding frozen cargo (same "visible"
-    // class toggle convention as heldCountEl/envelopeStackEl above). The
-    // fill is a plain top-anchored solid-blue div inside the track — never
-    // color-tiered — whose own height *is* the coldValue percentage
-    // (updateColdValueStatus below), so the filled portion shrinks
-    // top-to-bottom as coldValue drops, exactly matching spec三's ASCII
-    // examples.
+    // "Add freezer shelves and frozen cargo freshness system" round (second
+    // redesign pass spec五/六/七) — a screen right-center VERTICAL slider,
+    // completely hidden unless holding frozen cargo (same "visible" class
+    // toggle convention as heldCountEl/envelopeStackEl above, now on the
+    // outer panel so the "冷藏值"/percent label hides together with the bar).
+    // The fill is a plain top-anchored solid-blue div inside the track —
+    // never color-tiered — whose own height *is* the coldValue percentage
+    // (updateColdValueStatus below): its TOP edge stays fixed at the
+    // track's own top, and only its bottom edge recedes upward as coldValue
+    // drops (spec五: "最上面固定。下面越來越少。不要變成由下往上縮。").
+    this.coldValuePanelEl = document.createElement('div');
+    this.coldValuePanelEl.id = 'cold-value-panel';
+    const label = document.createElement('div');
+    label.id = 'cold-value-label';
+    label.textContent = '冷藏值';
+    this.coldValuePercentEl = document.createElement('div');
+    this.coldValuePercentEl.id = 'cold-value-percent';
     this.coldValueTrackEl = document.createElement('div');
     this.coldValueTrackEl.id = 'cold-value-slider';
     this.coldValueFillEl = document.createElement('div');
     this.coldValueFillEl.id = 'cold-value-slider-fill';
     this.coldValueTrackEl.appendChild(this.coldValueFillEl);
-    hud.appendChild(this.coldValueTrackEl);
+    this.coldValuePanelEl.appendChild(label);
+    this.coldValuePanelEl.appendChild(this.coldValuePercentEl);
+    this.coldValuePanelEl.appendChild(this.coldValueTrackEl);
+    hud.appendChild(this.coldValuePanelEl);
   }
 
   /** "Add tool hotbar and cargo hook" round spec九: "工具欄UI可接入既有HUD容
@@ -224,18 +237,21 @@ export class HUD {
     this.envelopeStackEl.classList.add('visible');
   }
 
-  /** "Add freezer shelves and frozen cargo freshness system" round
-   * (correction pass spec五/六) — shown only while actively holding a
-   * frozen-category item (caller passes null otherwise); the fill height is
-   * set DIRECTLY from coldValue every frame, e.g. coldValue=82 -> 82% fill
-   * height, no color tiers. */
+  /** "Add freezer shelves and frozen cargo freshness system" round (second
+   * redesign pass spec五/六/七) — shown only while actively holding a
+   * frozen-category item (caller passes null otherwise); both the "冷藏值/
+   * XX%" text and the fill height are set DIRECTLY from coldValue every
+   * frame, e.g. coldValue=68 -> "68%" text + 68% fill height, no color
+   * tiers. */
   updateColdValueStatus(coldValue: number | null): void {
     if (coldValue === null) {
-      this.coldValueTrackEl.classList.remove('visible');
+      this.coldValuePanelEl.classList.remove('visible');
       return;
     }
-    this.coldValueFillEl.style.height = `${Math.max(0, Math.min(100, coldValue))}%`;
-    this.coldValueTrackEl.classList.add('visible');
+    const pct = Math.max(0, Math.min(100, Math.round(coldValue)));
+    this.coldValuePercentEl.textContent = `${pct}%`;
+    this.coldValueFillEl.style.height = `${pct}%`;
+    this.coldValuePanelEl.classList.add('visible');
   }
 
   showInteractionPrompt(name: string, action: string): void {

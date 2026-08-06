@@ -390,13 +390,23 @@ export class PhysicsSystem implements PhysicsWorldPort {
     const shape = new RAPIER.Cuboid(halfExtents.x - 0.01, halfExtents.y - 0.01, halfExtents.z - 0.01);
     const shapePos = { x: position.x, y: position.y, z: position.z };
     const shapeRot = { x: 0, y: 0, z: 0, w: 1 };
+    // "Add freezer shelves and frozen cargo freshness system" round
+    // (redesign pass) — EXCLUDE_SENSORS is required here: FreezerSystem's
+    // own non-blocking cold-recovery sensor zones sit directly over every
+    // shelf level, and without this flag intersectionWithShape treats them
+    // as a genuine obstruction, making every placement attempt on a freezer
+    // shelf level read as "此處無法放置" even though nothing solid is
+    // actually there. A sensor, by definition, must never be able to block
+    // placement — this makes that true for every current AND future sensor,
+    // not just this round's.
+    //
     // "Fix cargo placement on pallet surface" round: optional exclude, used
     // ONLY so a pallet being placed onto doesn't block its own supporting
     // surface (spec二: "托盤本身是本次放置的支撐物，不可被判定為阻擋碰撞...
     // 只忽略目前命中的支撐托盤Collider") — every other GROUP_BOX/static
     // collider (other cargo, walls, shelves) is still checked normally.
     const hit = this.world.intersectionWithShape(
-      shapePos, shapeRot, shape, undefined,
+      shapePos, shapeRot, shape, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
       (GROUP_BOX << 16) | (GROUP_STATIC | GROUP_BOX),
       undefined, excludeRigidBody
     );

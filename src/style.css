@@ -1121,28 +1121,52 @@ body.text-size-large #interaction-prompt { font-size: 17px; }
 }
 
 /* Cold-value readout ("Add freezer shelves and frozen cargo freshness
- * system" round, correction pass spec二/三/四/五) — a vertical slider fixed
- * to the screen's right-center, hidden entirely unless holding frozen cargo.
- * The fill is a plain top-anchored solid blue (no color tiers); its own
- * height is set inline per-frame (hud.ts's own updateColdValueStatus)
- * directly from coldValue, so it shrinks top-to-bottom as coldValue drops. */
-#cold-value-slider {
+ * system" round, second redesign pass spec五/六/七) — a "冷藏值"/percent
+ * label above a vertical slider, both fixed to the screen's right-center,
+ * hidden entirely unless holding frozen cargo. The fill is a plain
+ * top-anchored solid blue (no color tiers): its TOP edge is pinned to the
+ * track's own top via `top: 0`, and its height is set inline per-frame
+ * (hud.ts's own updateColdValueStatus) directly from coldValue, so only the
+ * BOTTOM edge recedes upward as coldValue drops — the top never moves. */
+#cold-value-panel {
   position: fixed;
   top: 50%;
   right: 32px;
   transform: translateY(-50%);
   z-index: 101;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-family: sans-serif;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  user-select: none;
+}
+
+#cold-value-panel.visible {
+  display: flex;
+}
+
+#cold-value-label {
+  font-size: 13px;
+  font-weight: bold;
+}
+
+#cold-value-percent {
+  font-size: 15px;
+  font-weight: bold;
+  margin-bottom: 2px;
+}
+
+#cold-value-slider {
+  position: relative;
   width: 22px;
   height: 200px;
   background: rgba(0, 0, 0, 0.45);
   border: 1px solid rgba(255, 255, 255, 0.35);
   border-radius: 4px;
   overflow: hidden;
-  display: none;
-}
-
-#cold-value-slider.visible {
-  display: block;
 }
 
 #cold-value-slider-fill {
