@@ -199,9 +199,12 @@ export class FreezerSystem {
     }
   }
 
-  /** "冷凍貨物系統修改" round四: crosshair-aim 冷藏值 readout, shown directly
-   * below the existing interaction prompt — spec: "準心有對到，且物件是冷凍
-   * 貨物，才顯示；離開瞄準後立即消失". Takes `inspectedCargo` as a PARAMETER
+  /** "冷凍貨物系統修改" round四, redone in round五: crosshair-aim 冷藏值
+   * readout, merged directly into the existing interaction prompt's own
+   * text (spec: "直接顯示在準心互動UI即可，不用另外開視窗") rather than a
+   * second DOM element — see HUD.updateAimedColdValue/showInteractionPrompt.
+   * Shown only while genuinely aiming at frozen cargo, gone the instant the
+   * crosshair moves off it. Takes `inspectedCargo` as a PARAMETER
    * (game-app.ts's own already-computed `CargoInspectionSystem.currentCargo`
    * for this exact frame) rather than running a second independent raycast
    * of its own — same "reuse the one crosshair raycast" convention

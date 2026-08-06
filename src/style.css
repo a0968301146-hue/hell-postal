@@ -1152,14 +1152,15 @@ body.text-size-large #interaction-prompt { font-size: 17px; }
   display: flex;
 }
 
+/* "冷凍貨物系統修改" round五: "約每0.8秒Alpha淡入淡出" — a smooth (not
+ * stepped) opacity fade, 0.8s each direction (1.6s full cycle). */
 @keyframes cold-value-blink-anim {
-  0%, 49.9% { opacity: 1; }
-  50%, 100% { opacity: 0.25; }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
-/* "每0.5秒慢速閃爍一次" — a 1s cycle toggles visible/dim every 0.5s. */
 #cold-value-panel.cold-value-blink {
-  animation: cold-value-blink-anim 1s steps(1, end) infinite;
+  animation: cold-value-blink-anim 1.6s ease-in-out infinite;
 }
 
 #cold-value-label {
@@ -1190,27 +1191,6 @@ body.text-size-large #interaction-prompt { font-size: 17px; }
   width: 100%;
   height: 100%;
   background: #2196f3;
-}
-
-/* "冷凍貨物系統修改" round四 — crosshair-aim "冷藏值：XX%" line, directly
- * below #interaction-prompt (same position:absolute/top:%/centered
- * convention as that element and #too-far-prompt just below it). */
-#aimed-cold-value-prompt {
-  position: absolute;
-  top: 60%;
-  left: 50%;
-  transform: translateX(-50%);
-  color: #bfe4f0;
-  font-family: sans-serif;
-  font-size: 13px;
-  text-align: center;
-  text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
-  user-select: none;
-  display: none;
-}
-
-#aimed-cold-value-prompt.visible {
-  display: block;
 }
 
 /* Bulletin board upgrade UI ("Add bulletin board upgrade system" round

@@ -22,7 +22,13 @@ export class HUD {
   private coldValuePercentEl: HTMLElement;
   private coldValueTrackEl: HTMLElement;
   private coldValueFillEl: HTMLElement;
-  private aimedColdValueEl: HTMLElement;
+  /** "冷凍貨物系統修改" round五 (UI correction pass) — the crosshair-aim
+   * "\n冷藏值：XX%" line is no longer its own separate DOM element/window
+   * (spec四: "這個提示直接顯示在準心互動UI即可。不用另外開視窗。"); instead
+   * it's a plain string suffix showInteractionPrompt appends onto the SAME
+   * #interaction-prompt text it already renders every frame. Empty string
+   * whenever not aiming at frozen cargo. */
+  private aimedColdValueSuffix = '';
 
   constructor() {
     const hud = document.createElement('div');
@@ -38,14 +44,6 @@ export class HUD {
     this.promptEl = document.createElement('div');
     this.promptEl.id = 'interaction-prompt';
     hud.appendChild(this.promptEl);
-
-    // "冷凍貨物系統修改" round四 — crosshair-aim 冷藏值 readout, directly
-    // below #interaction-prompt (spec四: "在目前互動提示(UI)下方新增"), shown
-    // only while the crosshair is genuinely aimed at frozen cargo
-    // (updateAimedColdValue below), hidden immediately otherwise.
-    this.aimedColdValueEl = document.createElement('div');
-    this.aimedColdValueEl.id = 'aimed-cold-value-prompt';
-    hud.appendChild(this.aimedColdValueEl);
 
     this.tooFarEl = document.createElement('div');
     this.tooFarEl.id = 'too-far-prompt';
@@ -255,8 +253,9 @@ export class HUD {
    * frame (fill height *is* the percentage — top edge fixed at the track's
    * own top, only the bottom edge recedes upward as coldValue drops), now
    * also color-tiered (coldValueTierColor: blue/yellow/orange/red) and
-   * slow-blinking (spec二: "25%以下時...每0.5秒慢速閃爍一次") once below
-   * 25%. */
+   * slow-blinking (spec二: "25%以下可加入慢速閃爍，約每0.8秒Alpha淡入淡出")
+   * once below 25% — the actual fade animation lives in style.css
+   * (.cold-value-blink), this method only toggles the class. */
   updateColdValueStatus(coldValue: number | null): void {
     if (coldValue === null) {
       this.coldValuePanelEl.classList.remove('visible');
@@ -271,21 +270,26 @@ export class HUD {
     this.coldValuePanelEl.classList.toggle('cold-value-blink', coldValue < 25);
   }
 
-  /** "冷凍貨物系統修改" round四 — the crosshair-aim "冷藏值：XX%" line, shown
-   * only while genuinely aiming at frozen cargo (caller passes null
-   * otherwise — see FreezerSystem.refreshAimedColdValueHud). */
+  /** "冷凍貨物系統修改" round四, redone in round五 — the crosshair-aim
+   * "冷藏值：XX%" line is now just a stored suffix showInteractionPrompt
+   * below appends to its own text, never a second DOM element/window
+   * (caller passes null when not aiming at frozen cargo — see
+   * FreezerSystem.refreshAimedColdValueHud). */
   updateAimedColdValue(coldValue: number | null): void {
     if (coldValue === null) {
-      this.aimedColdValueEl.classList.remove('visible');
+      this.aimedColdValueSuffix = '';
       return;
     }
     const pct = Math.max(0, Math.min(100, Math.round(coldValue)));
-    this.aimedColdValueEl.textContent = `冷藏值：${pct}%`;
-    this.aimedColdValueEl.classList.add('visible');
+    this.aimedColdValueSuffix = `\n冷藏值：${pct}%`;
   }
 
+  /** Appends the current crosshair-aim 冷藏值 suffix (empty string unless
+   * genuinely aiming at frozen cargo) directly onto the SAME prompt text —
+   * spec四: "除了原本物件名稱，請增加冷藏值：XX%...直接顯示在準心互動UI即
+   * 可，不用另外開視窗". */
   showInteractionPrompt(name: string, action: string): void {
-    this.promptEl.textContent = `${name}\n${action}`;
+    this.promptEl.textContent = `${name}\n${action}${this.aimedColdValueSuffix}`;
     this.promptEl.style.whiteSpace = 'pre-line';
     this.promptEl.classList.add('visible');
   }
