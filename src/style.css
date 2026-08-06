@@ -1121,13 +1121,17 @@ body.text-size-large #interaction-prompt { font-size: 17px; }
 }
 
 /* Cold-value readout ("Add freezer shelves and frozen cargo freshness
- * system" round, second redesign pass spec五/六/七) — a "冷藏值"/percent
- * label above a vertical slider, both fixed to the screen's right-center,
- * hidden entirely unless holding frozen cargo. The fill is a plain
- * top-anchored solid blue (no color tiers): its TOP edge is pinned to the
- * track's own top via `top: 0`, and its height is set inline per-frame
- * (hud.ts's own updateColdValueStatus) directly from coldValue, so only the
- * BOTTOM edge recedes upward as coldValue drops — the top never moves. */
+ * system" round, extended by "冷凍貨物系統修改" round一/二) — a "冷藏值"/
+ * percent label above a vertical slider, both fixed to the screen's
+ * right-center, hidden entirely unless holding frozen cargo. The fill is a
+ * top-anchored div: its TOP edge is pinned to the track's own top via
+ * `top: 0`, and its height is set inline per-frame (hud.ts's own
+ * updateColdValueStatus) directly from coldValue, so only the BOTTOM edge
+ * recedes upward as coldValue drops — the top never moves. Its background
+ * color is ALSO set inline per-frame (coldValueTierColor: blue/yellow/
+ * orange/red) — no color rule lives here. Below 25%, `.cold-value-blink`
+ * (toggled by the same update call) makes the whole panel — bar AND percent
+ * text together — slowly blink. */
 #cold-value-panel {
   position: fixed;
   top: 50%;
@@ -1146,6 +1150,16 @@ body.text-size-large #interaction-prompt { font-size: 17px; }
 
 #cold-value-panel.visible {
   display: flex;
+}
+
+@keyframes cold-value-blink-anim {
+  0%, 49.9% { opacity: 1; }
+  50%, 100% { opacity: 0.25; }
+}
+
+/* "每0.5秒慢速閃爍一次" — a 1s cycle toggles visible/dim every 0.5s. */
+#cold-value-panel.cold-value-blink {
+  animation: cold-value-blink-anim 1s steps(1, end) infinite;
 }
 
 #cold-value-label {
@@ -1176,6 +1190,27 @@ body.text-size-large #interaction-prompt { font-size: 17px; }
   width: 100%;
   height: 100%;
   background: #2196f3;
+}
+
+/* "冷凍貨物系統修改" round四 — crosshair-aim "冷藏值：XX%" line, directly
+ * below #interaction-prompt (same position:absolute/top:%/centered
+ * convention as that element and #too-far-prompt just below it). */
+#aimed-cold-value-prompt {
+  position: absolute;
+  top: 60%;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #bfe4f0;
+  font-family: sans-serif;
+  font-size: 13px;
+  text-align: center;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+  user-select: none;
+  display: none;
+}
+
+#aimed-cold-value-prompt.visible {
+  display: block;
 }
 
 /* Bulletin board upgrade UI ("Add bulletin board upgrade system" round

@@ -6,10 +6,15 @@
 
 export const COLD_VALUE_MIN = 0;
 export const COLD_VALUE_MAX = 100;
-/** "冷藏值系統修改" round二: "每2秒下降1%" = 0.5%/秒 (was 0.25%/秒) — applied
- * whenever a frozen item's own `isInsideFreezerShelf` is false, regardless
- * of WHERE it currently is (floor/pallet/held/vehicle). */
-export const COLD_VALUE_DECAY_PER_SECOND = 0.5;
+/** "冷凍貨物系統修改" round三: "不要所有地方都使用同一個下降速度" — replaces
+ * the previous single COLD_VALUE_DECAY_PER_SECOND with one rate per
+ * location, all applied whenever a frozen item's own `isInsideFreezerShelf`
+ * is false. FreezerSystem's own resolveDecayRate() picks between these
+ * based on the item's current held/vehicle/pallet/floor state each tick. */
+export const COLD_VALUE_DECAY_HELD_PER_SECOND = 0.5;
+export const COLD_VALUE_DECAY_FLOOR_PER_SECOND = 0.6;
+export const COLD_VALUE_DECAY_PALLET_PER_SECOND = 0.5;
+export const COLD_VALUE_DECAY_VEHICLE_PER_SECOND = 0.4;
 /** spec四: "每秒 1%", capped at the item's own coldValueCap (see
  * nextColdValueCap below) — applied whenever `isInsideFreezerShelf` is
  * true. Recovery speed itself is unchanged this round. */
@@ -49,6 +54,18 @@ export function getColdValueTier(coldValue: number): ColdValueTier {
  * value would have been). */
 export function coldValueTierMultiplier(coldValue: number): number {
   return getColdValueTier(coldValue) / 100;
+}
+
+/** "冷凍貨物系統修改" round一/二: the held-item slider's own warning-color
+ * tiers (75以上 blue / 50~75 yellow / 25~50 orange / 25以下 red) — a
+ * DIFFERENT, finer-grained boundary set than getColdValueTier's own
+ * settlement-score tiers above (both happen to share the same 75/50/25
+ * numbers, but this one is a pure UI concern, never read by scoring). */
+export function coldValueTierColor(coldValue: number): string {
+  if (coldValue >= 75) return '#2196f3'; // blue
+  if (coldValue >= 50) return '#ffc107'; // yellow
+  if (coldValue >= 25) return '#ff9800'; // orange
+  return '#f44336'; // red
 }
 
 

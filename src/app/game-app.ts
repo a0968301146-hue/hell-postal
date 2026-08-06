@@ -363,6 +363,10 @@ export class GameApp {
     // (the coldValue TICK itself stays inside the paused block above —
     // freezerSystem.update(deltaTime) — only this HUD refresh runs here).
     s.freezerSystem.refreshHeldItemHud();
+    // "冷凍貨物系統修改" round四 — same unconditional convention, reusing
+    // `inspectedCargo` (computed just above by cargoInspectionSystem.update())
+    // rather than a second raycast.
+    s.freezerSystem.refreshAimedColdValueHud(inspectedCargo);
     // "Add day one dock story event" round — same unconditional/self-
     // guarding convention as cargoHookSystem/spraySystem/envelopeVacuumSystem
     // above: this class deliberately never uses PauseManager itself (see its

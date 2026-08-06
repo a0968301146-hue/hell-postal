@@ -1,3 +1,5 @@
+import { coldValueTierColor } from '../cargo/cold-value-data';
+
 export class HUD {
   private hudRoot: HTMLElement;
   private crosshairEl: HTMLElement;
@@ -20,6 +22,7 @@ export class HUD {
   private coldValuePercentEl: HTMLElement;
   private coldValueTrackEl: HTMLElement;
   private coldValueFillEl: HTMLElement;
+  private aimedColdValueEl: HTMLElement;
 
   constructor() {
     const hud = document.createElement('div');
@@ -35,6 +38,14 @@ export class HUD {
     this.promptEl = document.createElement('div');
     this.promptEl.id = 'interaction-prompt';
     hud.appendChild(this.promptEl);
+
+    // "冷凍貨物系統修改" round四 — crosshair-aim 冷藏值 readout, directly
+    // below #interaction-prompt (spec四: "在目前互動提示(UI)下方新增"), shown
+    // only while the crosshair is genuinely aimed at frozen cargo
+    // (updateAimedColdValue below), hidden immediately otherwise.
+    this.aimedColdValueEl = document.createElement('div');
+    this.aimedColdValueEl.id = 'aimed-cold-value-prompt';
+    hud.appendChild(this.aimedColdValueEl);
 
     this.tooFarEl = document.createElement('div');
     this.tooFarEl.id = 'too-far-prompt';
@@ -237,21 +248,40 @@ export class HUD {
     this.envelopeStackEl.classList.add('visible');
   }
 
-  /** "Add freezer shelves and frozen cargo freshness system" round (second
-   * redesign pass spec五/六/七) — shown only while actively holding a
+  /** "Add freezer shelves and frozen cargo freshness system" round, extended
+   * by "冷凍貨物系統修改" round一/二 — shown only while actively holding a
    * frozen-category item (caller passes null otherwise); both the "冷藏值/
    * XX%" text and the fill height are set DIRECTLY from coldValue every
-   * frame, e.g. coldValue=68 -> "68%" text + 68% fill height, no color
-   * tiers. */
+   * frame (fill height *is* the percentage — top edge fixed at the track's
+   * own top, only the bottom edge recedes upward as coldValue drops), now
+   * also color-tiered (coldValueTierColor: blue/yellow/orange/red) and
+   * slow-blinking (spec二: "25%以下時...每0.5秒慢速閃爍一次") once below
+   * 25%. */
   updateColdValueStatus(coldValue: number | null): void {
     if (coldValue === null) {
       this.coldValuePanelEl.classList.remove('visible');
+      this.coldValuePanelEl.classList.remove('cold-value-blink');
       return;
     }
     const pct = Math.max(0, Math.min(100, Math.round(coldValue)));
     this.coldValuePercentEl.textContent = `${pct}%`;
     this.coldValueFillEl.style.height = `${pct}%`;
+    this.coldValueFillEl.style.background = coldValueTierColor(coldValue);
     this.coldValuePanelEl.classList.add('visible');
+    this.coldValuePanelEl.classList.toggle('cold-value-blink', coldValue < 25);
+  }
+
+  /** "冷凍貨物系統修改" round四 — the crosshair-aim "冷藏值：XX%" line, shown
+   * only while genuinely aiming at frozen cargo (caller passes null
+   * otherwise — see FreezerSystem.refreshAimedColdValueHud). */
+  updateAimedColdValue(coldValue: number | null): void {
+    if (coldValue === null) {
+      this.aimedColdValueEl.classList.remove('visible');
+      return;
+    }
+    const pct = Math.max(0, Math.min(100, Math.round(coldValue)));
+    this.aimedColdValueEl.textContent = `冷藏值：${pct}%`;
+    this.aimedColdValueEl.classList.add('visible');
   }
 
   showInteractionPrompt(name: string, action: string): void {

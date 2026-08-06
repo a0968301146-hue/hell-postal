@@ -965,6 +965,20 @@ export class PalletSystem implements PalletThrowHooks {
     return !!id && id === this.heldPalletId;
   }
 
+  /** "冷凍貨物系統修改" round三: cheap "is this cargo id CURRENTLY resting on
+   * any pallet" check for FreezerSystem's own per-location decay rate —
+   * reuses `stableTimers`, the membership set updateOrganizeScan() already
+   * (re)computes every frame for each 'placed' pallet (see that method's own
+   * doc comment), rather than a second independent scan. ≤6 pallets, one
+   * Map.has() each — cheap enough to call once per frozen cargo item per
+   * frame. */
+  isCargoOnAnyPallet(cargoId: string): boolean {
+    for (const instance of this.pallets.values()) {
+      if (instance.stableTimers.has(cargoId)) return true;
+    }
+    return false;
+  }
+
   /** Whichever pallet is currently held, if any — used by
    * InteractionSystem's own multi-carry-vs-pallet exclusion check. */
   get heldId(): string | null {

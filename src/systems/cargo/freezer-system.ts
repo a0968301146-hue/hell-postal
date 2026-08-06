@@ -1,13 +1,19 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { CargoSystem } from './cargo-system';
+import { CargoData } from './cargo-data';
 import { PlayerInteractionData } from '../../core/game-state';
 import { HUD } from '../hud';
+import { PalletSystem } from '../pallet/pallet-system';
 import {
   WEST_WALL_SHELVES, WestWallShelfConfig, SHELF_LEVEL_Y_OFFSETS, SHELF_BOARD_THICKNESS,
   SHELF_FRAME_TOP_MARGIN, BACK_AREA,
 } from '../world-layout/logistics-layout-data';
-import { COLD_VALUE_MIN, COLD_VALUE_DECAY_PER_SECOND, COLD_VALUE_RECOVERY_PER_SECOND, nextColdValueCap } from './cold-value-data';
+import {
+  COLD_VALUE_MIN, COLD_VALUE_DECAY_HELD_PER_SECOND, COLD_VALUE_DECAY_FLOOR_PER_SECOND,
+  COLD_VALUE_DECAY_PALLET_PER_SECOND, COLD_VALUE_DECAY_VEHICLE_PER_SECOND, COLD_VALUE_RECOVERY_PER_SECOND,
+  nextColdValueCap,
+} from './cold-value-data';
 
 /** One shelf-LEVEL's own runtime state — every existing 置物架 level (spec一:
  * "把目前所有「置物架」直接改成「冷凍貨架」", appearance/size/placement
@@ -61,6 +67,7 @@ function buildZonesForShelf(physics: PhysicsSystem, shelf: WestWallShelfConfig):
 export class FreezerSystem {
   private physics: PhysicsSystem;
   private cargoSystem: CargoSystem;
+  private palletSystem: PalletSystem;
   private playerData: PlayerInteractionData;
   private hud: HUD;
 
@@ -73,9 +80,13 @@ export class FreezerSystem {
    * at 0 never touches the field again until the next real edge. */
   private claimCounts: Map<string, number> = new Map();
 
-  constructor(physics: PhysicsSystem, cargoSystem: CargoSystem, playerData: PlayerInteractionData, hud: HUD) {
+  constructor(
+    physics: PhysicsSystem, cargoSystem: CargoSystem, palletSystem: PalletSystem,
+    playerData: PlayerInteractionData, hud: HUD
+  ) {
     this.physics = physics;
     this.cargoSystem = cargoSystem;
+    this.palletSystem = palletSystem;
     this.playerData = playerData;
     this.hud = hud;
 
@@ -128,20 +139,40 @@ export class FreezerSystem {
     }
   }
 
+  /** "冷凍貨物系統修改" round三: which decay rate applies to a frozen item
+   * currently OUTSIDE a freezer zone, based on where it physically is right
+   * now — held (`obj.isHeld`) > loaded on a vehicle
+   * (`CargoData.loadedVehicleId`, already reliably set/cleared by
+   * VehicleControlSystem.scanCargoForShipment) > resting on a pallet
+   * (PalletSystem.isCargoOnAnyPallet, a cheap ≤6-pallet Map.has check) >
+   * else floor (the residual/default "resting somewhere else" case, per
+   * spec三's own "其它維持目前邏輯" — floor's rate doubles as that
+   * fallback). Checked in this fixed priority order since an item could
+   * technically satisfy more than one loosely (e.g. a held item's own
+   * stale loadedVehicleId from before pickup) — held always wins. */
+  private resolveDecayRate(data: CargoData, obj: { isHeld: boolean } | null | undefined): number {
+    if (obj?.isHeld) return COLD_VALUE_DECAY_HELD_PER_SECOND;
+    if (data.loadedVehicleId !== null) return COLD_VALUE_DECAY_VEHICLE_PER_SECOND;
+    if (this.palletSystem.isCargoOnAnyPallet(data.id)) return COLD_VALUE_DECAY_PALLET_PER_SECOND;
+    return COLD_VALUE_DECAY_FLOOR_PER_SECOND;
+  }
+
   /** Purely arithmetic, driven by the ALREADY-CACHED `isInsideFreezerShelf`
-   * flag (no geometry/scanning here at all). Decay/recovery RATES are
-   * unchanged from the prior round; "冷藏值系統修改" round三 adds the
-   * permanent quality cap: recovery now clamps to the item's own
-   * `coldValueCap` (never straight back to 100), and decay is the ONE place
-   * that cap can ever be lowered further, via nextColdValueCap — recovering
-   * never lowers or raises the cap itself. */
+   * flag (no geometry/scanning here at all — resolveDecayRate above only
+   * reads already-cheap state, never a new scan of its own). Recovery rate
+   * and the permanent quality cap (coldValueCap, nextColdValueCap) are
+   * unchanged from the prior round: recovery clamps to coldValueCap (never
+   * straight back to 100), and decay is the ONE place that cap can ever be
+   * lowered further. */
   private tickColdValues(deltaTime: number): void {
     for (const data of this.cargoSystem.cargoDataMap.values()) {
       if (data.category !== 'frozen') continue;
       if (data.isInsideFreezerShelf) {
         data.coldValue = Math.min(data.coldValueCap, data.coldValue + COLD_VALUE_RECOVERY_PER_SECOND * deltaTime);
       } else {
-        data.coldValue = Math.max(COLD_VALUE_MIN, data.coldValue - COLD_VALUE_DECAY_PER_SECOND * deltaTime);
+        const obj = this.cargoSystem.getInteractable(data.id);
+        const rate = this.resolveDecayRate(data, obj);
+        data.coldValue = Math.max(COLD_VALUE_MIN, data.coldValue - rate * deltaTime);
         data.coldValueCap = nextColdValueCap(data.coldValue, data.coldValueCap);
       }
     }
@@ -165,6 +196,23 @@ export class FreezerSystem {
       this.hud.updateColdValueStatus(heldData.coldValue);
     } else {
       this.hud.updateColdValueStatus(null);
+    }
+  }
+
+  /** "冷凍貨物系統修改" round四: crosshair-aim 冷藏值 readout, shown directly
+   * below the existing interaction prompt — spec: "準心有對到，且物件是冷凍
+   * 貨物，才顯示；離開瞄準後立即消失". Takes `inspectedCargo` as a PARAMETER
+   * (game-app.ts's own already-computed `CargoInspectionSystem.currentCargo`
+   * for this exact frame) rather than running a second independent raycast
+   * of its own — same "reuse the one crosshair raycast" convention
+   * CargoHookSystem already follows (see game-app.ts's own doc comment on
+   * that call site). Called UNCONDITIONALLY alongside refreshHeldItemHud
+   * above, for the same "a pause must take effect the same frame" reason. */
+  refreshAimedColdValueHud(inspectedCargo: CargoData | null): void {
+    if (inspectedCargo && inspectedCargo.category === 'frozen') {
+      this.hud.updateAimedColdValue(inspectedCargo.coldValue);
+    } else {
+      this.hud.updateAimedColdValue(null);
     }
   }
 }
