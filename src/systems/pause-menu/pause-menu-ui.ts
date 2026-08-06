@@ -38,6 +38,13 @@ export class ManualUI {
   private onRestartDayOne: () => void;
   private restartConfirmArmed = false;
 
+  /** "Add main menu and return player after dock story" round 五: set only
+   * by openForMainMenu() below — when present, close() hands control back to
+   * MainMenuSystem instead of assuming a live game session to resume
+   * (spec五: "從設定返回時回到主畫面...不進入遊戲場景"). null for every
+   * normal in-game Tab-open/close, which is completely unchanged. */
+  private returnToMainMenu: (() => void) | null = null;
+
   private overlayEl: HTMLElement;
   private leftPageEl: HTMLElement;
   private rightPageEl: HTMLElement;
@@ -128,6 +135,21 @@ export class ManualUI {
     this.render();
   }
 
+  /** "Add main menu and return player after dock story" round 五:
+   * MainMenuSystem's own "設定" button entry point — same overlay, same
+   * render(), but skips interruptPlayerActions() (nothing live to interrupt
+   * before a game session has even started) and remembers `onClose` so
+   * close() returns to the main menu instead of resuming gameplay. */
+  openForMainMenu(onClose: () => void): void {
+    if (this._isOpen) return;
+    this.returnToMainMenu = onClose;
+    this._isOpen = true;
+    this.pauseManager.add('manual');
+    this.overlayEl.classList.add('open');
+    document.body.style.cursor = '';
+    this.render();
+  }
+
   close(): void {
     if (!this._isOpen) return;
     this._isOpen = false;
@@ -136,6 +158,12 @@ export class ManualUI {
     this.restartConfirmArmed = false;
     this.overlayEl.classList.remove('open');
     this.pauseManager.remove('manual');
+    if (this.returnToMainMenu) {
+      const backToMenu = this.returnToMainMenu;
+      this.returnToMainMenu = null;
+      backToMenu();
+      return;
+    }
     // Same convention as ending the stamp minigame / vehicle settlement:
     // input re-enables immediately, but pointer lock itself waits for the
     // player to click the canvas again (browsers require a fresh user
@@ -147,7 +175,15 @@ export class ManualUI {
   private onKeyDown(event: KeyboardEvent): void {
     if (event.code === 'Tab') {
       event.preventDefault(); // never let the browser steal focus, open or not
+      // "Add main menu and return player after dock story" round 七: Tab
+      // must never toggle the manual open OVER the main menu itself (only
+      // MainMenuSystem's own "設定" button may open it there, via
+      // openForMainMenu) — this._isOpen already being true (reached via
+      // openForMainMenu) still needs to fall through to toggle()/close()
+      // below so Tab can close it again once open; only a Tab press while
+      // CLOSED and the main menu is showing needs blocking here.
       if (this.pauseManager.has('stampMinigame') || this.pauseManager.has('settlement')) return;
+      if (this.pauseManager.has('mainMenu') && !this._isOpen) return;
       this.toggle();
       return;
     }

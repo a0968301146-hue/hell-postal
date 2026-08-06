@@ -118,6 +118,18 @@ export class PlayerController {
     this.heavyHandlingLevel = level;
   }
 
+  /** "Add main menu and return player after dock story" round 一: clears
+   * residual gravity/jump state after a manual `physics.setPlayerPosition`
+   * teleport (AfterWorkStorySystem's own end-of-story teleport, in
+   * particular) — without this, `verticalSpeed` left over from before the
+   * teleport would apply itself the next update() tick once input
+   * re-enables, causing a visible pop/fall-through-floor-check on the first
+   * frame back under player control. */
+  resetVerticalMotion(): void {
+    this.verticalSpeed = 0;
+    this.grounded = true;
+  }
+
   /** True only while the CURRENT top-of-stack held item is `large`-category
    * cargo (mesh.userData.shapeType === 'large', set only by
    * cargo-system.ts's spawnDailyBox/spawnDailyRoller for large presets) —

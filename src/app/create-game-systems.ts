@@ -39,6 +39,9 @@ import { EnvelopeVacuumSystem } from '../systems/envelope-vacuum-system';
 import { AfterWorkStorySystem } from '../systems/story/after-work-story-system';
 // "Add complete day testing cheat button" round.
 import { CompleteDayCheatSystem } from '../systems/cheat/complete-day-cheat-system';
+// "Add main menu and return player after dock story" round.
+import { MainMenuSystem } from '../systems/main-menu/main-menu-system';
+import { loadRunState, saveRunState, generateRunId } from '../systems/main-menu/run-state-data';
 
 /** Every gameplay system GameApp constructs once at startup and keeps for
  * the rest of the session (Phase 6: "系統建立、建構子注入、註冊" moved out of
@@ -99,6 +102,8 @@ export interface GameSystems {
   afterWorkStorySystem: AfterWorkStorySystem;
   /** "Add complete day testing cheat button" round. */
   completeDayCheatSystem: CompleteDayCheatSystem;
+  /** "Add main menu and return player after dock story" round. */
+  mainMenuSystem: MainMenuSystem;
 }
 
 /** Back-references into GameApp's own small orchestration methods — the
@@ -380,6 +385,20 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
       // the story finishes; trigger() itself is a no-op for any day without
       // a story entry, or one already played (this session or a past one).
       afterWorkStorySystem.trigger(finishedDay);
+      // "Add main menu and return player after dock story" round 四: the
+      // ONE write point for hp_run_state_v1's own currentDay (spec: "日結／
+      // 進入下一天後更新currentDay" — never per-frame, only here, once per
+      // completed day). Preserves whatever runId New Game originally
+      // generated; only regenerates one if this key is somehow missing
+      // (e.g. cleared out-of-band) so a day-complete can never itself fail
+      // to record progress.
+      const existingRun = loadRunState();
+      saveRunState({
+        hasActiveRun: true,
+        currentDay: finishedDay + 1,
+        runId: existingRun?.runId ?? generateRunId(),
+        lastSavedAt: Date.now(),
+      });
     }
   );
 
@@ -568,13 +587,15 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     () => settingsManager.fireTutorialEvent('dollyUsed')
   );
 
-  // 異世界物流手冊 — pause menu / tutorial / settings / codex (spec round).
-  // Not stored anywhere: nothing else needs to reference it after
-  // construction (it manages its own DOM/listeners internally).
-  new ManualUI(pauseManager, settingsManager, hud, hooks.onInterruptPlayerActions, () => {
-    // "Reset upgrades when starting day one" round — the ONE explicit
-    // "重新開始第1天" trigger (Data tab's own confirm-armed button). Resets
-    // the upgrade save itself (state/persist/effect-reapply — see
+  // "Reset upgrades when starting day one" round's own "新周目重置" flow —
+  // now shared verbatim by TWO callers (ManualUI's own Data-tab "重新開始第
+  // 1天" button below, AND MainMenuSystem's own 新遊戲 confirm, "Add main
+  // menu and return player after dock story" round spec三: "呼叫既有正式新
+  // 周目重置流程，不要另寫第二套重置") — a single named const rather than two
+  // separately-written closures guarantees both really do call the exact
+  // same steps in the exact same order.
+  const resetForNewRun = () => {
+    // Resets the upgrade save itself (state/persist/effect-reapply — see
     // UpgradeSystem.resetUpgradesForNewRun's own doc comment), then reloads
     // the page so every OTHER system (day/scene/cargo/vehicles/mail/lost-
     // found/etc.) restarts from its own normal day-1 boot path rather than
@@ -585,7 +606,22 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     // playthrough's own day-1-end genuinely re-triggers the story.
     afterWorkStorySystem.resetStoryProgress();
     window.location.reload();
-  });
+  };
+
+  // 異世界物流手冊 — pause menu / tutorial / settings / codex (spec round).
+  // Captured into a const this round (previously fire-and-forget) — needed
+  // as MainMenuSystem's own reference target so its 設定 button can open the
+  // exact same instance rather than a second one (spec五: "直接重用現有設定
+  // 系統").
+  const manualUI = new ManualUI(pauseManager, settingsManager, hud, hooks.onInterruptPlayerActions, resetForNewRun);
+
+  // "Add main menu and return player after dock story" round 二 — built
+  // LAST, once every system it might reach into (dailyFlowSystem for 繼續遊
+  // 戲's own day-resume, manualUI for 設定, resetForNewRun for 新遊戲) already
+  // exists. Immediately shows itself and pauses the world from its own
+  // constructor (spec二: "遊戲載入後不要直接進入場景，先顯示主畫面") — nothing
+  // further needed at the GameApp.start() call site below.
+  const mainMenuSystem = new MainMenuSystem(pauseManager, hud, manualUI, dailyFlowSystem, resetForNewRun);
 
   return {
     playerController, interactionSystem, pickupSystem, envelopeStation, envelopeSystem,
@@ -597,6 +633,6 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     upgradeSystem, similarCargoHighlight, mediaPlayerSystem,
     toolSystem, cargoHookSystem, spraySystem,
     ladderSystem, toolStationSystem, envelopeVacuumSystem,
-    afterWorkStorySystem, completeDayCheatSystem,
+    afterWorkStorySystem, completeDayCheatSystem, mainMenuSystem,
   };
 }

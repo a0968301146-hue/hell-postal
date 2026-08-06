@@ -11,10 +11,11 @@ import { PickupSystem } from '../interaction/pickup-system';
 import { LocalStorageAdapter } from '../../adapters/local-storage/local-storage-adapter';
 import { LOST_FOUND_ROOM } from '../../data/world/lost-found-layout-data';
 import { fishingSeatAnchorA, fishingSeatAnchorB, fishingLookTarget } from '../world-layout/fishing-pier-data';
+import { MAIN_ROOM_CENTER_SPAWN } from '../world-layout/logistics-layout-data';
 import { AFTER_WORK_STORIES, AFTER_WORK_STORY_NPC_SPAWN, AFTER_WORK_STORY_NPC_WAIT_SPOT } from './after-work-story-data';
 import { createStoryBubble, showStoryBubbleText, hideStoryBubble, disposeStoryBubble, wrapStoryLine } from './after-work-story-bubble-ui';
 
-type StoryState = 'inactive' | 'npcWalking' | 'waitingForPlayer' | 'transitioning' | 'dialogue' | 'completed';
+type StoryState = 'inactive' | 'npcWalking' | 'waitingForPlayer' | 'transitioning' | 'dialogue' | 'endTransition' | 'completed';
 
 const NPC_SPEED = 1.6; // m/s — same convention as lost-found-npc-system.ts
 const ARRIVE_EPS = 0.08;
@@ -320,24 +321,83 @@ export class AfterWorkStorySystem {
 
   // --- End (spec三 last line / 四 Esc skip) ---
 
+  /** "Add main menu and return player after dock story" round 一: the SAME
+   * single exit point both the natural end-of-dialogue path (advanceLine)
+   * and skipStory() already funneled into before this round — now kicks off
+   * a short black-fade transition (reusing this class's own fadeEl/
+   * FADE_SECONDS, the exact same fade already used at story START) instead
+   * of finishing synchronously in place, so the player is never left
+   * standing at the fishing-pier chairs. Guarded against re-entry the same
+   * way as before (only now 'endTransition' is ALSO excluded, so a second
+   * advanceLine/skipStory call arriving mid-fade can't restart the
+   * transition or double-teleport/double-mark-completed — spec:
+   * "finishStory()只能成功執行一次"). */
   private finishStory(): void {
-    if (this.state === 'completed' || this.state === 'inactive') return;
-    this.state = 'completed';
+    if (this.state === 'completed' || this.state === 'inactive' || this.state === 'endTransition') return;
+    this.state = 'endTransition';
     this.escHolding = false;
     this.escHoldElapsed = 0;
     this.hud.hideChargeBar();
     this.hud.hideInteractionPrompt();
     if (this.npcBubble) hideStoryBubble(this.npcBubble);
 
-    this.markDayCompleted(this.storyDay);
+    this.fadePhase = 'out';
+    this.fadeElapsed = 0;
+    this.fadeEl.style.opacity = '1';
+  }
 
-    this.disposeNpc();
+  /** Fires once the fade-out is fully black (fadeElapsed >= FADE_SECONDS) —
+   * every step from spec一's own required order between "黑幕淡出" and
+   * "黑幕淡入": teleport (+ Controller/body/camera sync + residual-velocity
+   * clear, all inside teleportToMainRoomCenter), NPC removal, clearing the
+   * story's own input-lock state, then restoring player movement/tools/
+   * interaction — all while the screen is still fully black, so none of it
+   * is ever visible as a pop/snap. */
+  private updateEndTransition(deltaTime: number): void {
+    this.fadeElapsed += deltaTime;
+    if (this.fadePhase === 'out') {
+      if (this.fadeElapsed >= FADE_SECONDS) {
+        this.teleportToMainRoomCenter();
 
-    this.playerData.state = 'empty-handed';
-    this.playerData.heldObjectId = null;
-    this.playerData.activeTool = this.savedActiveTool;
-    this.playerController.setInputEnabled(true);
-    this.hud.showInstructions();
+        this.markDayCompleted(this.storyDay);
+        this.disposeNpc();
+
+        this.playerData.state = 'empty-handed';
+        this.playerData.heldObjectId = null;
+        this.playerData.activeTool = this.savedActiveTool;
+        this.playerController.setInputEnabled(true);
+        this.hud.showInstructions();
+
+        this.fadePhase = 'in';
+        this.fadeElapsed = 0;
+        this.fadeEl.style.opacity = '0';
+      }
+    } else if (this.fadePhase === 'in') {
+      if (this.fadeElapsed >= FADE_SECONDS) {
+        this.fadePhase = null;
+        this.state = 'completed';
+      }
+    }
+  }
+
+  /** Teleports the player from the fishing-pier chairs back to
+   * MAIN_ROOM_CENTER_SPAWN (logistics-layout-data.ts) — mirrors
+   * teleportToChairs' own manual physics+camera write pattern exactly
+   * (PlayerController.update()'s own automatic camera sync doesn't run yet
+   * at this point, since input is still disabled), plus a residual-velocity
+   * reset teleportToChairs never needed (that teleport happens while the
+   * player is still walking under their own control moments earlier in the
+   * SAME frame budget; this one follows a screen-black beat with input
+   * already off, so leftover gravity/jump state must be explicitly
+   * cleared). */
+  private teleportToMainRoomCenter(): void {
+    const bodyY = MAIN_ROOM_CENTER_SPAWN.y + 0.9; // resting-capsule-on-floor formula, matches teleportToChairs
+    const cameraY = bodyY + 0.6;
+
+    this.physics.setPlayerPosition(new THREE.Vector3(MAIN_ROOM_CENTER_SPAWN.x, bodyY, MAIN_ROOM_CENTER_SPAWN.z));
+    this.playerController.resetVerticalMotion();
+    this.camera.position.set(MAIN_ROOM_CENTER_SPAWN.x, cameraY, MAIN_ROOM_CENTER_SPAWN.z);
+    this.camera.rotation.set(0, MAIN_ROOM_CENTER_SPAWN.facingYaw, 0);
   }
 
   private disposeNpc(): void {
@@ -420,7 +480,13 @@ export class AfterWorkStorySystem {
     // locked. A one-frame popup/UI flicker is possible if the player
     // presses a digit key mid-story; the tool itself never actually changes
     // in practice.
-    if (this.state === 'transitioning' || this.state === 'dialogue') {
+    // 'endTransition' only needs this reassertion during its own 'out'
+    // phase — input is still disabled then, same as 'transitioning'/
+    // 'dialogue'; by the time it flips to 'in', updateEndTransition has
+    // already restored activeTool once AND re-enabled input for real, so
+    // reasserting here any further would wrongly fight a genuinely-restored
+    // player during that final black-screen beat.
+    if (this.state === 'transitioning' || this.state === 'dialogue' || (this.state === 'endTransition' && this.fadePhase === 'out')) {
       if (this.playerData.activeTool !== this.savedActiveTool) this.playerData.activeTool = this.savedActiveTool;
     }
 
@@ -446,6 +512,11 @@ export class AfterWorkStorySystem {
 
     if (this.state === 'dialogue') {
       this.updateDialogue(deltaTime);
+      return;
+    }
+
+    if (this.state === 'endTransition') {
+      this.updateEndTransition(deltaTime);
       return;
     }
   }

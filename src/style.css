@@ -1681,3 +1681,128 @@ body.text-size-large #interaction-prompt { font-size: 17px; }
   color: #a8adb3;
 }
 
+/* "Add main menu and return player after dock story" round — full-screen
+ * boot menu. z-index 10000 sits above every other overlay in this file
+ * (manual-overlay 500, shipment-summary 9999-ish, AfterWorkStorySystem's own
+ * inline fadeEl 9999) since it's the very first thing the player ever sees. */
+#main-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(160deg, #1a1410, #2c2219 60%, #1a1410);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+#main-menu-overlay.visible {
+  opacity: 1;
+  pointer-events: all;
+}
+
+.main-menu-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+}
+
+.main-menu-title {
+  font-family: sans-serif;
+  font-size: 42px;
+  color: #f0e6d2;
+  letter-spacing: 4px;
+  text-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+  margin: 0;
+}
+
+.main-menu-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 260px;
+}
+
+.main-menu-btn {
+  padding: 14px 0;
+  border: none;
+  border-radius: 8px;
+  background: #6b4a2e;
+  color: #f0e6d2;
+  font-family: sans-serif;
+  font-size: 17px;
+  cursor: pointer;
+  letter-spacing: 2px;
+  transition: background 0.15s ease;
+}
+
+.main-menu-btn:hover:not(:disabled) {
+  background: #a8763f;
+}
+
+.main-menu-btn:disabled,
+.main-menu-btn.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.main-menu-notice {
+  min-height: 20px;
+  color: #ffcc66;
+  font-family: sans-serif;
+  font-size: 14px;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.main-menu-notice.visible {
+  opacity: 1;
+}
+
+.main-menu-confirm-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.main-menu-confirm-overlay.hidden {
+  display: none;
+}
+
+.main-menu-confirm-box {
+  background: linear-gradient(180deg, #3a2e22, #2c2219);
+  border-radius: 10px;
+  padding: 28px 32px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), inset 0 0 0 2px rgba(200, 170, 120, 0.25);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  max-width: 360px;
+}
+
+.main-menu-confirm-box p {
+  font-family: sans-serif;
+  color: #f0e6d2;
+  text-align: center;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.main-menu-confirm-buttons {
+  display: flex;
+  gap: 14px;
+}
+
+.main-menu-confirm-buttons .main-menu-btn {
+  width: 100px;
+  padding: 10px 0;
+}
+

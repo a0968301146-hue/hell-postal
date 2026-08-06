@@ -111,6 +111,17 @@ export class HUD {
     return this.hudRoot;
   }
 
+  /** "Add main menu and return player after dock story" round 二: hides
+   * every gameplay HUD element (crosshair, interaction prompts, toolbar —
+   * everything appended via getContainer(), plus everything built directly
+   * in this constructor) in ONE call, since the toolbar/tool-name popup are
+   * themselves children of the same #hud root (see getContainer's own doc
+   * comment above) — MainMenuSystem's full-screen overlay needs nothing
+   * gameplay-related visible behind it. */
+  setRootVisible(visible: boolean): void {
+    this.hudRoot.style.display = visible ? '' : 'none';
+  }
+
   /** Daily flow status panel — updated every frame from game.ts's loop
    * (cheap text-only DOM write, same pattern CompassUI already uses).
    * organized/loaded track two independent things now that shipping goes

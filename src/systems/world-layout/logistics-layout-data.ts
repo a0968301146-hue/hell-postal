@@ -430,6 +430,35 @@ export const LARGE_CARGO_SPAWN_POSITIONS = [
   { x: -2.8, z: 22.7 },
 ];
 
+/** "Add main menu and return player after dock story" round 一: where the
+ * player is teleported back to once the day-1 dock story ends (naturally or
+ * via Esc-hold skip) — centralized here (not hardcoded in
+ * AfterWorkStorySystem) per this round's own spec: "不要硬寫在
+ * AfterWorkStorySystem內，集中放在場景資料檔".
+ *
+ * Verified clear of every real fixture in BACK_AREA: east of
+ * LARGE_CARGO_SPAWN_POSITIONS/LABELED_CARGO_SPAWN_POSITIONS (both max out at
+ * x=1.6), west of the east-wall pallet-rack cluster and SEA_GATE opening
+ * (both near x≈9.6-10), north of every LAND_DOCK_SLOTS footprint (closest
+ * edge z≈24.55, this spawn sits at z=21), well clear of PACKAGE_WORK_ZONE
+ * (maxZ=19), the west-wall furniture cluster (bulletin board/TV/vehicle
+ * buttons, all near x≈-9.7), and END_DAY_BUTTON_POS/UNLOAD_PORTS (both far
+ * north, z≈10-13). Open, flat, unobstructed floor on every axis.
+ *
+ * `y` is FLOOR-space (mirrors fishingSeatAnchorA/B's own convention in
+ * fishing-pier-data.ts, not PLAYER_SPAWN's baked-in eye-height convention) —
+ * the teleport code itself applies the same body/camera Y offsets
+ * AfterWorkStorySystem.teleportToChairs() already uses for consistency.
+ * `facingYaw` matches THREE's own rotation.y convention (0 = local -Z,
+ * i.e. Compass North) — 0 here faces the player north into
+ * PACKAGE_WORK_ZONE/the unload docks, the room's main work area. */
+export const MAIN_ROOM_CENTER_SPAWN = {
+  x: 4,
+  y: BACK_AREA.floorY,
+  z: 21,
+  facingYaw: 0,
+};
+
 /** Fixed spawn spots for the labeling-system test cargo (spec 九) — placed
  * in the open floor east of the large-cargo zone but west of the vehicle
  * control posts, clear of the NPC area, player spawn, doorway/stairs,
