@@ -403,22 +403,27 @@ function buildLostFoundRoom(scene: THREE.Scene, physics: PhysicsWorldPort): THRE
 }
 
 /** West-wall FREEZER CABINETS ("Add freezer shelves and frozen cargo
- * freshness system" round, second redesign pass spec一/二) — replaces the
- * original wooden 置物架 entirely with a genuinely new cabinet-looking
- * object at the exact same footprint/level-Y math (still driven by
- * WEST_WALL_SHELVES/SHELF_LEVEL_Y_OFFSETS — reusing the room-fit-proven
- * position data, never the old wood visuals): light-gray metal frame + 4
- * corner posts + back panel + 3 horizontal level boards (all still real
- * static Rapier colliders, unchanged structurally from the old shelf), PLUS
- * a semi-transparent glass front pane per group (spec二: "半透明玻璃門（可
- * 先不做開門）") that is PURELY decorative — no collider at all, so it can
- * never block a placement raycast/shape-cast or a cargo throw (spec三: "不
- * 能出現此處無法放置"). Posts/back panel/glass are NEVER placement-surface
- * candidates; only the 3 level boards per group (6 total across both
- * groups) are, each keeping its own real static collider so placed cargo
- * physically rests on it — identical mechanism to the old shelf, just new
- * dressing. Callers (create-game-systems.ts) register the returned meshes
- * with PickupSystem.addPlacementSurface() exactly as before. */
+ * freshness system" round, third redesign pass spec一) — same footprint/
+ * level-Y math as before (still driven by WEST_WALL_SHELVES/
+ * SHELF_LEVEL_Y_OFFSETS), only the per-side dressing changed: light-gray
+ * metal 4 corner posts (every side keeps these — they're shared structural
+ * corners, never a "blocking panel") + 3 horizontal level boards (all still
+ * real static Rapier colliders). Per compass side (local +X=East, -X=West,
+ * +Z=South, -Z=North — see logistics-layout-data.ts's own convention
+ * comment):
+ *   - South (+Z) and North (-Z): semi-transparent glass infill panel.
+ *   - East (+X): bare metal frame only — no infill panel of any kind (the
+ *     old front glass pane that used to live here is gone).
+ *   - West (-X): completely open — the old solid back panel (mesh AND
+ *     collider) that used to sit against the wall here is removed entirely,
+ *     nothing added in its place, so nothing on this side can ever block a
+ *     placement raycast/shape-cast or a cargo throw.
+ * Posts/glass are NEVER placement-surface candidates; only the 3 level
+ * boards per group (6 total across both groups) are, each keeping its own
+ * real static collider so placed cargo physically rests on it — identical
+ * mechanism to before, just re-skinned per side. Callers
+ * (create-game-systems.ts) register the returned meshes with
+ * PickupSystem.addPlacementSurface() exactly as before. */
 function buildWestWallShelves(scene: THREE.Scene, physics: PhysicsWorldPort): THREE.Mesh[] {
   const floorY = BACK_AREA.floorY;
   const frameMat = stdMat(0xa8adb2, { metalness: 0.75, roughness: 0.35 });
@@ -440,12 +445,12 @@ function buildWestWallShelves(scene: THREE.Scene, physics: PhysicsWorldPort): TH
     scene.add(group);
 
     // 4 corner posts, full structure height — local X is the cabinet's own
-    // "depth" axis (wall -> room), local Z its "width" axis (along the wall).
+    // "depth" axis (wall -> room, East/West), local Z its "width" axis
+    // (along the wall, North/South). Kept on every side (spec一: 東側"保留
+    // 金屬框即可").
     const postGeo = new THREE.BoxGeometry(SHELF_POST_THICKNESS, structureHeight, SHELF_POST_THICKNESS);
-    let frontPostX = 0;
     for (const sx of [-1, 1]) {
       const px = sx * (halfD - SHELF_POST_THICKNESS / 2);
-      if (sx > 0) frontPostX = px;
       for (const sz of [-1, 1]) {
         const pz = sz * (halfW - SHELF_POST_THICKNESS / 2);
         const post = new THREE.Mesh(postGeo, frameMat);
@@ -458,26 +463,20 @@ function buildWestWallShelves(scene: THREE.Scene, physics: PhysicsWorldPort): TH
       }
     }
 
-    // Back panel — against the wall (local -X), full height, spanning the
-    // whole width.
-    const backLocalX = -halfD + SHELF_BOARD_THICKNESS / 2;
-    const backGeo = new THREE.BoxGeometry(SHELF_BOARD_THICKNESS, structureHeight, width);
-    const back = new THREE.Mesh(backGeo, frameMat);
-    back.position.set(backLocalX, structureHeight / 2, 0);
-    group.add(back);
-    physics.createStaticCuboid(
-      centerX + backLocalX, floorY + structureHeight / 2, centerZ,
-      SHELF_BOARD_THICKNESS / 2, structureHeight / 2, width / 2
-    );
-
-    // Semi-transparent glass front door — flush with the front posts,
-    // spanning the opening between them. Visual only: NEVER given a
-    // collider and NEVER added to `surfaces`, so it cannot intercept the
-    // placement raycast/shape-cast or physically block anything (spec三).
-    const glassGeo = new THREE.BoxGeometry(0.015, structureHeight - 0.05, width - SHELF_POST_THICKNESS * 2);
-    const glass = new THREE.Mesh(glassGeo, glassMat);
-    glass.position.set(frontPostX, structureHeight / 2, 0);
-    group.add(glass);
+    // South (+Z) and North (-Z) glass infill panels — flush with the posts
+    // on their own side, spanning the depth (East-West) opening between the
+    // front and back posts. Visual only: NEVER given a collider and NEVER
+    // added to `surfaces`, so neither can intercept the placement
+    // raycast/shape-cast or physically block anything.
+    const sideGlassGeo = new THREE.BoxGeometry(depth - SHELF_POST_THICKNESS * 2, structureHeight - 0.05, 0.015);
+    for (const sz of [-1, 1]) {
+      const pz = sz * (halfW - SHELF_POST_THICKNESS / 2);
+      const sideGlass = new THREE.Mesh(sideGlassGeo, glassMat);
+      sideGlass.position.set(0, structureHeight / 2, pz);
+      group.add(sideGlass);
+    }
+    // East (+X): bare frame only — no infill mesh at all.
+    // West (-X): completely open — no back panel, no collider, nothing.
 
     // 3 horizontal level boards — each spans the cabinet's full footprint,
     // gets a real static collider (so placed cargo physically rests on it),

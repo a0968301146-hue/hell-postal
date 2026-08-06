@@ -124,6 +124,13 @@ export interface CargoData {
    * spawned frozen item (see createDailyCargoData below) and is ticked by
    * FreezerSystem's own per-frame update — never mutated anywhere else. */
   coldValue: number;
+  /** "冷藏值系統修改" round三: permanent quality ceiling — starts at 100,
+   * only ever LOWERED (never raised) the first time coldValue drops below
+   * 75/50/25 (see cold-value-data.ts's own nextColdValueCap), and clamps how
+   * high coldValue can ever recover back up to afterward, even after being
+   * placed back in a freezer shelf. Same "only meaningful for frozen cargo"
+   * caveat as coldValue above. */
+  coldValueCap: number;
   /** Whether this item is CURRENTLY close enough to a freezer rack (a plain
    * freshly-computed bool FreezerSystem's own per-frame proximity check
    * writes here every frame — spec八: "維護 isInsideFreezerShelf bool") —
@@ -195,6 +202,7 @@ export function createCargoData(id: string, preset: CargoLabelPreset, dimensions
     category: null,
     region: null,
     coldValue: 0,
+    coldValueCap: 100,
     isInsideFreezerShelf: false,
   };
 }
@@ -261,6 +269,9 @@ export function createDailyCargoData(id: string, preset: CargoShapePreset, regio
     // (FreezerSystem's own update() skips every non-frozen category), so 0
     // for everything else is just a harmless, never-read default.
     coldValue: preset.category === 'frozen' ? 100 : 0,
+    // "冷藏值系統修改" round三: starts uncapped (100) — only ever lowered
+    // once coldValue actually crosses a tier boundary for the first time.
+    coldValueCap: 100,
     isInsideFreezerShelf: false,
   };
 }
@@ -280,12 +291,12 @@ export function createDailyCargoData(id: string, preset: CargoShapePreset, regio
  * JSON -> localStorage, and the reverse on load) rather than either
  * assuming CargoData itself is safe to JSON.stringify() directly (an
  * assumption that would silently break the moment CargoData ever gains a
- * non-serializable field) or having to retrofit coldValue/
+ * non-serializable field) or having to retrofit coldValue/coldValueCap/
  * isInsideFreezerShelf into a save format invented later without this
- * round's own context. coldValue/isInsideFreezerShelf are listed explicitly
- * below (not just `...data`) so adding a new CargoData field in the future
- * forces a conscious decision about whether it belongs in a save file too,
- * rather than silently riding along. */
+ * round's own context. Every field is listed explicitly below (not just
+ * `...data`) so adding a new CargoData field in the future forces a
+ * conscious decision about whether it belongs in a save file too, rather
+ * than silently riding along. */
 export interface SerializedCargoData {
   id: string;
   cargoType: CargoType;
@@ -302,6 +313,7 @@ export interface SerializedCargoData {
   category: CargoCategory | null;
   region: CargoRegion | null;
   coldValue: number;
+  coldValueCap: number;
   isInsideFreezerShelf: boolean;
 }
 
@@ -322,6 +334,7 @@ export function serializeCargoData(data: CargoData): SerializedCargoData {
     category: data.category,
     region: data.region,
     coldValue: data.coldValue,
+    coldValueCap: data.coldValueCap,
     isInsideFreezerShelf: data.isInsideFreezerShelf,
   };
 }
@@ -343,6 +356,7 @@ export function deserializeCargoData(saved: SerializedCargoData): CargoData {
     category: saved.category,
     region: saved.region,
     coldValue: saved.coldValue,
+    coldValueCap: saved.coldValueCap,
     isInsideFreezerShelf: saved.isInsideFreezerShelf,
   };
 }

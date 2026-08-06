@@ -7,7 +7,7 @@ import {
   WEST_WALL_SHELVES, WestWallShelfConfig, SHELF_LEVEL_Y_OFFSETS, SHELF_BOARD_THICKNESS,
   SHELF_FRAME_TOP_MARGIN, BACK_AREA,
 } from '../world-layout/logistics-layout-data';
-import { COLD_VALUE_MIN, COLD_VALUE_MAX, COLD_VALUE_DECAY_PER_SECOND, COLD_VALUE_RECOVERY_PER_SECOND } from './cold-value-data';
+import { COLD_VALUE_MIN, COLD_VALUE_DECAY_PER_SECOND, COLD_VALUE_RECOVERY_PER_SECOND, nextColdValueCap } from './cold-value-data';
 
 /** One shelf-LEVEL's own runtime state — every existing 置物架 level (spec一:
  * "把目前所有「置物架」直接改成「冷凍貨架」", appearance/size/placement
@@ -130,14 +130,19 @@ export class FreezerSystem {
 
   /** Purely arithmetic, driven by the ALREADY-CACHED `isInsideFreezerShelf`
    * flag (no geometry/scanning here at all). Decay/recovery RATES are
-   * unchanged from the original round. */
+   * unchanged from the prior round; "冷藏值系統修改" round三 adds the
+   * permanent quality cap: recovery now clamps to the item's own
+   * `coldValueCap` (never straight back to 100), and decay is the ONE place
+   * that cap can ever be lowered further, via nextColdValueCap — recovering
+   * never lowers or raises the cap itself. */
   private tickColdValues(deltaTime: number): void {
     for (const data of this.cargoSystem.cargoDataMap.values()) {
       if (data.category !== 'frozen') continue;
       if (data.isInsideFreezerShelf) {
-        data.coldValue = Math.min(COLD_VALUE_MAX, data.coldValue + COLD_VALUE_RECOVERY_PER_SECOND * deltaTime);
+        data.coldValue = Math.min(data.coldValueCap, data.coldValue + COLD_VALUE_RECOVERY_PER_SECOND * deltaTime);
       } else {
         data.coldValue = Math.max(COLD_VALUE_MIN, data.coldValue - COLD_VALUE_DECAY_PER_SECOND * deltaTime);
+        data.coldValueCap = nextColdValueCap(data.coldValue, data.coldValueCap);
       }
     }
   }

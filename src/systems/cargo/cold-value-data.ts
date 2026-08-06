@@ -6,14 +6,30 @@
 
 export const COLD_VALUE_MIN = 0;
 export const COLD_VALUE_MAX = 100;
-/** spec三: "每秒 0.25%" (~400 real seconds from 100% to 0%) — applied whenever
- * a frozen item's own `isInsideFreezerShelf` is false, regardless of WHERE
- * it currently is (floor/pallet/held/vehicle — spec三's own exhaustive
- * list). */
-export const COLD_VALUE_DECAY_PER_SECOND = 0.25;
-/** spec四: "每秒 1%", capped at COLD_VALUE_MAX — applied whenever
- * `isInsideFreezerShelf` is true. */
+/** "冷藏值系統修改" round二: "每2秒下降1%" = 0.5%/秒 (was 0.25%/秒) — applied
+ * whenever a frozen item's own `isInsideFreezerShelf` is false, regardless
+ * of WHERE it currently is (floor/pallet/held/vehicle). */
+export const COLD_VALUE_DECAY_PER_SECOND = 0.5;
+/** spec四: "每秒 1%", capped at the item's own coldValueCap (see
+ * nextColdValueCap below) — applied whenever `isInsideFreezerShelf` is
+ * true. Recovery speed itself is unchanged this round. */
 export const COLD_VALUE_RECOVERY_PER_SECOND = 1;
+
+/** "冷藏值系統修改" round三: permanent quality cap — the first time coldValue
+ * drops below a tier boundary (75/50/25), that boundary becomes the new
+ * ceiling coldValue can ever recover back up to, even after being placed
+ * back in a freezer shelf (spec: "只要貨物第一次掉過某個品質門檻，之後就算
+ * 放回冷藏架，也只能恢復到該門檻"). Monotonically non-increasing — called
+ * only on the decay path (never on recovery), with `currentCap` as the
+ * floor so an already-lower cap is never raised back up by re-evaluating a
+ * coldValue that hasn't dropped any further. */
+export function nextColdValueCap(coldValue: number, currentCap: number): number {
+  let cap = currentCap;
+  if (coldValue < 75 && cap > 75) cap = 75;
+  if (coldValue < 50 && cap > 50) cap = 50;
+  if (coldValue < 25 && cap > 25) cap = 25;
+  return cap;
+}
 
 /** spec六: four FIXED stages, never a continuous ratio ("不是連續比例，採固定
  * 四階段") — the exact boundaries spec六's own worked examples confirm:
