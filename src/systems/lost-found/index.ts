@@ -4,3 +4,4 @@ export * from './lost-found-system';
 export * from './lost-found-ui';
 export * from './lost-found-bubble-ui';
 export * from './lost-found-npc-system';
+export * from './lost-found-cleaning-system';

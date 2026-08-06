@@ -9,7 +9,8 @@ import { PickupPort } from '../../shared/types/pickup-port';
 import {
   LOST_ITEM_PRESETS, LostItemPreset, LOST_FOUND_CASES, LostFoundCaseDef, LOST_FOUND_WRONG_ITEM_TEXT, LOST_FOUND_MISSED_TEXT,
   LOST_FOUND_SEEKING_TEXT, LOST_FOUND_CONTINUE_PROMPT, DECOY_LOST_ITEM_COUNT, DAILY_LOST_FOUND_NPC_COUNT, buildLostItemGeometry,
-  pickRandomGreeting, pickRandomThanks,
+  pickRandomGreeting, pickRandomThanks, UNKNOWN_LOST_ITEM_DISPLAY_NAME, buildUnknownLostItemGeometry, buildUnknownLostItemMaterial,
+  LOST_FOUND_NOT_CLEAN_TEXT,
 } from './lost-found-data';
 import { UNLOAD_PORTS, UNLOAD_SPAWN_JITTER_X, UNLOAD_SPAWN_JITTER_Z, UNLOAD_BURST_CONFIG } from '../daily-flow';
 import { LostFoundUI } from './lost-found-ui';
@@ -19,7 +20,7 @@ import { LostFoundCabinetSystem, computeLostItemFitScale } from './lost-found-ca
 import { LostFoundSettlementInput } from '../scoring/scoring-types';
 import { logNpcEDebug } from '../interaction/npc-e-debug';
 
-const LOST_ITEM_ID_PREFIX = 'lostitem-';
+export const LOST_ITEM_ID_PREFIX = 'lostitem-';
 
 /** How long a successfully-completed NPC lingers showing its thank-you text
  * before actually walking out ("Add sequential lost-found visitors and held
@@ -135,6 +136,21 @@ export class LostFoundSystem {
    * "settleAtDeparture永遠不阻止發車，但只套用一次結算"). */
   private settlementAppliedToday = false;
   private lostItemInstanceCounter = 0;
+  /** "Add lost-found item cleaning system" round — the item's REAL data
+   * (spec: "真正資料不能消失"), kept per interactable id from the moment it
+   * spawns as a black-ball placeholder through to the moment it's cleaned.
+   * Never touched by the mesh/material swap in revealLostItem() below —
+   * only the placeholder's own geometry/material is display state; this map
+   * is what `isClean===false` displays FROM once cleaned. */
+  private lostItemPresets: Map<string, LostItemPreset> = new Map();
+  /** isClean state (spec: "新增保存 isClean bool") — presence in this set
+   * means the item has already been cleaned and is showing its real model;
+   * absence (the default for every freshly-spawned id) means it's still the
+   * black-ball placeholder. Kept here (not on the shared InteractableObject
+   * type) mirroring LostFoundCabinetSystem's own itemToSlot side-table
+   * convention for the same reason — purely this domain's own state, not a
+   * generic interactable concern. */
+  private cleanedItemIds: Set<string> = new Set();
   /** Counts down after onDailyUnloadStarted() before today's lost items
    * actually burst in — matches roughly how long UnloadingSystem's own
    * gate-open + charge-up takes (read-only from UNLOAD_PORTS/
@@ -331,26 +347,34 @@ export class LostFoundSystem {
     const y = port.spawnY;
     const z = point.z + jitterZ;
 
-    // Auto-fit: shrink both the visual model AND the collider by the SAME
-    // factor if the raw preset would exceed 85% of a single cabinet cell's
-    // interior (spec六) — checked here, at spawn time, so nothing ever
-    // generates that can't physically fit into the storage cabinet, and the
-    // physical collision body is never left oversized relative to what's
-    // shown.
+    // Auto-fit: shrink the collider by the SAME factor revealLostItem() will
+    // later apply to the real model's own visual size (spec六) — checked
+    // here, at spawn time, so the physical collision body is sized to fit
+    // the storage cabinet from the start, even though the REAL visual model
+    // (see revealLostItem below) doesn't exist yet — only the black-ball
+    // placeholder, whose own fixed size is entirely independent of this
+    // preset's real dimensions (spec: "不要依照不同物品改變大小").
     const fitScale = computeLostItemFitScale(preset.visualHalfExtents);
-    const visual = scaleExtents(preset.visualHalfExtents, fitScale);
     const collider = scaleExtents(preset.colliderHalfExtents, fitScale);
 
     const id = `${LOST_ITEM_ID_PREFIX}${idSuffix}-${this.lostItemInstanceCounter++}`;
-    const geo = buildLostItemGeometry(preset.shape, visual);
-    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: preset.color }));
+    // "Add lost-found item cleaning system" round — every lost item spawns
+    // as the SAME black-ball placeholder (spec: "生成Lost Item→建立黑色球
+    // 體→保留真正Item ID→等待玩家清潔→完成後替換成真正模型"), never the real
+    // buildLostItemGeometry(preset.shape, visual) result directly. The
+    // collider below is STILL sized off the real preset's own (auto-fit)
+    // extents — display state never affects physics/collision (spec: "不要
+    // 修改...Collider/物理").
+    const geo = buildUnknownLostItemGeometry();
+    const mesh = new THREE.Mesh(geo, buildUnknownLostItemMaterial());
     mesh.position.set(x, y, z);
     this.scene.add(mesh);
 
-    const obj = createInteractableObject(id, preset.displayName, mesh, collider.x * 2, collider.y * 2, collider.z * 2);
+    const obj = createInteractableObject(id, UNKNOWN_LOST_ITEM_DISPLAY_NAME, mesh, collider.x * 2, collider.y * 2, collider.z * 2);
     const { body, collider: physCollider } = this.physics.createBoxBody(x, y, z, collider.x, collider.y, collider.z, 35);
     obj.rigidBody = body;
     obj.collider = physCollider;
+    this.lostItemPresets.set(id, preset);
 
     const forward = randRange(UNLOAD_BURST_CONFIG.forwardSpeedMin, UNLOAD_BURST_CONFIG.forwardSpeedMax);
     const up = randRange(UNLOAD_BURST_CONFIG.upSpeedMin, UNLOAD_BURST_CONFIG.upSpeedMax);
@@ -378,6 +402,46 @@ export class LostFoundSystem {
    * silently generates today's content itself. */
   get hasTodaysQueue(): boolean {
     return this.todaysQueue.length > 0;
+  }
+
+  /** "Add lost-found item cleaning system" round — true once revealLostItem
+   * below has already run for this id; false for every id that either isn't
+   * a lost item at all or hasn't been cleaned yet. */
+  isItemClean(id: string): boolean {
+    return this.cleanedItemIds.has(id);
+  }
+
+  /** LostFoundCleaningSystem's own completion hook (the ONE call site) — an
+   * in-place model swap (spec: "黑球直接變成真正模型，不要重新生成新的物
+   * 件"), never a teardown/respawn: the SAME mesh keeps its rigidBody/
+   * collider/id/interactables-map entry throughout, only `mesh.geometry`/
+   * `mesh.material` (and `displayName`, so every existing HUD prompt call
+   * site — pickup/hold/multi-carry, all already reading `obj.displayName`
+   * directly — shows the real name with zero changes needed there) are
+   * reassigned. Old placeholder geometry/material are disposed right after,
+   * mirroring MailSystem.applyStamp's own established disposal discipline
+   * for an in-place visual swap. Returns false (no-op) for an unknown id or
+   * one already cleaned — idempotent by construction, so a caller never
+   * needs its own extra guard. */
+  revealLostItem(id: string): boolean {
+    if (this.cleanedItemIds.has(id)) return false;
+    const preset = this.lostItemPresets.get(id);
+    const obj = this.interactables.get(id);
+    if (!preset || !obj) return false;
+
+    const fitScale = computeLostItemFitScale(preset.visualHalfExtents);
+    const visual = scaleExtents(preset.visualHalfExtents, fitScale);
+
+    const oldGeo = obj.mesh.geometry;
+    const oldMat = obj.mesh.material as THREE.Material;
+    obj.mesh.geometry = buildLostItemGeometry(preset.shape, visual);
+    obj.mesh.material = new THREE.MeshStandardMaterial({ color: preset.color });
+    oldGeo.dispose();
+    oldMat.dispose();
+
+    obj.displayName = preset.displayName;
+    this.cleanedItemIds.add(id);
+    return true;
   }
 
   /** TEMPORARY TEST CHEAT — remove before public demo. Force-completes
@@ -481,7 +545,15 @@ export class LostFoundSystem {
       return;
     }
 
-    if (heldId === entry.targetItemId) {
+    if (heldId === entry.targetItemId && !this.isItemClean(heldId)) {
+      // "Add lost-found item cleaning system" round — the right item, but
+      // still the black-ball placeholder (spec: "isClean==false 不得交
+      // 件"). Refused exactly like a wrong item, but with its own distinct
+      // message — the item stays held (never consumed), same as the wrong-
+      // item branch below.
+      this.ui.showWrong(LOST_FOUND_NOT_CLEAN_TEXT);
+      logNpcEDebug('LostFoundSystem.tryConfirmWithNpc', { heldId, before, result: 'correct item but not clean yet', after: this.debugSnapshot() });
+    } else if (heldId === entry.targetItemId) {
       this.pickupSystem.forceDropHeld();
       this.disposeLostItem(heldId);
       entry.state = 'thanking';
@@ -504,6 +576,8 @@ export class LostFoundSystem {
     if (obj.rigidBody) this.physics.removeRigidBody(obj.rigidBody);
     this.interactables.delete(id);
     this.cabinetSystem.untrack(id);
+    this.lostItemPresets.delete(id);
+    this.cleanedItemIds.delete(id);
     const entry = this.todaysQueue.find((e) => e.targetItemId === id);
     if (entry) entry.targetItemId = null;
   }

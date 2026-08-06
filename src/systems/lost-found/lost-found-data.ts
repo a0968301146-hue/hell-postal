@@ -137,6 +137,31 @@ export function pickRandomThanks(): string {
   return LOST_FOUND_THANKS_TEXTS[Math.floor(Math.random() * LOST_FOUND_THANKS_TEXTS.length)];
 }
 
+/** "Add lost-found item cleaning system" round — every lost item spawns
+ * looking identical (spec: "所有失物外觀完全一致") until the player cleans it
+ * at the cleaning station; this is the ONE shared placeholder shape/material
+ * every preset starts as, regardless of its own real shape/size (spec: "不要
+ * 依照不同物品改變大小"). */
+export const UNKNOWN_LOST_ITEM_RADIUS = 0.18;
+export const UNKNOWN_LOST_ITEM_DISPLAY_NAME = '？？？\n未知失物';
+
+export function buildUnknownLostItemGeometry(): THREE.BufferGeometry {
+  return new THREE.SphereGeometry(UNKNOWN_LOST_ITEM_RADIUS, 16, 12);
+}
+
+/** Rough/matte, non-reflective, non-emissive (spec: "粗糙材質／不反光／不發
+ * 光") — roughness 1 + metalness 0 is MeshStandardMaterial's own fully-matte
+ * combination; emissive is left at its default (black/off). */
+export function buildUnknownLostItemMaterial(): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 1, metalness: 0 });
+}
+
+/** Refusal text for handing an uncleaned item to its NPC (spec: "isClean ==
+ * false 不得交件") — a distinct message from LOST_FOUND_WRONG_ITEM_TEXT below
+ * (this IS the item the NPC wants; it just isn't clean yet), so the player
+ * isn't misled into thinking they grabbed the wrong thing entirely. */
+export const LOST_FOUND_NOT_CLEAN_TEXT = '這件失物還沒清潔乾淨，無法交還';
+
 /** Shown alongside the greeting text while the NPC waits for the player's
  * first E press (spec二: "顯示「按 E 繼續」"). */
 export const LOST_FOUND_CONTINUE_PROMPT = '按 E 繼續';

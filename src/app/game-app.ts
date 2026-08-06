@@ -290,6 +290,13 @@ export class GameApp {
       // cargo-into-cargoBounds shipment scan every frame it's enabled.
       s.unloadingSystem.update(deltaTime);
       s.lostFoundSystem.update(deltaTime);
+      // "Add lost-found item cleaning system" round — runs right after
+      // lostFoundSystem/InteractionSystem so its own prompt/chargebar calls
+      // have the final say on the shared HUD elements while the player is
+      // aiming at the cleaning station (same ordering convention
+      // HUD.showToolPrompt's own doc comment documents for cargoHookSystem/
+      // spraySystem).
+      s.lostFoundCleaningSystem.update(deltaTime);
       s.mailSystem.update(deltaTime);
       s.mailBagSystem.update(deltaTime);
       // "Add regional envelope dispatch machine" round — same paused-block

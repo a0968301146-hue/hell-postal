@@ -18,7 +18,7 @@ import { DailyFlowSystem } from '../systems/daily-flow';
 import { UnloadingSystem } from '../systems/unloading';
 import { PalletSystem } from '../systems/pallet';
 import { CargoInspectionSystem, CargoInspectionUI } from '../systems/cargo-inspection';
-import { LostFoundSystem, LostFoundUI } from '../systems/lost-found';
+import { LostFoundSystem, LostFoundUI, LostFoundCleaningSystem } from '../systems/lost-found';
 import { MailSystem } from '../systems/mail/mail-system';
 import { MailBagSystem } from '../systems/mail/mail-bag-system';
 import { PackedMailBagSystem } from '../systems/mail/packed-mail-bag-system';
@@ -76,6 +76,8 @@ export interface GameSystems {
   cargoInspectionUI: CargoInspectionUI;
   lostFoundSystem: LostFoundSystem;
   lostFoundUI: LostFoundUI;
+  /** "Add lost-found item cleaning system" round. */
+  lostFoundCleaningSystem: LostFoundCleaningSystem;
   /** "Add modular envelope stamping and regional mail bag system" round. */
   mailSystem: MailSystem;
   mailBagSystem: MailBagSystem;
@@ -290,6 +292,14 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   const lostFoundUI = new LostFoundUI();
   const lostFoundSystem = new LostFoundSystem(
     scene, physics, interactables, pickupSystem, lostFoundUI
+  );
+  // "Add lost-found item cleaning system" round — the black-ball-reveal
+  // interaction's own standalone system (self-contained raycast/keydown, see
+  // its own class doc comment for why this needs zero InteractionSystem
+  // changes).
+  const lostFoundCleaningSystem = new LostFoundCleaningSystem(
+    scene, physics, camera, hud, playerData, interactables, pauseManager,
+    () => playerController.isLocked, lostFoundSystem
   );
 
   // MailBagSystem owns the empty-bag rack + every bag's own lifecycle,
@@ -628,7 +638,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     sortingBoxSystem, mailSortingSystem, cargoSystem, dollySystem, vehicleControlSystem,
     scoringSystem, counterNpcSystem, counterServiceSystem, compassUI, dailyFlowSystem,
     unloadingSystem, palletSystem, cargoInspectionSystem, cargoInspectionUI,
-    lostFoundSystem, lostFoundUI, mailSystem, mailBagSystem,
+    lostFoundSystem, lostFoundUI, lostFoundCleaningSystem, mailSystem, mailBagSystem,
     packedMailBagSystem, envelopeDispatchMachineSystem, envelopeStackSystem,
     upgradeSystem, similarCargoHighlight, mediaPlayerSystem,
     toolSystem, cargoHookSystem, spraySystem,
