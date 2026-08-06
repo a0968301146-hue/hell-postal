@@ -1120,6 +1120,32 @@ body.text-size-large #interaction-prompt { font-size: 17px; }
   display: block;
 }
 
+/* Cold-value readout ("Add freezer shelves and frozen cargo freshness
+ * system" round spec七) — same top-right panel convention as
+ * #held-count-panel/#envelope-stack-panel, stacked just below them. Text
+ * color is set inline per-frame (hud.ts's own updateColdValueStatus) to the
+ * current tier color, so no color rule lives here. */
+#cold-value-panel {
+  position: fixed;
+  top: 180px;
+  right: 16px;
+  z-index: 101;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-family: sans-serif;
+  font-size: 13px;
+  font-weight: bold;
+  text-align: center;
+  user-select: none;
+  display: none;
+}
+
+#cold-value-panel.visible {
+  display: block;
+}
+
 /* Bulletin board upgrade UI ("Add bulletin board upgrade system" round
  * spec三) — full-screen overlay covering the whole HUD, same
  * position:fixed/inset:0 convention as #manual-overlay, deliberately NOT

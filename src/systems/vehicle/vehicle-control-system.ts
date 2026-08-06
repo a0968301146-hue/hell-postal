@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { InteractableObject, createInteractableObject } from '../../shared/types/interactable';
-import { CargoSystem, CargoData, CargoType } from '../cargo';
+import { CargoSystem, CargoData, CargoType, FrozenSettlementInput, createEmptyFrozenSettlementInput, tallyFrozenColdValue } from '../cargo';
 // Depends on the neutral PickupPort contract (Phase 6: 模組邊界修正)
 // instead of importing PickupSystem (systems/interaction) — that system's
 // own index.ts also re-exports InteractionSystem, which depends on
@@ -394,6 +394,11 @@ export class VehicleControlSystem {
     const slotById = new Map(this.slots.map((s) => [s.config.id, s]));
     let shippedCorrect = 0;
     let unshipped = 0;
+    // "Add freezer shelves and frozen cargo freshness system" round spec六
+    // — tallied in this SAME existing scan loop (never a second scan over
+    // dailyCargoIds), read straight off the CargoData already being read
+    // here for the correctlyShipped check.
+    const frozen = createEmptyFrozenSettlementInput();
 
     for (const id of this.dailyFlowSystem.dailyCargoIds) {
       const data = this.cargoSystem.getCargoData(id);
@@ -410,7 +415,15 @@ export class VehicleControlSystem {
         slot.pinnedCargo.push(obj);
       }
 
-      if (data.correctlyShipped) shippedCorrect++; else unshipped++;
+      if (data.correctlyShipped) {
+        shippedCorrect++;
+        // An unshipped frozen item is already covered by the normal
+        // per-item unshipped penalty above — only a CORRECTLY shipped one
+        // needs its own coldValue tier tallied here.
+        if (data.category === 'frozen') tallyFrozenColdValue(frozen, data.coldValue);
+      } else {
+        unshipped++;
+      }
     }
 
     // The sorting pallets themselves are never in dailyCargoIds (spec: "托盤
@@ -507,7 +520,7 @@ export class VehicleControlSystem {
       slot.waypointIndex = 0;
     }
 
-    this.pendingSettlement = this.scoringSystem.settleDeparture(this.dailyFlowSystem.totalCargoCount, shippedCorrect, unshipped, lostFound, mail);
+    this.pendingSettlement = this.scoringSystem.settleDeparture(this.dailyFlowSystem.totalCargoCount, shippedCorrect, unshipped, lostFound, mail, frozen);
 
     this.dailyFlowSystem.notifyDeparting();
 
@@ -735,6 +748,7 @@ export class VehicleControlSystem {
       lostFoundMissedCount: 0, lostFoundPenalty: 0,
       lostItemTotal: 0, lostItemHandedOver: 0, lostItemStoredCount: 0, lostItemUnstoredCount: 0, lostItemPenalty: 0,
       mailTotal: 0, mailShipped: 0, mailUnshipped: 0, mailPenalty: 0,
+      frozenTotal: 0, frozenTier100: 0, frozenTier75: 0, frozenTier50: 0, frozenTier25: 0, frozenPenalty: 0,
       finalScore: this.settingsManager.progress.score,
     };
     this.pendingSettlement = null;
@@ -776,8 +790,10 @@ export class VehicleControlSystem {
    * afterWorkStorySystem.trigger(finishedDay) — a no-op for any day without
    * a story entry, or one already played, so day-1-only and play-once-only
    * are both enforced by that existing code, not duplicated here. */
-  forceSettleDayForTesting(cargoTotal: number, lostFound: LostFoundSettlementInput, mail: MailSettlementInput): void {
-    this.pendingSettlement = this.scoringSystem.settleDeparture(cargoTotal, cargoTotal, 0, lostFound, mail);
+  forceSettleDayForTesting(
+    cargoTotal: number, lostFound: LostFoundSettlementInput, mail: MailSettlementInput, frozen: FrozenSettlementInput
+  ): void {
+    this.pendingSettlement = this.scoringSystem.settleDeparture(cargoTotal, cargoTotal, 0, lostFound, mail, frozen);
     this.showDayCompleteSummary(() => this.dailyFlowSystem.pressEndDayButton());
   }
 }

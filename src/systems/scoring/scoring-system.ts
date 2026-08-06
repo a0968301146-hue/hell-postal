@@ -1,6 +1,7 @@
 import { SettingsManager } from '../settings';
 import { UNSHIPPED_PENALTY_PER_ITEM, LOST_FOUND_MISSED_PENALTY, LOST_ITEM_UNSTORED_PENALTY_PER_ITEM } from './scoring-data';
 import { DepartureSettlement, LostFoundSettlementInput, MailSettlementInput } from './scoring-types';
+import { FrozenSettlementInput } from '../cargo/cold-value-data';
 
 /**
  * Owns the departure settlement math (spec四-10: 成功出貨數量/未出貨數量/未
@@ -35,7 +36,7 @@ export class ScoringSystem {
    * snapshot (spec七/八: 兩條獨立項目, computed once, not re-derived here). */
   settleDeparture(
     total: number, shippedCorrect: number, unshipped: number,
-    lostFound: LostFoundSettlementInput, mail: MailSettlementInput
+    lostFound: LostFoundSettlementInput, mail: MailSettlementInput, frozen: FrozenSettlementInput
   ): DepartureSettlement {
     const penalty = unshipped * UNSHIPPED_PENALTY_PER_ITEM;
     // "Add sequential lost-found visitors and held cargo feedback" round
@@ -49,7 +50,18 @@ export class ScoringSystem {
     // separate mail-specific constant, and the bag itself is never
     // penalized again on top (spec: "分類袋本身不可再額外扣一次").
     const mailPenalty = mail.unshipped * UNSHIPPED_PENALTY_PER_ITEM;
-    const totalPenalty = penalty + lostFoundPenalty + lostItemPenalty + mailPenalty;
+    // "Add freezer shelves and frozen cargo freshness system" round spec六
+    // — a correctly-shipped frozen item at full (100%) freshness costs
+    // nothing extra, same as any other correctly-shipped item; each lower
+    // tier costs a FRACTION of the SAME UNSHIPPED_PENALTY_PER_ITEM used
+    // everywhere else in this file, proportional to how much value tier was
+    // lost (75%->25% lost, 50%->50% lost, 25%->75% lost) — reuses the one
+    // existing per-item penalty magnitude rather than inventing a second,
+    // frozen-only constant.
+    const frozenPenalty = Math.round(
+      (frozen.tier75 * 0.25 + frozen.tier50 * 0.5 + frozen.tier25 * 0.75) * UNSHIPPED_PENALTY_PER_ITEM
+    );
+    const totalPenalty = penalty + lostFoundPenalty + lostItemPenalty + mailPenalty + frozenPenalty;
     if (totalPenalty > 0) this.settingsManager.addScore(-totalPenalty);
     const settlement: DepartureSettlement = {
       total,
@@ -67,6 +79,12 @@ export class ScoringSystem {
       mailShipped: mail.shipped,
       mailUnshipped: mail.unshipped,
       mailPenalty,
+      frozenTotal: frozen.total,
+      frozenTier100: frozen.tier100,
+      frozenTier75: frozen.tier75,
+      frozenTier50: frozen.tier50,
+      frozenTier25: frozen.tier25,
+      frozenPenalty,
       finalScore: this.settingsManager.progress.score,
     };
     this.onSettlement?.(settlement);

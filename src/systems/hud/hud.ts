@@ -16,6 +16,7 @@ export class HUD {
   private dayTransitionTimer: number | null = null;
   private heldCountEl: HTMLElement;
   private envelopeStackEl: HTMLElement;
+  private coldValueEl: HTMLElement;
 
   constructor() {
     const hud = document.createElement('div');
@@ -99,6 +100,13 @@ export class HUD {
     this.envelopeStackEl = document.createElement('div');
     this.envelopeStackEl.id = 'envelope-stack-panel';
     hud.appendChild(this.envelopeStackEl);
+
+    // "Add freezer shelves and frozen cargo freshness system" round spec七 —
+    // same persistent "visible only while relevant" convention as
+    // heldCountEl/envelopeStackEl above.
+    this.coldValueEl = document.createElement('div');
+    this.coldValueEl.id = 'cold-value-panel';
+    hud.appendChild(this.coldValueEl);
   }
 
   /** "Add tool hotbar and cargo hook" round spec九: "工具欄UI可接入既有HUD容
@@ -204,6 +212,20 @@ export class HUD {
     this.envelopeStackEl.textContent = `信封：${count}／${capacity}\n${modeText}`;
     this.envelopeStackEl.style.whiteSpace = 'pre-line';
     this.envelopeStackEl.classList.add('visible');
+  }
+
+  /** "Add freezer shelves and frozen cargo freshness system" round spec七 —
+   * shown only while actively holding a frozen-category item (caller passes
+   * null otherwise), color-tiered per cold-value-data.ts's own
+   * coldValueColor(). */
+  updateColdValueStatus(coldValue: number | null, color?: string): void {
+    if (coldValue === null) {
+      this.coldValueEl.classList.remove('visible');
+      return;
+    }
+    this.coldValueEl.textContent = `冷藏值：${Math.round(coldValue)}%`;
+    this.coldValueEl.style.color = color ?? '';
+    this.coldValueEl.classList.add('visible');
   }
 
   showInteractionPrompt(name: string, action: string): void {
@@ -350,12 +372,14 @@ export class HUD {
     lostFoundMissedCount: number; lostFoundPenalty: number;
     lostItemTotal: number; lostItemHandedOver: number; lostItemStoredCount: number; lostItemUnstoredCount: number; lostItemPenalty: number;
     mailTotal: number; mailShipped: number; mailUnshipped: number; mailPenalty: number;
+    frozenTotal: number; frozenTier100: number; frozenTier75: number; frozenTier50: number; frozenTier25: number; frozenPenalty: number;
     finalScore: number; onContinue: () => void;
   }): void {
     const {
       total, shipped, unshipped, penalty, lostFoundMissedCount, lostFoundPenalty,
       lostItemTotal, lostItemHandedOver, lostItemStoredCount, lostItemUnstoredCount, lostItemPenalty,
       mailTotal, mailShipped, mailUnshipped, mailPenalty,
+      frozenTotal, frozenTier100, frozenTier75, frozenTier50, frozenTier25, frozenPenalty,
       finalScore, onContinue,
     } = params;
     // "Add sequential lost-found visitors and held cargo feedback" round
@@ -386,6 +410,15 @@ export class HUD {
       <p>未寄出信件：${mailUnshipped}</p>
       <p>信件扣分：${mailPenalty > 0 ? '-' : ''}${mailPenalty}</p>
     `;
+    // "Add freezer shelves and frozen cargo freshness system" round spec六
+    // — same independent-line-item convention as lostItemLine/mailLine
+    // above; only shown at all once at least one frozen item actually
+    // shipped today (mirrors lostFoundLine's own "nothing to report" case).
+    const frozenLine = frozenTotal > 0 ? `
+      <p>今日冷凍貨物總數：${frozenTotal}</p>
+      <p>100%新鮮：${frozenTier100}　75%新鮮：${frozenTier75}　50%新鮮：${frozenTier50}　25%新鮮：${frozenTier25}</p>
+      <p>冷藏扣分：${frozenPenalty > 0 ? '-' : ''}${frozenPenalty}</p>
+    ` : '';
     this.shipmentSummaryEl.innerHTML = `
       <p class="summary-title">六台載具已出發</p>
       <p>今日貨物總數：${total}</p>
@@ -395,6 +428,7 @@ export class HUD {
       ${lostFoundLine}
       ${lostItemLine}
       ${mailLine}
+      ${frozenLine}
       <p>當日最終分數：${finalScore}</p>
       <p class="summary-title">今日貨物已全部送出</p>
       <button id="settlement-continue-btn">繼續</button>

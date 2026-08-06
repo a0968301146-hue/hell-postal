@@ -971,6 +971,30 @@ export class PalletSystem implements PalletThrowHooks {
     return this.heldPalletId;
   }
 
+  /** "Add freezer shelves and frozen cargo freshness system" round — every
+   * pallet currently mounted on its wall rack (spec五: "若托盤放在冷凍貨架
+   * 上"). FreezerSystem's own ONE read of pallet mount state — never reaches
+   * into `pallets`/`storageState` directly itself. */
+  getRackedPalletIds(): string[] {
+    const ids: string[] = [];
+    for (const [id, instance] of this.pallets) {
+      if (instance.storageState === 'stored') ids.push(id);
+    }
+    return ids;
+  }
+
+  /** "Add freezer shelves and frozen cargo freshness system" round — every
+   * cargo id currently resting on the given pallet (spec五: "整張托盤上的所有
+   * 冷凍貨物全部一起恢復。不用拆開判定") — a thin public wrapper around the
+   * existing findSupportedCargoRecursive scan (already used internally for
+   * rope-binding/pinning-for-throw), never a second independent scan. Empty
+   * array for an unknown/nonexistent pallet id. */
+  getCargoIdsOnPallet(palletId: string): string[] {
+    const instance = this.pallets.get(palletId);
+    if (!instance) return [];
+    return this.findSupportedCargoRecursive(instance).map((obj) => obj.id);
+  }
+
   // --- Pick up (from the floor OR straight off a wall rack) ---
 
   /** Called by InteractionSystem when the player targets an (unheld) pallet

@@ -63,5 +63,17 @@ export interface DepartureSettlement {
   mailShipped: number;
   mailUnshipped: number;
   mailPenalty: number;
+  /** "Add freezer shelves and frozen cargo freshness system" round spec六 —
+   * only correctly-shipped `category==='frozen'` cargo is ever tallied here
+   * (an unshipped frozen item is already covered by the normal per-item
+   * `penalty` above, same as any other unshipped cargo — never double-
+   * counted). Four FIXED tiers, not a continuous ratio — see
+   * cold-value-data.ts's own getColdValueTier(). */
+  frozenTotal: number;
+  frozenTier100: number;
+  frozenTier75: number;
+  frozenTier50: number;
+  frozenTier25: number;
+  frozenPenalty: number;
   finalScore: number;
 }

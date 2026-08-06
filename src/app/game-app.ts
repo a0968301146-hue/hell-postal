@@ -268,6 +268,14 @@ export class GameApp {
         s.dollySystem.update(camera.position, cameraForward);
       }
       s.palletSystem.update(deltaTime, camera.position, cameraForward);
+      // "Add freezer shelves and frozen cargo freshness system" round —
+      // reads palletSystem's own rack-mount state, so it must run AFTER
+      // palletSystem.update just above (both already run inside this same
+      // paused-gated block, so pause freezes coldValue ticking too — spec
+      // has no requirement either way, but freezing it alongside everything
+      // else while the manual/settlement panel is open is the least
+      // surprising choice).
+      s.freezerSystem.update(deltaTime);
       // "Add ladder tool station and envelope vacuum" round一 — same
       // "no-op unless currently being carried" self-guard as
       // palletSystem.update just above.
@@ -348,6 +356,13 @@ export class GameApp {
     // above — runs even while paused so a pause reliably releases any
     // currently-captured envelope the same frame it begins (spec八).
     s.envelopeVacuumSystem.update();
+    // "Add freezer shelves and frozen cargo freshness system" round —
+    // unconditional for the SAME reason as cargoHookSystem/spraySystem/
+    // envelopeVacuumSystem above: a pause must take effect on the held-item
+    // 冷藏值 HUD readout the same frame it begins, not lag a frame behind
+    // (the coldValue TICK itself stays inside the paused block above —
+    // freezerSystem.update(deltaTime) — only this HUD refresh runs here).
+    s.freezerSystem.refreshHeldItemHud();
     // "Add day one dock story event" round — same unconditional/self-
     // guarding convention as cargoHookSystem/spraySystem/envelopeVacuumSystem
     // above: this class deliberately never uses PauseManager itself (see its

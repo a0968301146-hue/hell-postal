@@ -16,6 +16,7 @@ import { PalletSystem } from '../pallet/pallet-system';
 import { LadderSystem } from '../ladder/ladder-system';
 import { EnvelopeStackSystem } from '../mail/envelope-stack-system';
 import { CargoSystem } from '../cargo/cargo-system';
+import { FrozenSettlementInput, createEmptyFrozenSettlementInput, tallyFrozenColdValue } from '../cargo/cold-value-data';
 import { DailyFlowSystem } from '../daily-flow/daily-flow-system';
 import { MailSystem } from '../mail/mail-system';
 import { MailBagSystem } from '../mail/mail-bag-system';
@@ -224,11 +225,11 @@ export class CompleteDayCheatSystem {
     this.isExecuting = true;
     try {
       this.clearHeldState();
-      const cargoTotal = this.completeCargo();
+      const { total: cargoTotal, frozen: frozenSettlement } = this.completeCargo();
       const mailSettlement = this.completeMail();
       this.lostFoundSystem.completeAllNpcForTesting();
       const lostFoundSettlement = this.lostFoundSystem.settleAtDeparture();
-      this.vehicleControlSystem.forceSettleDayForTesting(cargoTotal, lostFoundSettlement, mailSettlement);
+      this.vehicleControlSystem.forceSettleDayForTesting(cargoTotal, lostFoundSettlement, mailSettlement, frozenSettlement);
       this.completedCheatDayId = this.dailyFlowSystem.currentDay;
     } finally {
       this.isExecuting = false;
@@ -260,12 +261,21 @@ export class CompleteDayCheatSystem {
    * expect (spec: "全部視為送到正確載具...全部計入正常完成數量...不可重複計
    * 算"), then physically destroyed via CargoSystem's own existing public
    * removeCargo() (spec: "清除仍留在世界中的相關Mesh、RigidBody、Collider"). */
-  private completeCargo(): number {
+  private completeCargo(): { total: number; frozen: FrozenSettlementInput } {
     const total = this.dailyFlowSystem.totalCargoCount;
+    // "Add freezer shelves and frozen cargo freshness system" round spec六
+    // — read straight off each item's own CURRENT coldValue (whatever it
+    // actually decayed/recovered to) BEFORE removeCargo() tears it down,
+    // exactly mirroring the real departure scan's own tallying — never
+    // fabricated as a flat 100% just because this is the test cheat.
+    const frozen = createEmptyFrozenSettlementInput();
     for (const id of this.dailyFlowSystem.dailyCargoIds) {
-      if (this.cargoSystem.getCargoData(id)) this.cargoSystem.removeCargo(id);
+      const data = this.cargoSystem.getCargoData(id);
+      if (!data) continue;
+      if (data.category === 'frozen') tallyFrozenColdValue(frozen, data.coldValue);
+      this.cargoSystem.removeCargo(id);
     }
-    return total;
+    return { total, frozen };
   }
 
   /** spec二 items 2-6: every single Envelope spawned today (dailyEnvelopeIds

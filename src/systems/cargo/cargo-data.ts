@@ -117,6 +117,19 @@ export interface CargoData {
    * to VehicleConfig.acceptedRouteTypes (vehicle-data.ts) — this round does
    * not touch vehicle-loading compatibility at all. */
   region: CargoRegion | null;
+  /** "Add freezer shelves and frozen cargo freshness system" round — ONLY
+   * meaningful for `category === 'frozen'` items (spec二: "所有冷凍貨物新增
+   * coldValue"); stays at its init value (0) for every other category,
+   * never read by anything for them. 0~100, starts at 100 for a freshly
+   * spawned frozen item (see createDailyCargoData below) and is ticked by
+   * FreezerSystem's own per-frame update — never mutated anywhere else. */
+  coldValue: number;
+  /** Whether this item is CURRENTLY close enough to a freezer rack (a plain
+   * freshly-computed bool FreezerSystem's own per-frame proximity check
+   * writes here every frame — spec八: "維護 isInsideFreezerShelf bool") —
+   * drives whether coldValue ticks up or down THIS frame. Same "only
+   * meaningful for frozen cargo" caveat as coldValue above. */
+  isInsideFreezerShelf: boolean;
 }
 
 /** Single-source-of-truth shipping status snapshot (Phase 7: 統一狀態來源)
@@ -181,6 +194,8 @@ export function createCargoData(id: string, preset: CargoLabelPreset, dimensions
     sizeClass: null,
     category: null,
     region: null,
+    coldValue: 0,
+    isInsideFreezerShelf: false,
   };
 }
 
@@ -242,6 +257,11 @@ export function createDailyCargoData(id: string, preset: CargoShapePreset, regio
     sizeClass: preset.sizeClass,
     category: preset.category,
     region,
+    // spec二: "生成時：100" — only frozen cargo ever actually decays/recovers
+    // (FreezerSystem's own update() skips every non-frozen category), so 0
+    // for everything else is just a harmless, never-read default.
+    coldValue: preset.category === 'frozen' ? 100 : 0,
+    isInsideFreezerShelf: false,
   };
 }
 

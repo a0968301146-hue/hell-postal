@@ -42,6 +42,8 @@ import { CompleteDayCheatSystem } from '../systems/cheat/complete-day-cheat-syst
 // "Add main menu and return player after dock story" round.
 import { MainMenuSystem } from '../systems/main-menu/main-menu-system';
 import { loadRunState, saveRunState, generateRunId } from '../systems/main-menu/run-state-data';
+// "Add freezer shelves and frozen cargo freshness system" round.
+import { FreezerSystem } from '../systems/cargo/freezer-system';
 
 /** Every gameplay system GameApp constructs once at startup and keeps for
  * the rest of the session (Phase 6: "系統建立、建構子注入、註冊" moved out of
@@ -106,6 +108,8 @@ export interface GameSystems {
   completeDayCheatSystem: CompleteDayCheatSystem;
   /** "Add main menu and return player after dock story" round. */
   mainMenuSystem: MainMenuSystem;
+  /** "Add freezer shelves and frozen cargo freshness system" round. */
+  freezerSystem: FreezerSystem;
 }
 
 /** Back-references into GameApp's own small orchestration methods — the
@@ -490,6 +494,10 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // upgrade-system.ts), so this wiring can only happen here, post-
   // construction.
   upgradeSystem.setPalletSystem(palletSystem);
+  // "Add freezer shelves and frozen cargo freshness system" round — built
+  // once both cargoSystem and palletSystem already exist (needs
+  // palletSystem's own getRackedPalletIds/getCargoIdsOnPallet getters).
+  const freezerSystem = new FreezerSystem(scene, cargoSystem, palletSystem, playerData, hud);
   // Foldable ladder + immovable tool cart ("Add ladder tool station and
   // envelope vacuum" round一/二) — built near the pallet system since the
   // ladder's own wall slot is derived from the pallet racks' own wall
@@ -643,6 +651,6 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     upgradeSystem, similarCargoHighlight, mediaPlayerSystem,
     toolSystem, cargoHookSystem, spraySystem,
     ladderSystem, toolStationSystem, envelopeVacuumSystem,
-    afterWorkStorySystem, completeDayCheatSystem, mainMenuSystem,
+    afterWorkStorySystem, completeDayCheatSystem, mainMenuSystem, freezerSystem,
   };
 }
