@@ -720,8 +720,16 @@ export class VehicleControlSystem {
    * never-shipped ones will be swept up by DailyFlowSystem's next-day
    * cleanup once the player presses 結束今天). Falls back to an all-zero
    * snapshot only defensively (pendingSettlement is always set by
-   * pressDepartButton before departure can even begin). */
-  private showDayCompleteSummary(): void {
+   * pressDepartButton before departure can even begin).
+   *
+   * `onSummaryClosed` (TEMPORARY TEST CHEAT plumbing — remove alongside
+   * forceSettleDayForTesting below) fires AFTER the normal 繼續 handling,
+   * i.e. once the summary panel is actually gone and the game is unpaused
+   * again — never before, so anything it triggers (the day-1 dock-story NPC)
+   * can't spawn hidden behind the still-open panel/pause lock. The real
+   * six-vehicle departure path (checkAllDeparted) never passes this, so its
+   * own 繼續 behavior is completely unchanged. */
+  private showDayCompleteSummary(onSummaryClosed?: () => void): void {
     const settlement = this.pendingSettlement ?? {
       total: this.dailyFlowSystem.totalCargoCount, shipped: 0, unshipped: 0, penalty: 0,
       lostFoundMissedCount: 0, lostFoundPenalty: 0,
@@ -741,6 +749,7 @@ export class VehicleControlSystem {
         for (const slot of this.slots) slot.state = 'absent';
         this.dayCompleteShown = false;
         this.onPauseChange(false);
+        onSummaryClosed?.();
       },
     });
   }
@@ -755,9 +764,20 @@ export class VehicleControlSystem {
    * flow itself calls from checkAllDeparted(). The caller (the cheat system)
    * has already marked every daily cargo/envelope/NPC as complete via each
    * system's own real API before calling this — `cargoTotal`/`lostFound`/
-   * `mail` are those already-computed real tallies, not fabricated here. */
+   * `mail` are those already-computed real tallies, not fabricated here.
+   *
+   * "Trigger day one story after cheat completion" round: once the player
+   * dismisses this summary panel, also presses the SAME real 結束今天 entry
+   * point (DailyFlowSystem.pressEndDayButton) normal play uses — never a
+   * second/parallel day-completion path, never a direct currentDay mutation.
+   * That real function itself captures `finishedDay` BEFORE incrementing
+   * currentDay and fires the pre-existing onDayCompleted(finishedDay) hook
+   * (create-game-systems.ts), which already unconditionally calls
+   * afterWorkStorySystem.trigger(finishedDay) — a no-op for any day without
+   * a story entry, or one already played, so day-1-only and play-once-only
+   * are both enforced by that existing code, not duplicated here. */
   forceSettleDayForTesting(cargoTotal: number, lostFound: LostFoundSettlementInput, mail: MailSettlementInput): void {
     this.pendingSettlement = this.scoringSystem.settleDeparture(cargoTotal, cargoTotal, 0, lostFound, mail);
-    this.showDayCompleteSummary();
+    this.showDayCompleteSummary(() => this.dailyFlowSystem.pressEndDayButton());
   }
 }
