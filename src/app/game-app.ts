@@ -341,6 +341,14 @@ export class GameApp {
     // above — runs even while paused so a pause reliably releases any
     // currently-captured envelope the same frame it begins (spec八).
     s.envelopeVacuumSystem.update();
+    // "Add day one dock story event" round — same unconditional/self-
+    // guarding convention as cargoHookSystem/spraySystem/envelopeVacuumSystem
+    // above: this class deliberately never uses PauseManager itself (see its
+    // own class doc comment), so its NPC walk-lerp and dialogue typewriter
+    // timers must keep advancing every frame regardless of any OTHER pause
+    // reason that might independently activate. No-ops entirely while
+    // inactive/completed (its own update() checks this first).
+    s.afterWorkStorySystem.update(deltaTime);
     // "同類感知" upgrade ("Revise score upgrades and fix frog walkable
     // colliders" round spec二D: 觸發方式改為手持一件貨物時啟用，不再要求準
     // 心先對準貨物) — driven by the CURRENTLY HELD item instead of the

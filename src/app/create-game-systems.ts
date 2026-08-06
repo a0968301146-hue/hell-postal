@@ -35,6 +35,8 @@ import { SpraySystem } from '../systems/spray-paint';
 import { LadderSystem } from '../systems/ladder/ladder-system';
 import { ToolStationSystem } from '../systems/tool-station-system';
 import { EnvelopeVacuumSystem } from '../systems/envelope-vacuum-system';
+// "Add day one dock story event" round.
+import { AfterWorkStorySystem } from '../systems/story/after-work-story-system';
 
 /** Every gameplay system GameApp constructs once at startup and keeps for
  * the rest of the session (Phase 6: "系統建立、建構子注入、註冊" moved out of
@@ -91,6 +93,8 @@ export interface GameSystems {
   ladderSystem: LadderSystem;
   toolStationSystem: ToolStationSystem;
   envelopeVacuumSystem: EnvelopeVacuumSystem;
+  /** "Add day one dock story event" round. */
+  afterWorkStorySystem: AfterWorkStorySystem;
 }
 
 /** Back-references into GameApp's own small orchestration methods — the
@@ -174,6 +178,20 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   const pickupSystem = new PickupSystem(
     camera, scene, playerData, interactables, hud, physics, sceneData.floor,
     pauseManager, settingsManager
+  );
+
+  // Day-1 dock story cutscene ("Add day one dock story event" round) — built
+  // as early as playerController/pickupSystem exist, since dailyFlowSystem's
+  // own onDayCompleted hook further below needs a live reference to trigger()
+  // from. Deliberately never touches PauseManager itself (see its own class
+  // doc comment) — locks the player via the same playerData.state/
+  // setInputEnabled(false) combination the stamp minigame already
+  // established, and its own update() is called UNCONDITIONALLY from
+  // game-app.ts (never gated behind pauseManager.isPaused), matching
+  // cargoHookSystem/spraySystem/envelopeVacuumSystem's own established
+  // self-guarding convention.
+  const afterWorkStorySystem = new AfterWorkStorySystem(
+    scene, camera, physics, hud, playerController, playerData, settingsManager, pickupSystem
   );
 
   // Mail/envelope-stamping loop ("Add modular envelope stamping and
@@ -350,6 +368,14 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
       // UpgradeSystem.settleDay's own doc comment for the idempotency
       // guard.
       upgradeSystem.settleDay(finishedDay);
+      // "Add day one dock story event" round — the ONE trigger point. By
+      // the time this fires, DailyFlowSystem has ALREADY synchronously
+      // advanced currentDay/state to day 2 internally (see
+      // daily-flow-system.ts's own pressEndDayButton) — this only gates the
+      // PLAYER's own experience of that already-completed transition until
+      // the story finishes; trigger() itself is a no-op for any day without
+      // a story entry, or one already played (this session or a past one).
+      afterWorkStorySystem.trigger(finishedDay);
     }
   );
 
@@ -536,6 +562,10 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     // found/etc.) restarts from its own normal day-1 boot path rather than
     // needing bespoke reset code written here for each of them.
     upgradeSystem.resetUpgradesForNewRun();
+    // "Add day one dock story event" round spec六: "新周目開始時重置第一天
+    // 故事完成狀態" — clears the persisted completedDays flag so the next
+    // playthrough's own day-1-end genuinely re-triggers the story.
+    afterWorkStorySystem.resetStoryProgress();
     window.location.reload();
   });
 
@@ -549,5 +579,6 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     upgradeSystem, similarCargoHighlight, mediaPlayerSystem,
     toolSystem, cargoHookSystem, spraySystem,
     ladderSystem, toolStationSystem, envelopeVacuumSystem,
+    afterWorkStorySystem,
   };
 }
