@@ -332,16 +332,20 @@ export class CompleteDayCheatSystem {
     this.playerData.heldObjectId = null;
   }
 
-  /** Spec follow-up二/三/四: the new "跳至第八天" button's own E-action. Also
-   * the fix for the reported Day8 F-key bug — AfterWorkStorySystem.trigger()
-   * silently no-ops once Day 8 has ever been fully completed on this
-   * browser (its own persisted completedDays flag, correct for real
-   * players), which otherwise leaves the story's own F-interactable cake
-   * prop never spawning at all on a retest, even though the totally
-   * separate REAL cargo cake (below, via unloadingSystem.pressButton())
-   * still spawns normally — resetForDayJumpTesting() clears that stale
-   * flag as an integral part of every jump so this button always leaves
-   * Day 8 in a freshly-triggerable state. */
+  /** Spec follow-up二/三/四: the new "跳至第八天" button's own E-action —
+   * resets prior-day logistics state, spawns the ordinary day-8 dock cargo
+   * (the single giant cake item, E-only), THEN directly enters the Day8
+   * finale itself so the tester can test the F-interactable cake/party/
+   * campfire chain with no extra steps (spec follow-up's own "測試者必須能
+   * 夠直接測試" requirement — pressCheatButton + pressEndDayButton are no
+   * longer required first). resetForDayJumpTesting() clears BOTH guards
+   * trigger() itself checks before it will fire a second time in the same
+   * session: the persisted completedDays flag (real players are correctly
+   * blocked from re-triggering an already-finished day forever) and the
+   * in-memory `state` field getting stuck at 'finaleCredits' once a
+   * playthrough reaches Day8's own ending (that branch never resets it,
+   * since a real playthrough's only next step is resetForNewRun()'s own
+   * full page reload). */
   pressJumpToDay8Button(): void {
     if (this.isExecuting) return;
     if (this.dailyFlowSystem.state === 'resetting') {
@@ -398,9 +402,28 @@ export class CompleteDayCheatSystem {
       // then pressButton() starts the same real spawn pipeline every normal
       // day uses — buildDailyCargoManifest(8) is already gated (earlier
       // round) to return exactly the one giant cake and nothing else, so no
-      // separate "spawn only the cake" logic is needed here.
+      // separate "spawn only the cake" logic is needed here. This ordinary
+      // dock cargo cake is E-only (ships through the normal pickup pipeline)
+      // and is never the thing F interacts with — see the direct trigger()
+      // call below for that.
       this.unloadingSystem.resetGate();
       this.unloadingSystem.pressButton();
+
+      // Directly enter the Day8 finale itself (bug follow-up: "巨型蛋糕仍無
+      // 法互動" — pressJumpToDay8Button alone was never actually starting the
+      // finale; the F-interactable cake prop only ever comes from
+      // AfterWorkStorySystem.spawnCakeProp(), called from trigger()'s own
+      // beginFinaleIntro(), which previously only ran via the real
+      // ship-everything-then-結束今天 flow. That made the button useless for
+      // its own stated purpose — spec follow-up originally required this
+      // button alone to let testers "直接測試：蛋糕F拆包、派對NPC、NPC對話、
+      // 營火結局" with no extra steps. trigger() has no dependency on
+      // DailyFlowSystem's own state (it only reads AFTER_WORK_STORIES[8] and
+      // its own internal guards, both satisfied here thanks to
+      // resetForDayJumpTesting() just above), so calling it directly is
+      // safe and immediately fades/teleports the player into the finale
+      // scene with the real F-interactable cake waiting.
+      this.afterWorkStorySystem.trigger(8);
 
       this.hud.showToast('已跳至第八天，蛋糕正在卸貨中');
     } finally {
