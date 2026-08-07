@@ -1217,6 +1217,17 @@ body.text-size-large #interaction-prompt { font-size: 17px; }
   display: flex;
 }
 
+/* "當低於50%時：每秒慢速閃爍一次" — a 1s cycle (matches cold-value's own
+ * smooth-fade shape, just a 1s period instead of 1.6s). */
+@keyframes calm-value-blink-anim {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+#calm-value-panel.calm-value-blink {
+  animation: calm-value-blink-anim 1s ease-in-out infinite;
+}
+
 #calm-value-label {
   font-size: 13px;
   font-weight: bold;

@@ -6,7 +6,9 @@ import { PauseManager } from '../../core/pause-manager';
 import { HUD } from '../hud';
 import { ParticleBurst } from '../../adapters/three/particle-burst';
 import {
-  CALM_VALUE_MIN, CALM_VALUE_MAX, CALM_VALUE_FAST_MOVE_SPEED_THRESHOLD, CALM_VALUE_FAST_MOVE_DRAIN_PER_SECOND,
+  CALM_VALUE_MIN, CALM_VALUE_MAX,
+  CALM_VALUE_SPRINT_SPEED_THRESHOLD, CALM_VALUE_HIGH_SPEED_THRESHOLD,
+  CALM_VALUE_SPRINT_DRAIN_PER_SECOND, CALM_VALUE_HIGH_SPEED_DRAIN_PER_SECOND,
   CALM_VALUE_IMPACT_SMALL_THRESHOLD, CALM_VALUE_IMPACT_MEDIUM_THRESHOLD, CALM_VALUE_IMPACT_LARGE_THRESHOLD,
   CALM_VALUE_IMPACT_SMALL_PENALTY, CALM_VALUE_IMPACT_MEDIUM_PENALTY, CALM_VALUE_IMPACT_LARGE_PENALTY,
   CALM_VALUE_SOOTHE_PER_SECOND,
@@ -21,15 +23,16 @@ import {
 const SOOTHE_COLORS = [0xff8fb3, 0xffd76a, 0x8fd9ff];
 
 /**
- * "活物貨物系統" round — owns every LIVE-category cargo concern in one
- * place, entirely independent of FreezerSystem (spec七: "不要影響目前冷藏
- * 值系統...活物與冷藏貨物可以同時存在"): its own calmValue field
- * (CargoData.calmValue), its own decay triggers (spec①/②: moving too fast
- * while held, or a hard impact), its own F-hold soothe recovery (spec⑤),
- * and its own HUD panel (spec四) — never reads or writes coldValue/
- * isInsideFreezerShelf, never touches WEST_WALL_SHELVES/freezer sensors.
+ * "活物貨物系統" round, refined in the "活物安撫值規格" round — owns every
+ * LIVE-category cargo concern in one place, entirely independent of
+ * FreezerSystem (不要影響目前冷藏值系統／活物與冷藏貨物可以同時存在): its
+ * own calmValue field (CargoData.calmValue), its own decay triggers (moving
+ * too fast while held — two speed tiers, sprint vs high-speed — or a hard
+ * impact), its own F-hold soothe recovery (no cooldown), and its own HUD
+ * panel — never reads or writes coldValue/isInsideFreezerShelf, never
+ * touches WEST_WALL_SHELVES/freezer sensors.
  *
- * Impact detection (spec②) uses a cheap, already-available signal — the
+ * Impact detection uses a cheap, already-available signal — the
  * drop in a live cargo rigid body's OWN linear-velocity magnitude across one
  * physics step — rather than a Rapier contact-event queue (no such
  * infrastructure exists anywhere else in this codebase yet, and adding one
@@ -94,11 +97,16 @@ export class LivingCargoSystem {
     return data && data.category === 'live' ? id : null;
   }
 
-  /** spec五: 玩家拿著活物時按F開始安撫 — no aim/station requirement, same
-   * "works anywhere while held" shape as the reworked lost-found cleaning
-   * flow. Never collides with that system's own KeyF handler: this only
-   * ever fires for `category==='live'`, that one only for a lost-item id
-   * prefix — mutually exclusive by construction (an item can't be both). */
+  /** 玩家拿著活物時按住F開始安撫 — no aim/station requirement, same "works
+   * anywhere while held" shape as the reworked lost-found cleaning flow.
+   * "F鍵優先權" spec: 1.拿著黑色失物球→F=清潔 2.拿著活物→F=安撫 3.拿著信件
+   * →F=信件模式切換 4.其他工具→維持原本功能 — this handler only ever fires
+   * for `category==='live'`, LostFoundCleaningSystem's own KeyF handler only
+   * for a lost-item id prefix, EnvelopeStackSystem's own KeyF handler only
+   * while carrying its own envelope-stack sentinel — all three conditions
+   * are mutually exclusive by construction (the single currently-held item
+   * can only ever match ONE of them), so the priority order above already
+   * holds naturally with no explicit sequencing/stopPropagation needed. */
   private onKeyDown(event: KeyboardEvent): void {
     if (event.code !== 'KeyF' || event.repeat) return;
     if (!this.isLocked() || this.pauseManager.isPaused) return;
@@ -145,9 +153,17 @@ export class LivingCargoSystem {
     this.lastPlayerPos = currentPos;
 
     const heldId = this.heldLiveId();
-    if (heldId && horizontalSpeed > CALM_VALUE_FAST_MOVE_SPEED_THRESHOLD) {
-      const data = this.cargoSystem.getCargoData(heldId);
-      if (data) data.calmValue = Math.max(CALM_VALUE_MIN, data.calmValue - CALM_VALUE_FAST_MOVE_DRAIN_PER_SECOND * deltaTime);
+    if (heldId) {
+      // spec③: 一般速度不扣／開始衝刺 -0.5%/秒／高速移動 -1%/秒 — the two
+      // thresholds are the game's OWN already-established speed constants
+      // (SCENE_CONFIG.playerSpeed / *sprintMultiplier), not invented here.
+      let rate = 0;
+      if (horizontalSpeed > CALM_VALUE_HIGH_SPEED_THRESHOLD) rate = CALM_VALUE_HIGH_SPEED_DRAIN_PER_SECOND;
+      else if (horizontalSpeed > CALM_VALUE_SPRINT_SPEED_THRESHOLD) rate = CALM_VALUE_SPRINT_DRAIN_PER_SECOND;
+      if (rate > 0) {
+        const data = this.cargoSystem.getCargoData(heldId);
+        if (data) data.calmValue = Math.max(CALM_VALUE_MIN, data.calmValue - rate * deltaTime);
+      }
     }
 
     for (const data of this.cargoSystem.cargoDataMap.values()) {

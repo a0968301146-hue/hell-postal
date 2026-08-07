@@ -1,25 +1,35 @@
-/** "活物貨物系統" round — the ONE place calmValue's own constants/tier math
- * live, shared by LivingCargoSystem (per-frame drain/soothe), the real
+import { SCENE_CONFIG } from '../world-layout/world-layout-system';
+
+/** "活物貨物系統修改" round — the ONE place calmValue's own constants/tier
+ * math live, shared by LivingCargoSystem (per-frame drain/soothe), the real
  * departure scan (vehicle-control-system.ts), and the test-cheat's own
  * equivalent scan (complete-day-cheat-system.ts) — never duplicated across
- * those call sites. Mirrors cold-value-data.ts's own established shape. */
+ * those call sites. spec一: "UI與結算統一使用三個階段" — a SINGLE canonical
+ * 3-tier boundary set (75/50) drives both the held-item slider's color AND
+ * the departure settlement multiplier, never two separate boundary sets. */
 
 export const CALM_VALUE_MIN = 0;
 export const CALM_VALUE_MAX = 100;
 
-/** spec①: 玩家拿著活物時，若移動速度超過此值（m/s），calmValue 持續下降。
- * Compared against the player rigid body's own horizontal speed — same unit
- * PlayerController already moves at (SCENE_CONFIG.playerSpeed=7,
- * sprintMultiplier=1.5 -> up to 10.5 m/s sprinting), so this sits comfortably
- * below sprint speed but above ordinary walk speed (7 m/s), meaning sprinting
- * while carrying a live animal is what actually triggers the drain. */
-export const CALM_VALUE_FAST_MOVE_SPEED_THRESHOLD = 8;
-export const CALM_VALUE_FAST_MOVE_DRAIN_PER_SECOND = 4;
+/** spec三: 玩家手持活物時的移動速度分級 — reuses the game's OWN already-
+ * established speed constants (SCENE_CONFIG.playerSpeed/sprintMultiplier)
+ * as the tier boundaries, rather than inventing new numbers: "一般速度"
+ * is ordinary WASD movement (<= playerSpeed), "開始衝刺" is Shift-sprint
+ * (<= playerSpeed * sprintMultiplier), and "高速移動" is anything faster
+ * still (e.g. the movement-speed upgrade stacking on top of sprint). */
+export const CALM_VALUE_SPRINT_SPEED_THRESHOLD = SCENE_CONFIG.playerSpeed;
+export const CALM_VALUE_HIGH_SPEED_THRESHOLD = SCENE_CONFIG.playerSpeed * SCENE_CONFIG.sprintMultiplier;
+export const CALM_VALUE_SPRINT_DRAIN_PER_SECOND = 0.5;
+export const CALM_VALUE_HIGH_SPEED_DRAIN_PER_SECOND = 1;
 
-/** spec②: 撞擊扣除安撫值 — 三個等級（數值可再調整）, keyed by the impact
- * speed (m/s) a live-cargo rigid body's OWN linear velocity drops by across
- * one physics step (a cheap, already-available signal — no separate contact
- * force/impulse query needed). */
+/** spec③: 撞擊扣除安撫值 — 三個等級，數值已由使用者指定（-2/-5/-10），非自
+ * 行決定. Keyed by the impact speed (m/s) a live-cargo rigid body's OWN
+ * linear velocity drops by across one physics step (a cheap, already-
+ * available signal — no separate contact force/impulse query needed). The
+ * THRESHOLDS themselves (how many m/s of drop counts as small/medium/large)
+ * are this file's own calibration, tuned against spec③'s worked examples
+ * (輕撞牆壁/輕撞貨架 -> small; 掉下托盤/撞擊大型貨物 -> medium; 丟出/高處
+ * 摔落/高速撞擊 -> large). */
 export const CALM_VALUE_IMPACT_SMALL_THRESHOLD = 2;
 export const CALM_VALUE_IMPACT_MEDIUM_THRESHOLD = 5;
 export const CALM_VALUE_IMPACT_LARGE_THRESHOLD = 9;
@@ -27,31 +37,37 @@ export const CALM_VALUE_IMPACT_SMALL_PENALTY = 2;
 export const CALM_VALUE_IMPACT_MEDIUM_PENALTY = 5;
 export const CALM_VALUE_IMPACT_LARGE_PENALTY = 10;
 
-/** spec⑤: 按住 F 安撫，每秒 +5%，直到 100。 */
+/** spec四: 按住 F 安撫，每秒 +5%，最大100%，沒有冷卻. */
 export const CALM_VALUE_SOOTHE_PER_SECOND = 5;
 
-/** spec四: UI 顏色分級（80~100 綠／舒服，40~79 黃／焦慮，0~39 紅／害怕）。 */
-export function calmValueTierColor(calmValue: number): string {
-  if (calmValue >= 80) return '#4caf50'; // green — 舒服
-  if (calmValue >= 40) return '#ffc107'; // yellow — 焦慮
-  return '#f44336'; // red — 害怕
-}
-
-/** spec六: 出貨加成倍率 — 5 個固定門檻（80以上100%／60→95%／40→90%／20→
- * 80%／0→70%），不是連續比例，鏡射 cold-value-data.ts 的 getColdValueTier
- * 邊界慣例（>= 門檻）。 */
-export type CalmValueTier = 100 | 95 | 90 | 80 | 70;
+/** spec一: 三個統一階段 — 75~100 舒服(綠)／50~74 焦慮(黃)／0~49 害怕(紅). */
+export type CalmValueTier = 'comfortable' | 'anxious' | 'scared';
 
 export function getCalmValueTier(calmValue: number): CalmValueTier {
-  if (calmValue >= 80) return 100;
-  if (calmValue >= 60) return 95;
-  if (calmValue >= 40) return 90;
-  if (calmValue >= 20) return 80;
-  return 70;
+  if (calmValue >= 75) return 'comfortable';
+  if (calmValue >= 50) return 'anxious';
+  return 'scared';
 }
 
-export function calmValueTierMultiplier(calmValue: number): number {
-  return getCalmValueTier(calmValue) / 100;
+/** spec二: Slider 顏色 — 同一個三階段邊界. */
+export function calmValueTierColor(calmValue: number): string {
+  switch (getCalmValueTier(calmValue)) {
+    case 'comfortable': return '#4caf50'; // green — 舒服
+    case 'anxious': return '#ffc107'; // yellow — 焦慮
+    case 'scared': return '#f44336'; // red — 害怕
+  }
+}
+
+/** spec七: 出貨加成倍率 — 固定三階段（75~100% -> 110%／50~74% -> 100%／
+ * 0~49% -> 85%），"只保留三個階段，請不要另外再做五階段倍率". 100%以下的
+ * 階段（85%）本身就是一種扣分，不是"獎勵變小"而已 — settleDeparture 據此
+ * 直接允許負值. */
+export function calmValueSettlementMultiplier(calmValue: number): number {
+  switch (getCalmValueTier(calmValue)) {
+    case 'comfortable': return 1.10;
+    case 'anxious': return 1.00;
+    case 'scared': return 0.85;
+  }
 }
 
 /** One departure's worth of live-cargo tier tallies — the contract
@@ -62,15 +78,13 @@ export function calmValueTierMultiplier(calmValue: number): number {
  * same as any other unshipped cargo, never double-counted here too. */
 export interface LiveSettlementInput {
   total: number;
-  tier100: number;
-  tier95: number;
-  tier90: number;
-  tier80: number;
-  tier70: number;
+  comfortableCount: number;
+  anxiousCount: number;
+  scaredCount: number;
 }
 
 export function createEmptyLiveSettlementInput(): LiveSettlementInput {
-  return { total: 0, tier100: 0, tier95: 0, tier90: 0, tier80: 0, tier70: 0 };
+  return { total: 0, comfortableCount: 0, anxiousCount: 0, scaredCount: 0 };
 }
 
 /** Mutates `tally` in place — the ONE place a calmValue reading turns into a
@@ -81,10 +95,8 @@ export function createEmptyLiveSettlementInput(): LiveSettlementInput {
 export function tallyLiveCalmValue(tally: LiveSettlementInput, calmValue: number): void {
   tally.total++;
   switch (getCalmValueTier(calmValue)) {
-    case 100: tally.tier100++; break;
-    case 95: tally.tier95++; break;
-    case 90: tally.tier90++; break;
-    case 80: tally.tier80++; break;
-    case 70: tally.tier70++; break;
+    case 'comfortable': tally.comfortableCount++; break;
+    case 'anxious': tally.anxiousCount++; break;
+    case 'scared': tally.scaredCount++; break;
   }
 }

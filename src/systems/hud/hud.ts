@@ -307,11 +307,14 @@ export class HUD {
 
   /** "活物貨物系統" round spec四 — shown only while actively holding a
    * live-category item (caller passes null otherwise); mirrors
-   * updateColdValueStatus above exactly (top-anchored fill height = calmValue
-   * %, background color tiered via calmValueTierColor), no blink. */
+   * updateColdValueStatus above (top-anchored fill height = calmValue%,
+   * background color tiered via calmValueTierColor's own unified 75/50
+   * boundaries), plus its own slow blink ("當低於50%時：每秒慢速閃爍一次")
+   * below 50%. */
   updateCalmValueStatus(calmValue: number | null): void {
     if (calmValue === null) {
       this.calmValuePanelEl.classList.remove('visible');
+      this.calmValuePanelEl.classList.remove('calm-value-blink');
       return;
     }
     const pct = Math.max(0, Math.min(100, Math.round(calmValue)));
@@ -319,6 +322,7 @@ export class HUD {
     this.calmValueFillEl.style.height = `${pct}%`;
     this.calmValueFillEl.style.background = calmValueTierColor(calmValue);
     this.calmValuePanelEl.classList.add('visible');
+    this.calmValuePanelEl.classList.toggle('calm-value-blink', calmValue < 50);
   }
 
   /** "冷凍貨物系統修改" round四, redone in round五 — the crosshair-aim
@@ -484,7 +488,7 @@ export class HUD {
     lostItemTotal: number; lostItemHandedOver: number; lostItemStoredCount: number; lostItemUnstoredCount: number; lostItemPenalty: number;
     mailTotal: number; mailShipped: number; mailUnshipped: number; mailPenalty: number;
     frozenTotal: number; frozenTier100: number; frozenTier75: number; frozenTier50: number; frozenTier25: number; frozenPenalty: number;
-    liveTotal: number; liveTier100: number; liveTier95: number; liveTier90: number; liveTier80: number; liveTier70: number; liveBonus: number;
+    liveTotal: number; liveComfortableCount: number; liveAnxiousCount: number; liveScaredCount: number; liveBonus: number;
     finalScore: number; onContinue: () => void;
   }): void {
     const {
@@ -492,7 +496,7 @@ export class HUD {
       lostItemTotal, lostItemHandedOver, lostItemStoredCount, lostItemUnstoredCount, lostItemPenalty,
       mailTotal, mailShipped, mailUnshipped, mailPenalty,
       frozenTotal, frozenTier100, frozenTier75, frozenTier50, frozenTier25, frozenPenalty,
-      liveTotal, liveTier100, liveTier95, liveTier90, liveTier80, liveTier70, liveBonus,
+      liveTotal, liveComfortableCount, liveAnxiousCount, liveScaredCount, liveBonus,
       finalScore, onContinue,
     } = params;
     // "Add sequential lost-found visitors and held cargo feedback" round
@@ -532,12 +536,13 @@ export class HUD {
       <p>100%新鮮：${frozenTier100}　75%新鮮：${frozenTier75}　50%新鮮：${frozenTier50}　25%新鮮：${frozenTier25}</p>
       <p>冷藏扣分：${frozenPenalty > 0 ? '-' : ''}${frozenPenalty}</p>
     ` : '';
-    // "活物貨物系統" round spec六 — same independent-line-item convention as
-    // frozenLine above, but a BONUS (added, never subtracted).
+    // "活物安撫值規格" round spec七 — same independent-line-item convention as
+    // frozenLine above, THREE unified tiers; liveBonus can be negative (害怕
+    // tier settles below neutral), so the sign is shown explicitly either way.
     const liveLine = liveTotal > 0 ? `
       <p>今日活物貨物總數：${liveTotal}</p>
-      <p>100%安撫：${liveTier100}　95%安撫：${liveTier95}　90%安撫：${liveTier90}　80%安撫：${liveTier80}　70%安撫：${liveTier70}</p>
-      <p>安撫加分：+${liveBonus}</p>
+      <p>舒服：${liveComfortableCount}　焦慮：${liveAnxiousCount}　害怕：${liveScaredCount}</p>
+      <p>安撫加分：${liveBonus >= 0 ? '+' : ''}${liveBonus}</p>
     ` : '';
     this.shipmentSummaryEl.innerHTML = `
       <p class="summary-title">六台載具已出發</p>

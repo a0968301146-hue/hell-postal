@@ -756,7 +756,7 @@ export class VehicleControlSystem {
       lostItemTotal: 0, lostItemHandedOver: 0, lostItemStoredCount: 0, lostItemUnstoredCount: 0, lostItemPenalty: 0,
       mailTotal: 0, mailShipped: 0, mailUnshipped: 0, mailPenalty: 0,
       frozenTotal: 0, frozenTier100: 0, frozenTier75: 0, frozenTier50: 0, frozenTier25: 0, frozenPenalty: 0,
-      liveTotal: 0, liveTier100: 0, liveTier95: 0, liveTier90: 0, liveTier80: 0, liveTier70: 0, liveBonus: 0,
+      liveTotal: 0, liveComfortableCount: 0, liveAnxiousCount: 0, liveScaredCount: 0, liveBonus: 0,
       finalScore: this.settingsManager.progress.score,
     };
     this.pendingSettlement = null;

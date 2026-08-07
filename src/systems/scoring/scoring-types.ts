@@ -75,17 +75,18 @@ export interface DepartureSettlement {
   frozenTier50: number;
   frozenTier25: number;
   frozenPenalty: number;
-  /** "活物貨物系統" round spec六 — only correctly-shipped `category==='live'`
+  /** "活物安撫值規格" round spec七 — only correctly-shipped `category==='live'`
    * cargo is ever tallied here (an unshipped live item is already covered
-   * by the normal per-item `penalty` above, never double-counted). A BONUS
-   * (added to score), not a penalty — five fixed tiers, see
-   * living-cargo-data.ts's own getCalmValueTier(). */
+   * by the normal per-item `penalty` above, never double-counted). THREE
+   * fixed tiers, unified with the UI's own color boundaries (spec一: "UI與
+   * 結算統一使用三個階段") — see living-cargo-data.ts's own getCalmValueTier
+   * /calmValueSettlementMultiplier. `liveBonus` can be NEGATIVE: the lowest
+   * tier (0~49%, "害怕") settles at an 85% multiplier — genuinely worse than
+   * a neutral 100%, not just "a smaller bonus". */
   liveTotal: number;
-  liveTier100: number;
-  liveTier95: number;
-  liveTier90: number;
-  liveTier80: number;
-  liveTier70: number;
+  liveComfortableCount: number;
+  liveAnxiousCount: number;
+  liveScaredCount: number;
   liveBonus: number;
   finalScore: number;
 }

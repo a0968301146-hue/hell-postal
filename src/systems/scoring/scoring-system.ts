@@ -66,17 +66,19 @@ export class ScoringSystem {
     const totalPenalty = penalty + lostFoundPenalty + lostItemPenalty + mailPenalty + frozenPenalty;
     if (totalPenalty > 0) this.settingsManager.addScore(-totalPenalty);
 
-    // "活物貨物系統" round spec六 — a BONUS (added, never subtracted): each
-    // correctly-shipped live item earns up to ONE UNSHIPPED_PENALTY_PER_ITEM
-    // (the same per-item unit reused everywhere else in this file), scaled
-    // by its own calmValue tier's percentage (living-cargo-data.ts's
-    // getCalmValueTier: 80+->100%, 60->95%, 40->90%, 20->80%, else->70%) —
-    // reuses the SAME per-item magnitude, never a second bonus-only constant.
+    // "活物安撫值規格" round spec七 — THREE fixed tiers (75~100% "舒服"
+    // ->110%／50~74% "焦慮"->100%／0~49% "害怕"->85%), unified with the UI's
+    // own color boundaries. Each tier's multiplier is applied as a DELTA off
+    // neutral (100%) against the SAME per-item unit reused everywhere else
+    // in this file (UNSHIPPED_PENALTY_PER_ITEM) — 舒服 nets a small bonus,
+    // 焦慮 nets exactly zero, 害怕 nets a small PENALTY (0.85 < 1.0), so
+    // `liveBonus` can be negative and is applied unconditionally, never
+    // gated to positive-only like the old 5-tier bonus-only design.
     const liveBonus = Math.round(
-      (live.tier100 * 1.0 + live.tier95 * 0.95 + live.tier90 * 0.9 + live.tier80 * 0.8 + live.tier70 * 0.7)
+      (live.comfortableCount * 0.10 + live.anxiousCount * 0 + live.scaredCount * -0.15)
       * UNSHIPPED_PENALTY_PER_ITEM
     );
-    if (liveBonus > 0) this.settingsManager.addScore(liveBonus);
+    if (liveBonus !== 0) this.settingsManager.addScore(liveBonus);
 
     const settlement: DepartureSettlement = {
       total,
@@ -101,11 +103,9 @@ export class ScoringSystem {
       frozenTier25: frozen.tier25,
       frozenPenalty,
       liveTotal: live.total,
-      liveTier100: live.tier100,
-      liveTier95: live.tier95,
-      liveTier90: live.tier90,
-      liveTier80: live.tier80,
-      liveTier70: live.tier70,
+      liveComfortableCount: live.comfortableCount,
+      liveAnxiousCount: live.anxiousCount,
+      liveScaredCount: live.scaredCount,
       liveBonus,
       finalScore: this.settingsManager.progress.score,
     };
