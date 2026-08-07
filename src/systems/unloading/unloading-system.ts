@@ -311,7 +311,15 @@ export class UnloadingSystem {
     const waveCount = Math.max(1, UNLOAD_BURST_CONFIG.waveCount);
     const waves: PlannedSpawn[][] = Array.from({ length: waveCount }, () => []);
     planned.forEach((item, i) => waves[i % waveCount].push(item));
-    return waves;
+    // Bug fix ("每日特殊劇情系統" round follow-up) — Day8's own single-item
+    // manifest (buildDailyCargoManifest's GIANT_CAKE_DAY override) means most
+    // of these 30 round-robin slots end up genuinely empty (1 item % 30
+    // waves leaves 29 with nothing). The 'spawning' phase below always reads
+    // `wave[itemIndexInWave]` unconditionally assuming `wave.length >= 1` —
+    // an empty wave crashed it (`spawnOne(undefined)` reading `.portIndex`
+    // off undefined). Every day with the normal 90-item quota divides evenly
+    // across all 30 waves (3 each), so this filter is a no-op for them.
+    return waves.filter((w) => w.length > 0);
   }
 
   /** Picks a safe spawn position for `preset` at `port` (spec一/二: dimension-
