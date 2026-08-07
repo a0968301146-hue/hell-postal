@@ -78,7 +78,13 @@ const FADE_SECONDS = 0.4;
  * comment on setTextSpeed). */
 const CHAR_INTERVAL_MS: Record<TextSpeed, number> = { slow: 55, standard: 35, fast: 18, instant: 0 };
 
-const ESC_SKIP_HOLD_SECONDS = 1.5;
+// "每日特殊劇情系統" round bug-fix follow-up — skip-hold key moved from
+// Escape to R (spec: "改為長按R"). Kept as its own named constant (not a
+// SettingsManager-rebindable input, same as before) so this is still the
+// ONE place the physical key is named — everything else below reads
+// SKIP_HOLD_KEY_CODE rather than a literal 'KeyR'/'Escape' string.
+const SKIP_HOLD_KEY_CODE = 'KeyR';
+const SKIP_HOLD_SECONDS = 1.5;
 
 const STORAGE_KEY = 'hp_after_work_story_v1';
 interface StoryProgress {
@@ -893,7 +899,7 @@ export class AfterWorkStorySystem {
 
     if (this.state !== 'dialogue') return;
 
-    if (event.code === 'Escape') {
+    if (event.code === SKIP_HOLD_KEY_CODE) {
       if (!event.repeat && !this.escHolding) {
         this.escHolding = true;
         this.escHoldElapsed = 0;
@@ -911,7 +917,7 @@ export class AfterWorkStorySystem {
   }
 
   private onKeyUp(event: KeyboardEvent): void {
-    if (event.code === 'Escape') {
+    if (event.code === SKIP_HOLD_KEY_CODE) {
       // spec四: "keyup未達1.5秒則取消" — cancels the hold-to-skip progress
       // regardless of how far it got, UNLESS skipStory() already fired (at
       // which point escHolding is already false — see update() below — so
@@ -1032,13 +1038,13 @@ export class AfterWorkStorySystem {
 
     this.hud.showInteractionPrompt(
       this.currentSpeakerName(),
-      'E／Space：完整顯示／下一句\n長按Esc：跳過故事'
+      'E／Space：完整顯示／下一句\n長按R：跳過故事'
     );
 
     if (this.escHolding) {
       this.escHoldElapsed += deltaTime;
-      this.hud.showChargeBar(Math.min(this.escHoldElapsed / ESC_SKIP_HOLD_SECONDS, 1));
-      if (this.escHoldElapsed >= ESC_SKIP_HOLD_SECONDS) {
+      this.hud.showChargeBar(Math.min(this.escHoldElapsed / SKIP_HOLD_SECONDS, 1));
+      if (this.escHoldElapsed >= SKIP_HOLD_SECONDS) {
         // Fires exactly once — escHolding is cleared immediately, so this
         // branch can't re-enter next frame, and the later keyup's own
         // handler finds escHolding already false (spec四: "不可因keyup再次

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { BACK_AREA, LAND_GATE } from '../../systems/world-layout/logistics-layout-data';
 
 /** "每日特殊劇情系統" round — Day6 (營火晚會) and Day8's finale ending both
  * happen here (spec: "陸運出口外側，延伸一塊戶外空地"). Sits south of
@@ -12,6 +13,27 @@ export const CAMPFIRE_AREA = {
   minX: 9, maxX: 17,   // width 8, east of the vehicle lane (clears x=6 by 3m)
   minZ: 33, maxZ: 41,  // depth 8, starts 1m south of the back-area wall
   floorY: -1.5,        // same floor level — no ramp/stairs needed
+};
+
+/** Bridges BACK_AREA's own south wall gate (LAND_GATE, x in [-6,6] at
+ * z=BACK_AREA.maxZ=32) to CAMPFIRE_AREA's own north edge (z=33, x starting
+ * at 9) — bug fix ("玩家無法正常走到營火區域"): CAMPFIRE_AREA's own floor
+ * was an entirely ISOLATED rectangle with nothing connecting it to the
+ * building. LAND_GATE is the only opening in that wall, but the gate's own
+ * X-range (-6..6) doesn't even overlap CAMPFIRE_AREA's (9..17) — a player
+ * walking straight out the gate had no floor under them at all south of the
+ * wall (land vehicles never needed one; they're kinematically animated, not
+ * gravity-simulated). This one wide, shallow "yard" strip spans from the
+ * gate's own west edge all the way to the campfire clearing's own east edge
+ * so every straight-line path out the gate and east to the fire has solid
+ * ground the whole way, with no seam at the shared z=33 edge with
+ * CAMPFIRE_AREA's own floor. */
+export const CAMPFIRE_ENTRY_CONNECTOR = {
+  minX: LAND_GATE.centerX - LAND_GATE.halfWidth,
+  maxX: CAMPFIRE_AREA.maxX,
+  minZ: BACK_AREA.maxZ,
+  maxZ: CAMPFIRE_AREA.minZ,
+  floorY: CAMPFIRE_AREA.floorY,
 };
 
 const areaCx = (CAMPFIRE_AREA.minX + CAMPFIRE_AREA.maxX) / 2;

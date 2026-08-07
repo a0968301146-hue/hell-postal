@@ -33,7 +33,7 @@ import {
 } from '../../data/world/coffee-room-layout-data';
 import {
   CAMPFIRE_AREA, CAMPFIRE_CENTER, CAMPFIRE_BENCH_NORTH, CAMPFIRE_BENCH_SOUTH, CAMPFIRE_BENCH_EAST, CAMPFIRE_BENCH_WEST,
-  CAMPFIRE_STICK_A, CAMPFIRE_STICK_B,
+  CAMPFIRE_STICK_A, CAMPFIRE_STICK_B, CAMPFIRE_ENTRY_CONNECTOR,
 } from '../../data/world/campfire-area-data';
 
 export const SCENE_CONFIG = {
@@ -524,6 +524,23 @@ function buildCampfireArea(scene: THREE.Scene, physics: PhysicsWorldPort): void 
   floor.position.set(cx, floorY, cz);
   scene.add(floor);
   physics.createStaticCuboid(cx, floorY - WALL_THICKNESS / 2, cz, width / 2, WALL_THICKNESS / 2, depth / 2);
+
+  // Entry connector — bug fix ("玩家無法正常走到營火區域"): bridges the
+  // land-gate opening in BACK_AREA's own south wall to this clearing's own
+  // north edge (see CAMPFIRE_ENTRY_CONNECTOR's own doc comment for why the
+  // clearing was unreachable without this).
+  {
+    const c = CAMPFIRE_ENTRY_CONNECTOR;
+    const cWidth = c.maxX - c.minX;
+    const cDepth = c.maxZ - c.minZ;
+    const ccx = (c.minX + c.maxX) / 2;
+    const ccz = (c.minZ + c.maxZ) / 2;
+    const connectorFloor = new THREE.Mesh(new THREE.PlaneGeometry(cWidth, cDepth), stdMat(0x54473a));
+    connectorFloor.rotation.x = -Math.PI / 2;
+    connectorFloor.position.set(ccx, c.floorY, ccz);
+    scene.add(connectorFloor);
+    physics.createStaticCuboid(ccx, c.floorY - WALL_THICKNESS / 2, ccz, cWidth / 2, WALL_THICKNESS / 2, cDepth / 2);
+  }
 
   // Stone ring + firewood + fire glow.
   const stoneMat = stdMat(0x777066);
