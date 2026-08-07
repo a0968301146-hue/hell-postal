@@ -30,7 +30,19 @@ type StoryState =
   // typewriter/reveal, no fade-in (the overlay pops up directly over the
   // still-visible, dimmed world) — closing it (E) goes straight into the
   // SAME finishStory() ending every other day already uses.
-  | 'letterReading';
+  | 'letterReading'
+  // Day8 follow-up round — replaces the old locked, dialogue-driven "大家
+  // 陸續走了進來...快打開！" opening entirely (spec: "玩家需要主動拆開蛋糕
+  // ...按F"). Free movement, exactly like 'finaleParty' — the player walks
+  // up to the still-wrapped cake at their own pace; nothing else is present
+  // yet (spec: "開始時只生成：巨型蛋糕包裹×1").
+  | 'finaleCakeWait'
+  // Brief locked beat while the unwrap animation plays (spec: "播放拆包裝
+  // 流程"), then automatically resolves into 'finaleParty' — no player
+  // input decides the outcome once started, matching every other short
+  // "cutscene beat" in this file (spec: "沒有倒數，沒有失敗" — this one in
+  // particular can't fail or hang, it's a fixed-duration timer).
+  | 'finaleUnwrapping';
 
 /** What should happen once the currently-showing `lines` array runs out
  * (last line consumed via advanceLine, or ESC-hold-skip) — added this round
@@ -74,6 +86,19 @@ const INTERACT_DISTANCE = 3;
  * teleportToDialogueSpot below — so "sits down" is read here as "walks up to
  * the fire and presses E", the same simplification already established). */
 const ENDING_SEAT_RADIUS = 2.2;
+
+/** Day8's own cake-unwrap trigger radius — same plain XZ-proximity approach
+ * as ENDING_SEAT_RADIUS above, for the same reason (no "unwrap" raycast
+ * target needed; the cake is a single large stationary prop). */
+const CAKE_INTERACT_RADIUS = 2.2;
+/** Fixed-duration "拆包裝流程" beat (spec follow-up) — a short locked visual
+ * flourish (the ribbon spins away) before the box swaps to its opened look
+ * and the party begins. Deliberately brief and unconditional: no player
+ * input can extend, skip past requirements, or fail it. */
+const UNWRAP_DURATION = 1.0;
+/** How long the opened cake + "生日快樂！" bubble lingers on screen after
+ * UNWRAP_DURATION before control is handed back for the party phase. */
+const REVEAL_LINGER = 1.2;
 
 /** Black-fade duration each way (spec二: "約0.3～0.5秒黑畫面淡入淡出"). */
 const FADE_SECONDS = 0.4;
@@ -184,7 +209,9 @@ export class AfterWorkStorySystem {
 
   private cakeGroup: THREE.Group | null = null;
   private cakeMesh: THREE.Mesh | null = null;
-  private finaleOpeningCount = 0;
+  private cakeRibbon: THREE.Mesh | null = null;
+  private unwrapElapsed = 0;
+  private cakeOpenedFired = false;
   private finaleStations: { group: THREE.Group; hitbox: THREE.Mesh; bubble: THREE.Sprite; npcName: string; lines: string[] }[] = [];
   private activeFinaleStationIndex = -1;
   private pendingCredits = false;
@@ -353,36 +380,39 @@ export class AfterWorkStorySystem {
   /** Kicks the finale straight into the fade+teleport (spec's own shared
    * "黑幕 → 傳送至劇情地點" beat) WITHOUT the usual npcWalking/
    * waitingForPlayer beats first — day8 has no single lead NPC to walk up to
-   * and press E on; the cake itself (already carried to the room center per
-   * spec, modeled here as appearing with the fade rather than as a trackable
-   * pickup — seeQ this method's own inline note) IS the trigger. */
+   * and press E on; the cake itself IS the trigger. Follow-up round: the
+   * fade+teleport now leads into free movement in front of the still-wrapped
+   * cake (state 'finaleCakeWait', set from updateTransition's own fade-in-
+   * complete branch) instead of a locked dialogue sequence — spec: "玩家需要
+   * 主動拆開蛋糕...按F". dialogueReturnMode stays 'finaleOpenReveal' purely
+   * as the marker updateTransition reads to route there instead of
+   * beginDialogue(); no `lines` are set for this phase anymore. */
   private beginFinaleIntro(config: AfterWorkStoryDay): void {
-    this.lines = [...(config.finaleOpeningLines ?? []), ...(config.finaleRevealLines ?? [])];
     this.dialogueReturnMode = 'finaleOpenReveal';
-    this.finaleOpeningCount = config.finaleOpeningLines?.length ?? 0;
-    // Spawned now (not when the cake later "opens") — invisible to the
-    // player either way, since they're scattered across the whole map and
-    // the player's camera is locked on the cake for this entire intro; by
-    // the time free-roam starts they're already waiting in place, avoiding
-    // any pop-in.
+    // Spawned now (not when the cake later opens) — invisible to the player
+    // either way, since they're scattered across the whole map and the
+    // player starts right next to the cake; by the time free-roam starts
+    // they're already waiting in place, avoiding any pop-in.
     this.spawnFinaleStations(config.finaleNpcs ?? []);
     this.spawnCakeProp();
     this.lockAndFadeToStory();
   }
 
-  /** Decorative giant cake-box prop at the room's own center spawn (spec:
-   * "外觀像放大版的蛋糕盒...約玩家身高5倍"). Modeled as a set piece that
-   * simply appears once the fade reaches black, rather than as the ACTUAL
-   * item the player picked up from the unload dock and carried over — this
-   * game has no "carry a specific tracked cargo item to a non-dock placement
-   * zone" mechanic anywhere else (every cargo objective ends at the normal
-   * outbound dock), and building one from scratch for a single one-off prop
-   * would be a second, parallel placement system. The day's own cargo
-   * manifest still spawns and ships this same giant item through the
-   * completely ordinary pickup→carry→ship pipeline (see cargo-manifest-
-   * data.ts's day-8 override) — this prop is purely the finale's own
-   * cinematic stand-in for "the thing you just delivered", swapped in the
-   * instant the screen goes black so the player never sees both at once. */
+  /** Giant wrapped cake-package prop at the room's own center spawn (spec:
+   * "外觀像放大版的蛋糕盒...約玩家身高5倍"; follow-up round: "拆開前蛋糕保持
+   * 包裹狀態"). Modeled as a set piece that simply appears once the fade
+   * reaches black, rather than as the ACTUAL item the player picked up from
+   * the unload dock and carried over — this game has no "carry a specific
+   * tracked cargo item to a non-dock placement zone" mechanic anywhere else
+   * (every cargo objective ends at the normal outbound dock), and building
+   * one from scratch for a single one-off prop would be a second, parallel
+   * placement system. The day's own cargo manifest still spawns and ships
+   * this same giant item through the completely ordinary pickup→carry→ship
+   * pipeline (see cargo-manifest-data.ts's day-8 override) — this prop is
+   * purely the finale's own stand-in for "the thing you just delivered",
+   * swapped in the instant the screen goes black so the player never sees
+   * both at once. The ribbon (this.cakeRibbon) is the one part of this that
+   * actually animates — see updateFinaleUnwrapping below. */
   private spawnCakeProp(): void {
     const group = new THREE.Group();
     const box = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 1.4, 24), new THREE.MeshStandardMaterial({ color: 0xb85c3a }));
@@ -393,6 +423,7 @@ export class AfterWorkStorySystem {
     ribbon.rotation.x = Math.PI / 2;
     ribbon.position.y = 0.7;
     group.add(ribbon);
+    this.cakeRibbon = ribbon;
 
     group.position.set(FINALE_CAKE_POS.x, FINALE_CAKE_POS.y, FINALE_CAKE_POS.z);
     this.scene.add(group);
@@ -404,11 +435,11 @@ export class AfterWorkStorySystem {
     this.npcBubble = bubble;
   }
 
-  /** Visual swap the instant the opening lines give way to the reveal lines
-   * (spec: "玩家按E打開 → 揭曉蛋糕"), triggered from advanceLine below —
-   * reusing the SAME single dialogue sequence rather than a separate
-   * "opening" vs "reveal" state. */
+  /** Visual swap the instant the unwrap timer finishes (spec follow-up:
+   * "蛋糕箱打開"), called from updateFinaleUnwrapping below. */
   private onCakeOpened(): void {
+    const revealLine = AFTER_WORK_STORIES[this.storyDay]?.finaleRevealLines?.[0] ?? '生日快樂！';
+    if (this.npcBubble) showStoryBubbleText(this.npcBubble, revealLine);
     if (!this.cakeMesh) return;
     (this.cakeMesh.material as THREE.MeshStandardMaterial).color.set(0xffe0b0);
     this.cakeMesh.scale.set(1, 0.55, 1);
@@ -459,11 +490,75 @@ export class AfterWorkStorySystem {
     this.finaleStations = [];
   }
 
+  /** Reached once the intro fade-in finishes for day8 (updateTransition's
+   * own fade-in-complete branch, when dialogueReturnMode is
+   * 'finaleOpenReveal') — restores full player movement immediately, same
+   * shape as enterFinaleParty below, but the party hasn't started yet: only
+   * the wrapped cake exists in the world (spec follow-up: "開始時只生成：
+   * 巨型蛋糕包裹×1"). The player is free to walk right up and press F, or
+   * wander a bit first — nothing else can happen until they do. */
+  private enterCakeWait(): void {
+    this.playerData.state = 'empty-handed';
+    this.playerData.heldObjectId = null;
+    this.playerData.activeTool = this.savedActiveTool;
+    this.playerController.setInputEnabled(true);
+    this.hud.showInstructions();
+    this.state = 'finaleCakeWait';
+  }
+
+  private updateFinaleCakeWait(): void {
+    const dx = this.camera.position.x - FINALE_CAKE_POS.x;
+    const dz = this.camera.position.z - FINALE_CAKE_POS.z;
+    if (Math.sqrt(dx * dx + dz * dz) <= CAKE_INTERACT_RADIUS) {
+      this.hud.showInteractionPrompt('巨型蛋糕包裹', 'F 拆開包裝');
+    } else {
+      this.hud.hideInteractionPrompt();
+    }
+  }
+
+  /** F-press near the cake (spec follow-up: "按F→播放拆包裝流程"). Locks
+   * input for the fixed UNWRAP_DURATION + REVEAL_LINGER beat — same
+   * "no player choice changes the outcome" shape as every other short
+   * cutscene beat in this file (spec: "沒有倒數，沒有失敗" — it always
+   * resolves the same way after a fixed time, nothing to fail). */
+  private beginUnwrap(): void {
+    this.hud.hideInteractionPrompt();
+    this.savedActiveTool = this.playerData.activeTool;
+    this.playerData.state = 'stamping-minigame';
+    this.playerController.setInputEnabled(false);
+    this.state = 'finaleUnwrapping';
+    this.unwrapElapsed = 0;
+    this.cakeOpenedFired = false;
+  }
+
+  private updateFinaleUnwrapping(deltaTime: number): void {
+    this.unwrapElapsed += deltaTime;
+    // Ribbon spins and shrinks away while "unwrapping" — purely decorative.
+    if (this.cakeRibbon) {
+      const t = Math.min(1, this.unwrapElapsed / UNWRAP_DURATION);
+      this.cakeRibbon.rotation.y += deltaTime * 8;
+      this.cakeRibbon.scale.setScalar(Math.max(0.001, 1 - t));
+    }
+    if (!this.cakeOpenedFired && this.unwrapElapsed >= UNWRAP_DURATION) {
+      this.cakeOpenedFired = true;
+      if (this.cakeRibbon) {
+        this.cakeGroup?.remove(this.cakeRibbon);
+        this.cakeRibbon.geometry.dispose();
+        (this.cakeRibbon.material as THREE.MeshStandardMaterial).dispose();
+        this.cakeRibbon = null;
+      }
+      this.onCakeOpened();
+    }
+    if (this.unwrapElapsed >= UNWRAP_DURATION + REVEAL_LINGER) {
+      this.enterFinaleParty();
+    }
+  }
+
   /** Party phase entry (spec: "派對開始...玩家可自由走動") — reached once the
-   * opening+reveal dialogue sequence ends (onDialogueSequenceComplete's own
-   * 'finaleOpenReveal' branch). Restores player control exactly like a
-   * normal day's finishStory() would, but WITHOUT the fade/teleport/mark-
-   * completed steps — the day isn't over yet, the party is just starting. */
+   * unwrap beat finishes (updateFinaleUnwrapping above). Restores player
+   * control exactly like a normal day's finishStory() would, but WITHOUT
+   * the fade/teleport/mark-completed steps — the day isn't over yet, the
+   * party is just starting. */
   private enterFinaleParty(): void {
     this.hud.hideChargeBar();
     this.hud.hideInteractionPrompt();
@@ -761,7 +856,6 @@ export class AfterWorkStorySystem {
       return;
     }
     this.lineIndex++;
-    if (this.dialogueReturnMode === 'finaleOpenReveal' && this.lineIndex === this.finaleOpeningCount) this.onCakeOpened();
     this.beginLine();
   }
 
@@ -960,6 +1054,22 @@ export class AfterWorkStorySystem {
       return;
     }
 
+    // Day8 follow-up round — F only ever does anything here, near the cake,
+    // during this one state (spec: "F只在Day8巨型蛋糕附近有效，不影響一般貨
+    // 物"): PickupSystem/other systems own every other F-key use elsewhere,
+    // and this class only ever reads KeyF while state === 'finaleCakeWait'.
+    if (this.state === 'finaleCakeWait' && !event.repeat) {
+      if (event.code === 'KeyF') {
+        const dx = this.camera.position.x - FINALE_CAKE_POS.x;
+        const dz = this.camera.position.z - FINALE_CAKE_POS.z;
+        if (Math.sqrt(dx * dx + dz * dz) <= CAKE_INTERACT_RADIUS) {
+          event.preventDefault();
+          this.beginUnwrap();
+        }
+      }
+      return;
+    }
+
     if (this.state !== 'dialogue') return;
 
     if (event.code === SKIP_HOLD_KEY_CODE) {
@@ -1013,9 +1123,11 @@ export class AfterWorkStorySystem {
     // 'dialogue'; by the time it flips to 'in', updateEndTransition has
     // already restored activeTool once AND re-enabled input for real, so
     // reasserting here any further would wrongly fight a genuinely-restored
-    // player during that final black-screen beat. 'finaleParty' is
-    // deliberately excluded — that phase leaves input genuinely restored.
-    if (this.state === 'transitioning' || this.state === 'dialogue' || this.state === 'letterReading' || (this.state === 'endTransition' && this.fadePhase === 'out')) {
+    // player during that final black-screen beat. 'finaleParty' and
+    // 'finaleCakeWait' are both deliberately excluded — those phases leave
+    // input genuinely restored (free movement). 'finaleUnwrapping' IS
+    // included — input is locked for that short fixed beat too.
+    if (this.state === 'transitioning' || this.state === 'dialogue' || this.state === 'letterReading' || this.state === 'finaleUnwrapping' || (this.state === 'endTransition' && this.fadePhase === 'out')) {
       if (this.dialogueReturnMode !== 'finaleStation' && this.playerData.activeTool !== this.savedActiveTool) {
         this.playerData.activeTool = this.savedActiveTool;
       }
@@ -1055,6 +1167,16 @@ export class AfterWorkStorySystem {
       return;
     }
 
+    if (this.state === 'finaleCakeWait') {
+      this.updateFinaleCakeWait();
+      return;
+    }
+
+    if (this.state === 'finaleUnwrapping') {
+      this.updateFinaleUnwrapping(deltaTime);
+      return;
+    }
+
     if (this.state === 'endTransition') {
       this.updateEndTransition(deltaTime);
       return;
@@ -1090,7 +1212,16 @@ export class AfterWorkStorySystem {
     } else if (this.fadePhase === 'in') {
       if (this.fadeElapsed >= FADE_SECONDS) {
         this.fadePhase = null;
-        this.beginDialogue();
+        // Day8's own intro (spec follow-up: "按F拆包裝") skips the locked
+        // dialogue engine entirely — free movement in front of the still-
+        // wrapped cake instead. Every other day (including day8's own later
+        // campfire-ending beat, dialogueReturnMode 'finaleEnding') still
+        // goes through beginDialogue() exactly as before.
+        if (this.dialogueReturnMode === 'finaleOpenReveal') {
+          this.enterCakeWait();
+        } else {
+          this.beginDialogue();
+        }
       }
     }
   }

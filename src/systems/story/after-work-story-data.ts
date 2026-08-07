@@ -77,14 +77,20 @@ export interface AfterWorkStoryDay {
   letterBody?: string[];
 
   /** Day8 only — the finale (spec: "第8天...生日派對"). Distinct multi-phase
-   * flow (cake reveal -> free-roam party -> campfire ending) layered on top
+   * flow (cake unwrap -> free-roam party -> campfire ending) layered on top
    * of the SAME fade/lock/dialogue-bubble primitives every other day already
-   * uses; see after-work-story-system.ts's dedicated updateFinale* methods. */
+   * uses; see after-work-story-system.ts's dedicated updateFinale* methods.
+   * Follow-up round: the player now walks up to the still-wrapped cake at
+   * their own pace and presses F to open it (spec: "玩家需要主動拆開蛋糕")
+   * — no NPCs are present yet at this point (spec: "開始時只生成：巨型蛋糕
+   * 包裹×1"), so there is no more "everyone walks in and says open it"
+   * dialogue beat to configure here. */
   isFinaleDay?: boolean;
-  /** Said in sequence, one per E/Space press, before the cake can be opened
-   * (spec: "NPC陸續出現...大家說『快打開！』"). */
-  finaleOpeningLines?: string[];
-  /** Said in sequence right after the player opens the cake (E again). */
+  /** Shown once, briefly, in the cake's own bubble the instant it's unwrapped
+   * (spec follow-up's own "播放拆包裝流程" beat) — a short flash of flavor
+   * text, not a line-by-line E-advanced dialogue (nobody's there to have a
+   * conversation with yet). Only the first entry is actually shown; kept as
+   * an array for consistency with every other day's own lines shape. */
   finaleRevealLines?: string[];
   /** The scattered party roster (spec: "所有NPC自由分散在不同地點"). */
   finaleNpcs?: FinaleNpcStation[];
@@ -240,17 +246,8 @@ export const AFTER_WORK_STORIES: Record<number, AfterWorkStoryDay> = {
     seatPlayer: finalePlayerSpot,
     lookTarget: FINALE_CAKE_POS,
     isFinaleDay: true,
-    finaleOpeningLines: [
-      '（大家陸續走了進來，圍在你搬回來的大箱子旁邊）',
-      '欸？這什麼？也太大了吧！',
-      '別問了，快打開快打開！',
-      '快打開！',
-    ],
     finaleRevealLines: [
-      '是蛋糕！！',
       '生日快樂！',
-      '這是大家一起準備的，慶祝這裡走到今天——也慶祝你回來的這一年。',
-      '接下來不用急著做事了，今天就好好逛逛、跟大家聊聊天吧。',
     ],
     finaleNpcs: [
       {
@@ -272,14 +269,21 @@ export const AFTER_WORK_STORIES: Record<number, AfterWorkStoryDay> = {
         pos: new THREE.Vector3(starSeatNpc.x, starSeatNpc.y, starSeatNpc.z),
       },
       {
+        // Moved off COFFEE_CHAIR_PLAYER (which put him in the SAME room as
+        // 阿珠姨, undermining the party's own "分散在不同房間" spread) into
+        // the lost-found room — every day's own story NPC already gathers
+        // there first, so it reads naturally as "somewhere he'd wait too".
         npcName: '陳伯',
         lines: ['我把今年的照片也洗出來了，之後放進相本裡。', '這裡的故事，還會繼續下去。'],
-        pos: COFFEE_CHAIR_PLAYER.clone(),
+        pos: new THREE.Vector3(AFTER_WORK_STORY_NPC_WAIT_SPOT.x, 0, AFTER_WORK_STORY_NPC_WAIT_SPOT.z),
       },
       {
+        // Moved off fishingSeatAnchorB (SAME spot as 老碼頭工人) to the main
+        // work floor — same "分散在不同房間/角落" spread reasoning as 陳伯
+        // above (spec follow-up: "分布於不同房間...例如...工作區").
         npcName: '小夏',
         lines: ['夏天要來了，到時候再一起去游泳。', '別又只顧著工作，忘記約我。'],
-        pos: fishingSeatAnchorB.clone(),
+        pos: new THREE.Vector3(-3, 0, 15),
       },
       {
         npcName: '阿古',
