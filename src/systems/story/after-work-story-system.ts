@@ -8,11 +8,20 @@ import { SettingsManager, TextSpeed } from '../settings';
 // mirrors pallet-system.ts's own established reasoning for the same import
 // (avoids a real import cycle back through the interaction barrel).
 import { PickupSystem } from '../interaction/pickup-system';
+// Day8's own giant cake stopped being a separate decorative prop this round
+// ("Day8巨型蛋糕物流化" — spec: "只有一個來源...不要額外在原地生成蛋糕") — F
+// now unwraps the REAL cargo item directly, so this class needs read access
+// to CargoSystem (find/detach the cake mesh) and DailyFlowSystem (know when
+// day 8 has begun and which id is today's cargo). Neither file imports this
+// one back (confirmed no cycle), same reasoning as pickup-system.ts above.
+import { CargoSystem } from '../cargo/cargo-system';
+import { DailyFlowSystem } from '../daily-flow/daily-flow-system';
+import { GIANT_CAKE_BOX_PRESET } from '../cargo/cargo-shape-presets';
 import { LocalStorageAdapter } from '../../adapters/local-storage/local-storage-adapter';
 import { LOST_FOUND_ROOM } from '../../data/world/lost-found-layout-data';
 import { MAIN_ROOM_CENTER_SPAWN } from '../world-layout/logistics-layout-data';
 import { CAMPFIRE_BENCH_NORTH, CAMPFIRE_BENCH_EAST, CAMPFIRE_BENCH_WEST, CAMPFIRE_BENCH_SOUTH, CAMPFIRE_LOOK_TARGET, CAMPFIRE_CENTER } from '../../data/world/campfire-area-data';
-import { AFTER_WORK_STORIES, AfterWorkStoryDay, FinaleNpcStation, FinaleIdleKind, FINALE_ENDING_SEAT, FINALE_CAKE_POS } from './after-work-story-data';
+import { AFTER_WORK_STORIES, FinaleNpcStation, FinaleIdleKind, FINALE_ENDING_SEAT } from './after-work-story-data';
 import { createStoryBubble, showStoryBubbleText, hideStoryBubble, disposeStoryBubble, wrapStoryLine } from './after-work-story-bubble-ui';
 import { createLetterReadingUi, showLetterReadingUi, hideLetterReadingUi, LetterReadingUiHandle } from './letter-reading-ui';
 import { createFinaleConfirmUi, showFinaleConfirmUi, hideFinaleConfirmUi, FinaleConfirmUiHandle } from './finale-confirm-ui';
@@ -33,11 +42,15 @@ type StoryState =
   // still-visible, dimmed world) — closing it (E) goes straight into the
   // SAME finishStory() ending every other day already uses.
   | 'letterReading'
-  // Day8 follow-up round — replaces the old locked, dialogue-driven "大家
-  // 陸續走了進來...快打開！" opening entirely (spec: "玩家需要主動拆開蛋糕
-  // ...按F"). Free movement, exactly like 'finaleParty' — the player walks
-  // up to the still-wrapped cake at their own pace; nothing else is present
-  // yet (spec: "開始時只生成：巨型蛋糕包裹×1").
+  // Day8 follow-up round, then reworked again by "Day8巨型蛋糕物流化" —
+  // entered the instant DailyFlowSystem.currentDay becomes 8 (see
+  // checkGiantCakeDayStart, called every frame from update() while
+  // 'inactive'), with NO fade/teleport/lock of any kind: the player is
+  // simply playing through day 8's own completely ordinary unload→carry→
+  // place cargo loop the entire time this state is active. The ONLY thing
+  // this state does is watch for "today's real giant-cake-box cargo item,
+  // not currently held, within CAKE_INTERACT_RADIUS" and show the F prompt
+  // (updateFinaleCakeWait) — F itself is handled in onKeyDown.
   | 'finaleCakeWait'
   // Brief locked beat while the unwrap animation plays (spec: "播放拆包裝
   // 流程"), then automatically resolves into 'finaleParty' — no player
@@ -64,14 +77,15 @@ type StoryState =
  * - 'endStory': the original/only behavior before this round — fade out,
  *   teleport back to MAIN_ROOM_CENTER_SPAWN, mark the day complete, restore
  *   control. Used by every ordinary day (1-6) and the day7 letter.
- * - 'finaleOpenReveal': day8's opening ("快打開！") + reveal ("是蛋糕！")
- *   lines share one sequence; once it ends, enter the free-roam party phase
- *   instead of ending the day.
  * - 'finaleStation': one of the party phase's own short per-NPC chats;  once
  *   it ends, just return to free-roam (no fade, nothing was ever locked).
  * - 'finaleEnding': the campfire's closing "歡迎回家。" line; once it ends,
- *   roll credits instead of restoring control. */
-type DialogueReturnMode = 'endStory' | 'finaleOpenReveal' | 'finaleStation' | 'finaleEnding';
+ *   roll credits instead of restoring control.
+ * (Day8's own opening no longer uses this engine at all — "Day8巨型蛋糕物流
+ * 化" round replaced the old locked 'finaleOpenReveal' dialogue sequence
+ * with a plain free-roam wait + real-cargo F-unwrap, see checkGiantCakeDayStart/
+ * updateFinaleCakeWait below.) */
+type DialogueReturnMode = 'endStory' | 'finaleStation' | 'finaleEnding';
 
 const NPC_SPEED = 1.6; // m/s — same convention as lost-found-npc-system.ts
 const ARRIVE_EPS = 0.08;
@@ -101,8 +115,18 @@ const ENDING_SEAT_RADIUS = 2.2;
 
 /** Day8's own cake-unwrap trigger radius — same plain XZ-proximity approach
  * as ENDING_SEAT_RADIUS above, for the same reason (no "unwrap" raycast
- * target needed; the cake is a single large stationary prop). */
+ * target needed). Measured against the REAL cargo cake's own live mesh
+ * position now ("Day8巨型蛋糕物流化" round), wherever the player actually
+ * placed it — not a fixed world coordinate. */
 const CAKE_INTERACT_RADIUS = 2.2;
+
+/** Local, same convention as cargo-manifest-planner.ts's own GIANT_CAKE_DAY
+ * constant (kept separate rather than importing that file's — systems/story
+ * has no other reason to depend on systems/cargo/cargo-manifest-planner,
+ * and the day number itself is the one piece of coupling every other
+ * day-numbered special case in this codebase already accepts implicitly via
+ * DailyFlowSystem.currentDay). */
+const GIANT_CAKE_DAY = 8;
 /** Fixed-duration "拆包裝流程" beat (spec follow-up) — a short locked visual
  * flourish (the ribbon spins away) before the box swaps to its opened look
  * and the party begins. Deliberately brief and unconditional: no player
@@ -215,6 +239,8 @@ export class AfterWorkStorySystem {
   private playerData: PlayerInteractionData;
   private settingsManager: SettingsManager;
   private pickupSystem: PickupSystem;
+  private cargoSystem: CargoSystem;
+  private dailyFlowSystem: DailyFlowSystem;
   private storage = new LocalStorageAdapter();
 
   private state: StoryState = 'inactive';
@@ -238,10 +264,14 @@ export class AfterWorkStorySystem {
   private isLetterDay = false;
   private letterPickedUp = false;
 
-  private cakeGroup: THREE.Group | null = null;
+  // The REAL giant-cake-box cargo mesh becomes this system's own decorative
+  // prop the instant it's unwrapped ("Day8巨型蛋糕物流化" round —
+  // detachCargoAsProp below) — no separate decorative Group is ever spawned
+  // any more, so `cakeMesh` alone now stands in for what the old `cakeGroup`
+  // used to wrap.
   private cakeMesh: THREE.Mesh | null = null;
   private cakeRibbon: THREE.Mesh | null = null;
-  private cakeFlaps: THREE.Mesh[] = [];
+  private cakeLid: THREE.Mesh | null = null;
   private unwrapElapsed = 0;
   private cakeOpenedFired = false;
   private cakeOpenedAt = 0;
@@ -281,7 +311,7 @@ export class AfterWorkStorySystem {
   constructor(
     scene: THREE.Scene, camera: THREE.PerspectiveCamera, physics: PhysicsSystem, hud: HUD,
     playerController: PlayerController, playerData: PlayerInteractionData, settingsManager: SettingsManager,
-    pickupSystem: PickupSystem
+    pickupSystem: PickupSystem, cargoSystem: CargoSystem, dailyFlowSystem: DailyFlowSystem
   ) {
     this.scene = scene;
     this.camera = camera;
@@ -291,6 +321,8 @@ export class AfterWorkStorySystem {
     this.playerData = playerData;
     this.settingsManager = settingsManager;
     this.pickupSystem = pickupSystem;
+    this.cargoSystem = cargoSystem;
+    this.dailyFlowSystem = dailyFlowSystem;
 
     this.fadeEl = document.createElement('div');
     this.fadeEl.style.cssText = 'position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;transition:opacity ' + FADE_SECONDS + 's ease;z-index:9999;';
@@ -383,6 +415,15 @@ export class AfterWorkStorySystem {
    * already played (this session OR a past one, via the persisted flag) —
    * spec: "此事件每個新周目只執行一次，不可重複生成NPC或重複進入第2天". */
   trigger(finishedDay: number): void {
+    // Day8 no longer goes through this "fires once THAT day is fully
+    // completed" mechanism at all ("Day8巨型蛋糕物流化" round) — it starts
+    // the instant the day BEGINS instead (checkGiantCakeDayStart below),
+    // completely independent of shipping/departure/結束今天. Guarding here
+    // means a real player who (out of habit) ships the day-8 cake through
+    // the ordinary vehicle pipeline and presses 結束今天 anyway can never
+    // wrongly fall through to the old NPC-dialogue branch below, which has
+    // no npcSpawn/npcWaitSpot data for day 8 and would throw.
+    if (finishedDay === GIANT_CAKE_DAY) return;
     if (this.hasTriggeredThisSession) return;
     if (this.state !== 'inactive' && this.state !== 'completed') return;
     const config = AFTER_WORK_STORIES[finishedDay];
@@ -393,11 +434,6 @@ export class AfterWorkStorySystem {
     this.isLetterDay = !!config.isLetterDay;
     this.letterPickedUp = false;
     this.pendingCredits = false;
-
-    if (config.isFinaleDay) {
-      this.beginFinaleIntro(config);
-      return;
-    }
 
     this.dialogueReturnMode = 'endStory';
     this.lines = config.lines;
@@ -472,80 +508,45 @@ export class AfterWorkStorySystem {
     this.npcBubble = bubble;
   }
 
-  // --- Day8 finale (spec八) ---
+  // --- Day8 finale (spec八, reworked by "Day8巨型蛋糕物流化" round) ---
 
-  /** Kicks the finale straight into the fade+teleport (spec's own shared
-   * "黑幕 → 傳送至劇情地點" beat) WITHOUT the usual npcWalking/
-   * waitingForPlayer beats first — day8 has no single lead NPC to walk up to
-   * and press E on; the cake itself IS the trigger. Follow-up round: the
-   * fade+teleport now leads into free movement in front of the still-wrapped
-   * cake (state 'finaleCakeWait', set from updateTransition's own fade-in-
-   * complete branch) instead of a locked dialogue sequence — spec: "玩家需要
-   * 主動拆開蛋糕...按F". dialogueReturnMode stays 'finaleOpenReveal' purely
-   * as the marker updateTransition reads to route there instead of
-   * beginDialogue(); no `lines` are set for this phase anymore. */
-  private beginFinaleIntro(config: AfterWorkStoryDay): void {
-    this.dialogueReturnMode = 'finaleOpenReveal';
-    // Spawned now (not when the cake later opens) — invisible to the player
-    // either way, since they're scattered across the whole map and the
-    // player starts right next to the cake; by the time free-roam starts
-    // they're already waiting in place, avoiding any pop-in.
-    this.spawnFinaleStations(config.finaleNpcs ?? []);
-    this.spawnCakeProp();
-    this.lockAndFadeToStory();
+  /** Called every frame from update() while `state === 'inactive'` — the
+   * ENTIRE new day8 entry point (spec: "Day8正確流程...啟動Day8測試流程",
+   * no fade/teleport/locked intro of any kind any more). The moment
+   * DailyFlowSystem.currentDay becomes 8, this just flips `state` straight
+   * to 'finaleCakeWait' and gets out of the way — the player keeps playing
+   * through the day's own completely ordinary unload→carry→place cargo loop
+   * the whole time; updateFinaleCakeWait below is the only thing watching
+   * for the real cargo cake to be placed and approached. */
+  private checkGiantCakeDayStart(): void {
+    if (this.hasTriggeredThisSession) return;
+    if (this.dailyFlowSystem.currentDay !== GIANT_CAKE_DAY) return;
+    if (this.hasCompletedDay(GIANT_CAKE_DAY)) return;
+    if (!AFTER_WORK_STORIES[GIANT_CAKE_DAY]) return;
+
+    this.hasTriggeredThisSession = true;
+    this.storyDay = GIANT_CAKE_DAY;
+    this.state = 'finaleCakeWait';
   }
 
-  /** Giant wrapped cake-package prop at the room's own center spawn (spec:
-   * "外觀像放大版的蛋糕盒...約玩家身高5倍"; follow-up round: "拆開前蛋糕保持
-   * 包裹狀態"). Modeled as a set piece that simply appears once the fade
-   * reaches black, rather than as the ACTUAL item the player picked up from
-   * the unload dock and carried over — this game has no "carry a specific
-   * tracked cargo item to a non-dock placement zone" mechanic anywhere else
-   * (every cargo objective ends at the normal outbound dock), and building
-   * one from scratch for a single one-off prop would be a second, parallel
-   * placement system. The day's own cargo manifest still spawns and ships
-   * this same giant item through the completely ordinary pickup→carry→ship
-   * pipeline (see cargo-manifest-data.ts's day-8 override) — this prop is
-   * purely the finale's own stand-in for "the thing you just delivered",
-   * swapped in the instant the screen goes black so the player never sees
-   * both at once. The ribbon (this.cakeRibbon) is the one part of this that
-   * actually animates — see updateFinaleUnwrapping below. */
-  private spawnCakeProp(): void {
-    const group = new THREE.Group();
-    const box = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 1.4, 24), new THREE.MeshStandardMaterial({ color: 0xb85c3a }));
-    box.position.y = 0.7;
-    group.add(box);
-    this.cakeMesh = box;
-    const ribbon = new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.08, 8, 24), new THREE.MeshStandardMaterial({ color: 0xe8c840 }));
-    ribbon.rotation.x = Math.PI / 2;
-    ribbon.position.y = 0.7;
-    group.add(ribbon);
-    this.cakeRibbon = ribbon;
-
-    // Four wrapping-paper "flaps" around the rim (spec follow-up一: "拆開包
-    // 裝時播放拆繩／拆紙動畫") — alongside the ribbon's own spin-and-shrink,
-    // these fold outward during the unwrap beat (updateFinaleUnwrapping) for
-    // a more literal "unwrapping paper" read than the ribbon alone gives.
-    this.cakeFlaps = [];
-    const flapMat = new THREE.MeshStandardMaterial({ color: 0xd88a5a, side: THREE.DoubleSide });
-    for (let i = 0; i < 4; i++) {
-      const angle = (i / 4) * Math.PI * 2;
-      const flap = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.6), flapMat);
-      flap.position.set(Math.cos(angle) * 0.55, 1.4, Math.sin(angle) * 0.55);
-      flap.rotation.y = -angle;
-      flap.rotation.x = -Math.PI / 2.2;
-      group.add(flap);
-      this.cakeFlaps.push(flap);
+  /** Finds today's real giant-cake-box cargo item (spec: "只有一個來源...
+   * buildDailyCargoManifest()生成的giant-cake-box") among DailyFlowSystem's
+   * own dailyCargoIds — day 8's manifest is already gated (earlier round)
+   * to contain exactly this one item and nothing else, so no broader
+   * "search every cargo in the world" scan is needed. Returns null once the
+   * cake has been detached (unwrapped) or if day 8's cargo hasn't spawned
+   * yet (e.g. the very first frame or two after 跳至第八天/normal unload
+   * gate opens). `isHeld` mirrors the spec's own F-prompt condition
+   * ("貨物目前沒有被拿起"). */
+  private findGiantCakeCargo(): { id: string; mesh: THREE.Mesh; isHeld: boolean } | null {
+    for (const id of this.dailyFlowSystem.dailyCargoIds) {
+      const data = this.cargoSystem.getCargoData(id);
+      if (data?.shapePresetId !== GIANT_CAKE_BOX_PRESET.id) continue;
+      const obj = this.cargoSystem.getInteractable(id);
+      if (!obj) continue;
+      return { id, mesh: obj.mesh, isHeld: this.playerData.heldObjectId === id };
     }
-
-    group.position.set(FINALE_CAKE_POS.x, FINALE_CAKE_POS.y, FINALE_CAKE_POS.z);
-    this.scene.add(group);
-    this.npcGroup = group;
-    this.cakeGroup = group;
-
-    const bubble = createStoryBubble(2.4);
-    group.add(bubble);
-    this.npcBubble = bubble;
+    return null;
   }
 
   /** Visual swap the instant the unwrap timer finishes (spec follow-up:
@@ -561,20 +562,27 @@ export class AfterWorkStorySystem {
     playUnwrapSfx();
     playCheerSfx();
     startPartyBgm();
-    if (this.cakeGroup) {
+    if (this.cakeMesh) {
       if (!this.finaleParticles) this.finaleParticles = new FinaleParticleBurst(this.scene);
-      const burstOrigin = this.cakeGroup.position.clone().add(new THREE.Vector3(0, 1.2, 0));
+      const burstOrigin = this.cakeMesh.position.clone().add(new THREE.Vector3(0, 1.2, 0));
       this.finaleParticles.spawnConfetti(burstOrigin);
       this.finaleParticles.spawnSparkleBursts(burstOrigin, 3);
     }
     if (!this.cakeMesh) return;
     (this.cakeMesh.material as THREE.MeshStandardMaterial).color.set(0xffe0b0);
+    // Icing radius/position read straight off the real preset's own
+    // dimensions (rather than the old prop's hardcoded 1.6/1.1 magic
+    // numbers) so it still sits flush on top regardless of the cargo
+    // mesh's actual local-origin-at-center geometry (buildCakeBox in
+    // cargo-visuals.ts).
+    const { width: cakeW, height: cakeH, depth: cakeD } = GIANT_CAKE_BOX_PRESET.dimensions;
+    const radius = Math.max(cakeW, cakeD) / 2;
     const icing = new THREE.Mesh(
-      new THREE.SphereGeometry(1.35, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2),
+      new THREE.SphereGeometry(radius * 1.13, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2),
       new THREE.MeshStandardMaterial({ color: 0xfff6e6 })
     );
-    icing.position.y = 1.1;
-    this.cakeGroup?.add(icing);
+    icing.position.y = cakeH / 2;
+    this.cakeMesh.add(icing);
   }
 
   private spawnFinaleStations(list: FinaleNpcStation[]): void {
@@ -679,25 +687,23 @@ export class AfterWorkStorySystem {
     }
   }
 
-  /** Reached once the intro fade-in finishes for day8 (updateTransition's
-   * own fade-in-complete branch, when dialogueReturnMode is
-   * 'finaleOpenReveal') — restores full player movement immediately, same
-   * shape as enterFinaleParty below, but the party hasn't started yet: only
-   * the wrapped cake exists in the world (spec follow-up: "開始時只生成：
-   * 巨型蛋糕包裹×1"). The player is free to walk right up and press F, or
-   * wander a bit first — nothing else can happen until they do. */
-  private enterCakeWait(): void {
-    this.playerData.state = 'empty-handed';
-    this.playerData.heldObjectId = null;
-    this.playerData.activeTool = this.savedActiveTool;
-    this.playerController.setInputEnabled(true);
-    this.hud.showInstructions();
-    this.state = 'finaleCakeWait';
-  }
-
+  /** Watches for the real giant-cake-box cargo to be placed and approached
+   * (spec: "貨物目前沒有被拿起...已放置在地面...才顯示「F 拆開蛋糕包裝」").
+   * Runs every frame the whole time `state === 'finaleCakeWait'` is active —
+   * which, since checkGiantCakeDayStart sets that state the instant day 8
+   * begins with NO lock of any kind, means for the player's entire normal
+   * unload→carry→place day-8 workflow. `!cake` covers both "not spawned
+   * yet" (first frame or two after the unload gate opens) and "already
+   * unwrapped" (detachCargoAsProp removed it from CargoSystem's own
+   * bookkeeping, so findGiantCakeCargo naturally stops finding it). */
   private updateFinaleCakeWait(): void {
-    const dx = this.camera.position.x - FINALE_CAKE_POS.x;
-    const dz = this.camera.position.z - FINALE_CAKE_POS.z;
+    const cake = this.findGiantCakeCargo();
+    if (!cake || cake.isHeld) {
+      this.hud.hideInteractionPrompt();
+      return;
+    }
+    const dx = this.camera.position.x - cake.mesh.position.x;
+    const dz = this.camera.position.z - cake.mesh.position.z;
     if (Math.sqrt(dx * dx + dz * dz) <= CAKE_INTERACT_RADIUS) {
       this.hud.showInteractionPrompt('巨型蛋糕包裹', 'F 拆開包裝');
     } else {
@@ -705,12 +711,17 @@ export class AfterWorkStorySystem {
     }
   }
 
-  /** F-press near the cake (spec follow-up: "按F→播放拆包裝流程"). Locks
-   * input for the fixed UNWRAP_DURATION + REVEAL_LINGER beat — same
-   * "no player choice changes the outcome" shape as every other short
-   * cutscene beat in this file (spec: "沒有倒數，沒有失敗" — it always
-   * resolves the same way after a fixed time, nothing to fail). */
-  private beginUnwrap(): void {
+  /** F-press near the placed (not-held) cake (spec follow-up: "按F→播放拆包
+   * 裝流程"). Locks input for the fixed UNWRAP_DURATION + REVEAL_LINGER beat
+   * — same "no player choice changes the outcome" shape as every other
+   * short cutscene beat in this file. Detaches the real cargo item from
+   * CargoSystem's own bookkeeping right away (spec: 不能"跳過物流流程" — the
+   * player must have genuinely shipped-in-place this exact item first,
+   * enforced by onKeyDown only ever calling this once findGiantCakeCargo
+   * has already confirmed it exists/isn't held) — the SAME mesh (now
+   * decorated as an opened cake) becomes this system's own party
+   * centerpiece prop, animated in place exactly where the player left it. */
+  private beginUnwrap(cargoId: string): void {
     this.hud.hideInteractionPrompt();
     this.savedActiveTool = this.playerData.activeTool;
     this.playerData.state = 'stamping-minigame';
@@ -719,45 +730,58 @@ export class AfterWorkStorySystem {
     this.unwrapElapsed = 0;
     this.cakeOpenedFired = false;
     this.cakeOpenedAt = 0;
+
+    this.cakeMesh = this.cargoSystem.detachCargoAsProp(cargoId);
+    this.cakeRibbon = (this.cakeMesh?.children.find((c) => c.userData.role === 'cakeRibbon') as THREE.Mesh | undefined) ?? null;
+    this.cakeLid = (this.cakeMesh?.children.find((c) => c.userData.role === 'cakeLid') as THREE.Mesh | undefined) ?? null;
+
+    // Once day 8's finale spawns the first time this browser session, the
+    // 7 finale NPCs need to exist for the party phase about to start
+    // (spawnFinaleStations is otherwise idempotent-safe to call once here —
+    // beginUnwrap only ever reaches this point once per playthrough, same
+    // guard shape as the old trigger()'s own hasTriggeredThisSession).
+    this.spawnFinaleStations(AFTER_WORK_STORIES[this.storyDay]?.finaleNpcs ?? []);
   }
 
   private updateFinaleUnwrapping(deltaTime: number): void {
     this.unwrapElapsed += deltaTime;
-    // Ribbon spins and shrinks away, paper flaps fold outward, while
-    // "unwrapping" — purely decorative (spec follow-up一: "拆繩／拆紙動畫").
+    // Ribbon spins and shrinks away, the lid pops upward and spins, while
+    // "unwrapping" — purely decorative (spec: "拆包裝演出").
     const t = Math.min(1, this.unwrapElapsed / UNWRAP_DURATION);
     if (this.cakeRibbon) {
       this.cakeRibbon.rotation.y += deltaTime * 8;
       this.cakeRibbon.scale.setScalar(Math.max(0.001, 1 - t));
     }
-    for (let i = 0; i < this.cakeFlaps.length; i++) {
-      this.cakeFlaps[i].rotation.x = -Math.PI / 2.2 - t * Math.PI * 0.55;
+    if (this.cakeLid) {
+      this.cakeLid.position.y += deltaTime * 0.6;
+      this.cakeLid.rotation.y += deltaTime * 3;
     }
     if (!this.cakeOpenedFired && this.unwrapElapsed >= UNWRAP_DURATION) {
       this.cakeOpenedFired = true;
       this.cakeOpenedAt = this.unwrapElapsed;
       if (this.cakeRibbon) {
-        this.cakeGroup?.remove(this.cakeRibbon);
+        this.cakeMesh?.remove(this.cakeRibbon);
         this.cakeRibbon.geometry.dispose();
         (this.cakeRibbon.material as THREE.MeshStandardMaterial).dispose();
         this.cakeRibbon = null;
       }
-      for (const flap of this.cakeFlaps) {
-        this.cakeGroup?.remove(flap);
-        flap.geometry.dispose();
+      if (this.cakeLid) {
+        this.cakeMesh?.remove(this.cakeLid);
+        this.cakeLid.geometry.dispose();
+        (this.cakeLid.material as THREE.MeshStandardMaterial).dispose();
+        this.cakeLid = null;
       }
-      (this.cakeFlaps[0]?.material as THREE.MeshStandardMaterial | undefined)?.dispose();
-      this.cakeFlaps = [];
       this.onCakeOpened();
     }
-    // Scale "pop" (spec follow-up一: "顯示時有一點縮放或彈跳效果") — a plain
+    // Scale "pop" (spec: "顯示時有一點縮放或彈跳效果") — a plain
     // overshoot-then-settle curve driven purely by elapsed time since the
     // box opened, computed fresh every frame rather than a separate tween.
+    // Baseline 1 (not the old decorative prop's own 0.55) since the real
+    // cargo mesh is already correctly sized at scale 1.
     if (this.cakeOpenedFired && this.cakeMesh) {
       const bt = Math.min(1, (this.unwrapElapsed - this.cakeOpenedAt) / CAKE_BOUNCE_DURATION);
       const overshoot = Math.sin(bt * Math.PI) * 0.18 * (1 - bt);
-      const scaleY = 0.55 + overshoot;
-      this.cakeMesh.scale.set(1 + overshoot * 0.4, scaleY, 1 + overshoot * 0.4);
+      this.cakeMesh.scale.set(1 + overshoot * 0.4, 1 + overshoot, 1 + overshoot * 0.4);
     }
     if (this.unwrapElapsed >= UNWRAP_DURATION + REVEAL_LINGER) {
       this.enterFinaleParty();
@@ -923,16 +947,15 @@ export class AfterWorkStorySystem {
     this.camera.lookAt(new THREE.Vector3(CAMPFIRE_LOOK_TARGET.x, CAMPFIRE_LOOK_TARGET.y, CAMPFIRE_LOOK_TARGET.z));
 
     this.disposeFinaleStations();
-    if (this.cakeGroup) {
-      this.scene.remove(this.cakeGroup);
-      this.cakeGroup.traverse((child) => {
+    if (this.cakeMesh) {
+      this.scene.remove(this.cakeMesh);
+      this.cakeMesh.traverse((child) => {
         if (child instanceof THREE.Mesh) {
           child.geometry?.dispose();
           if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose());
           else child.material?.dispose();
         }
       });
-      this.cakeGroup = null;
       this.cakeMesh = null;
     }
     this.spawnFinaleEndingCluster();
@@ -1167,9 +1190,6 @@ export class AfterWorkStorySystem {
       case 'finaleStation':
         this.endStationDialogue();
         break;
-      case 'finaleOpenReveal':
-        this.enterFinaleParty();
-        break;
       case 'finaleEnding':
         this.beginEndingPullback();
         break;
@@ -1311,7 +1331,6 @@ export class AfterWorkStorySystem {
       }
     });
     this.npcGroup = null;
-    this.cakeGroup = null;
     this.cakeMesh = null;
     this.endingClusterBodies = [];
   }
@@ -1356,17 +1375,23 @@ export class AfterWorkStorySystem {
       return;
     }
 
-    // Day8 follow-up round — F only ever does anything here, near the cake,
-    // during this one state (spec: "F只在Day8巨型蛋糕附近有效，不影響一般貨
-    // 物"): PickupSystem/other systems own every other F-key use elsewhere,
+    // F only ever does anything here, near the REAL giant-cake-box cargo,
+    // during this one state (spec: "F不影響一般貨物...只有Day8巨型蛋糕可觸
+    // 發"): PickupSystem/other systems own every other F-key use elsewhere,
     // and this class only ever reads KeyF while state === 'finaleCakeWait'.
+    // The same three conditions updateFinaleCakeWait's own prompt already
+    // requires (exists, not held, in range) are re-checked here so the
+    // prompt and the actual F-action can never disagree.
     if (this.state === 'finaleCakeWait' && !event.repeat) {
       if (event.code === 'KeyF') {
-        const dx = this.camera.position.x - FINALE_CAKE_POS.x;
-        const dz = this.camera.position.z - FINALE_CAKE_POS.z;
-        if (Math.sqrt(dx * dx + dz * dz) <= CAKE_INTERACT_RADIUS) {
-          event.preventDefault();
-          this.beginUnwrap();
+        const cake = this.findGiantCakeCargo();
+        if (cake && !cake.isHeld) {
+          const dx = this.camera.position.x - cake.mesh.position.x;
+          const dz = this.camera.position.z - cake.mesh.position.z;
+          if (Math.sqrt(dx * dx + dz * dz) <= CAKE_INTERACT_RADIUS) {
+            event.preventDefault();
+            this.beginUnwrap(cake.id);
+          }
         }
       }
       return;
@@ -1430,6 +1455,7 @@ export class AfterWorkStorySystem {
   // --- Per-frame (called UNCONDITIONALLY from game-app.ts, spec二: no PauseManager) ---
 
   update(deltaTime: number): void {
+    if (this.state === 'inactive') this.checkGiantCakeDayStart();
     if (this.state === 'inactive' || this.state === 'completed' || this.state === 'finaleCredits') return;
 
     // Defensive per-frame re-assertion — ToolSystem's own digit-key
@@ -1544,16 +1570,11 @@ export class AfterWorkStorySystem {
     } else if (this.fadePhase === 'in') {
       if (this.fadeElapsed >= FADE_SECONDS) {
         this.fadePhase = null;
-        // Day8's own intro (spec follow-up: "按F拆包裝") skips the locked
-        // dialogue engine entirely — free movement in front of the still-
-        // wrapped cake instead. Every other day (including day8's own later
-        // campfire-ending beat, dialogueReturnMode 'finaleEnding') still
-        // goes through beginDialogue() exactly as before.
-        if (this.dialogueReturnMode === 'finaleOpenReveal') {
-          this.enterCakeWait();
-        } else {
-          this.beginDialogue();
-        }
+        // Day8's own opening no longer goes through this 'transitioning'
+        // state at all ("Day8巨型蛋糕物流化" round) — only its later
+        // campfire-ending beat (dialogueReturnMode 'finaleEnding') and every
+        // ordinary day 1-7 still reach here, both via beginDialogue().
+        this.beginDialogue();
       }
     }
   }

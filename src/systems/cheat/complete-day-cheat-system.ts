@@ -402,28 +402,15 @@ export class CompleteDayCheatSystem {
       // then pressButton() starts the same real spawn pipeline every normal
       // day uses — buildDailyCargoManifest(8) is already gated (earlier
       // round) to return exactly the one giant cake and nothing else, so no
-      // separate "spawn only the cake" logic is needed here. This ordinary
-      // dock cargo cake is E-only (ships through the normal pickup pipeline)
-      // and is never the thing F interacts with — see the direct trigger()
-      // call below for that.
+      // separate "spawn only the cake" logic is needed here. This is now the
+      // ONLY cake that ever exists for Day8 ("Day8巨型蛋糕物流化" round —
+      // AfterWorkStorySystem no longer spawns a separate decorative prop at
+      // all); AfterWorkStorySystem.update() itself notices
+      // dailyFlowSystem.currentDay === 8 the very next frame and starts
+      // watching for this exact cargo item to be placed and unwrapped, with
+      // zero further action needed from this button.
       this.unloadingSystem.resetGate();
       this.unloadingSystem.pressButton();
-
-      // Directly enter the Day8 finale itself (bug follow-up: "巨型蛋糕仍無
-      // 法互動" — pressJumpToDay8Button alone was never actually starting the
-      // finale; the F-interactable cake prop only ever comes from
-      // AfterWorkStorySystem.spawnCakeProp(), called from trigger()'s own
-      // beginFinaleIntro(), which previously only ran via the real
-      // ship-everything-then-結束今天 flow. That made the button useless for
-      // its own stated purpose — spec follow-up originally required this
-      // button alone to let testers "直接測試：蛋糕F拆包、派對NPC、NPC對話、
-      // 營火結局" with no extra steps. trigger() has no dependency on
-      // DailyFlowSystem's own state (it only reads AFTER_WORK_STORIES[8] and
-      // its own internal guards, both satisfied here thanks to
-      // resetForDayJumpTesting() just above), so calling it directly is
-      // safe and immediately fades/teleports the player into the finale
-      // scene with the real F-interactable cake waiting.
-      this.afterWorkStorySystem.trigger(8);
 
       this.hud.showToast('已跳至第八天，蛋糕正在卸貨中');
     } finally {

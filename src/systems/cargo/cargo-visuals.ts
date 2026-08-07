@@ -325,9 +325,15 @@ function buildCakeBox(preset: CargoShapePreset): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, h, 24), stdMat(preset.color));
   const ribbon = new THREE.Mesh(new THREE.TorusGeometry(radius, h * 0.06, 8, 24), stdMat(darken(preset.color, 0.3)));
   ribbon.rotation.x = Math.PI / 2;
+  // Tagged so AfterWorkStorySystem's own Day8 unwrap animation (spec:
+  // "Day8巨型蛋糕物流化" round — F now unwraps THIS real cargo item directly,
+  // no separate decorative prop) can find this exact child without relying
+  // on fixed child-array indices.
+  ribbon.userData.role = 'cakeRibbon';
   mesh.add(ribbon);
   const lid = new THREE.Mesh(new THREE.CylinderGeometry(radius * 1.03, radius * 1.03, h * 0.08, 24), stdMat(darken(preset.color, 0.15)));
   lid.position.y = h / 2 + h * 0.04;
+  lid.userData.role = 'cakeLid';
   mesh.add(lid);
   return mesh;
 }

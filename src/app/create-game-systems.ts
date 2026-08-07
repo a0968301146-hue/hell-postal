@@ -198,20 +198,6 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     pauseManager, settingsManager
   );
 
-  // Day-1 dock story cutscene ("Add day one dock story event" round) — built
-  // as early as playerController/pickupSystem exist, since dailyFlowSystem's
-  // own onDayCompleted hook further below needs a live reference to trigger()
-  // from. Deliberately never touches PauseManager itself (see its own class
-  // doc comment) — locks the player via the same playerData.state/
-  // setInputEnabled(false) combination the stamp minigame already
-  // established, and its own update() is called UNCONDITIONALLY from
-  // game-app.ts (never gated behind pauseManager.isPaused), matching
-  // cargoHookSystem/spraySystem/envelopeVacuumSystem's own established
-  // self-guarding convention.
-  const afterWorkStorySystem = new AfterWorkStorySystem(
-    scene, camera, physics, hud, playerController, playerData, settingsManager, pickupSystem
-  );
-
   // Mail/envelope-stamping loop ("Add modular envelope stamping and
   // regional mail bag system" round) — MailSystem moved up to construct
   // here (was previously built much later, right before MailBagSystem)
@@ -436,6 +422,27 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
       mailSystem.resetDaily();
       lostFoundSystem.resetDaily();
     }
+  );
+
+  // Day-1 dock story cutscene ("Add day one dock story event" round),
+  // generalized to all 8 days by "每日特殊劇情系統". Constructed here (moved
+  // down from its old, much earlier spot) specifically so it can take
+  // dailyFlowSystem as a live constructor dependency — "Day8巨型蛋糕物流化"
+  // round: day 8's own finale now starts the instant
+  // dailyFlowSystem.currentDay becomes 8 (watched every frame internally,
+  // see AfterWorkStorySystem.checkGiantCakeDayStart), rather than via the
+  // onDayCompleted callback below every other day still uses; it also needs
+  // cargoSystem (already built much earlier, line ~169) to find/detach
+  // today's real giant-cake-box cargo item for its own F-unwrap. Deliberately
+  // never touches PauseManager itself (see its own class doc comment) —
+  // locks the player via the same playerData.state/setInputEnabled(false)
+  // combination the stamp minigame already established, and its own
+  // update() is called UNCONDITIONALLY from game-app.ts (never gated behind
+  // pauseManager.isPaused), matching cargoHookSystem/spraySystem/
+  // envelopeVacuumSystem's own established self-guarding convention.
+  const afterWorkStorySystem = new AfterWorkStorySystem(
+    scene, camera, physics, hud, playerController, playerData, settingsManager, pickupSystem,
+    cargoSystem, dailyFlowSystem
   );
 
   // Vehicle spawn/depart control (hall center) — re-enabled this round

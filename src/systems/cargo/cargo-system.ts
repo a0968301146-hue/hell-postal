@@ -265,6 +265,28 @@ export class CargoSystem {
     this.cargoDataMap.delete(id);
   }
 
+  /** Detaches a cargo item from all cargo/physics bookkeeping WITHOUT
+   * disposing its mesh (unlike removeCargo above) — for the rare case where
+   * the item stops being playable cargo but its mesh needs to keep existing
+   * purely as inert scenery afterward. Currently used only by Day8's own
+   * finale ("Day8巨型蛋糕物流化" round): once the giant cake cargo is
+   * unwrapped, it's no longer pickup-able/raycast-able cargo, but the SAME
+   * mesh (now decorated as an opened cake) keeps sitting in the world as the
+   * party's own centerpiece prop until AfterWorkStorySystem itself disposes
+   * it at the campfire-ending transition. The rigidBody is disabled (same
+   * `physics.setBodyEnabled(body, false)` pattern already used to pin cargo
+   * during vehicle departure, see vehicle-control-system.ts) rather than
+   * removed, so the mesh's last-synced transform simply freezes in place —
+   * cheaper and simpler than tracking down every reference to the body. */
+  detachCargoAsProp(id: string): THREE.Mesh | null {
+    const obj = this.interactables.get(id);
+    if (!obj) return null;
+    if (obj.rigidBody) this.physics.setBodyEnabled(obj.rigidBody, false);
+    this.interactables.delete(id);
+    this.cargoDataMap.delete(id);
+    return obj.mesh;
+  }
+
   private spawnOne(
     scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>,
     x: number, z: number, floorY: number
