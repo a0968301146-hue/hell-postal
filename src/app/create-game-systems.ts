@@ -358,12 +358,6 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // organized-cargo-into-cargoBounds shipment judgment. All three report
   // into DailyFlowSystem rather than it reaching into them. Constructed
   // BEFORE VehicleControlSystem/UnloadingSystem since both need it.
-  // onAllVehiclesDeparted callback removed ("Spawn lost found NPC during
-  // unloading and penalize missed interaction" round 六: "不要再使用
-  // vehiclesDeparted → spawn NPC") — the lost-found NPC no longer spawns
-  // on departure; it now spawns from UnloadingSystem's onFirstUnload
-  // callback below, alongside the case, via lostFoundSystem.
-  // onDailyUnloadStarted().
   const dailyFlowSystem = new DailyFlowSystem(
     scene, physics, cargoSystem, hud,
     () => {
@@ -417,6 +411,30 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
         runId: existingRun?.runId ?? generateRunId(),
         lastSavedAt: Date.now(),
       });
+    },
+    () => {
+      // Spec follow-up ("每日結算UI彈出時，立即清除地圖上的所有包裹/信封/
+      // 失物招領物品") — fires the MOMENT the settlement UI appears
+      // (notifyDayComplete, called from VehicleControlSystem's own
+      // showDayCompleteSummary — both the real six-vehicle departure path
+      // and the test cheat funnel through that one method), well before the
+      // player clicks "continue" or walks to press 結束今天. Deliberately
+      // narrower than resetTools() above: only touches cargo/mail/lost-found
+      // OBJECTS (spec's own explicit "可以清" list) — never dolly/gate/
+      // pallet fixture positions (those still reset later, unchanged, at the
+      // normal pressEndDayButton() time) and never anything
+      // AfterWorkStorySystem owns (story NPCs/props are untouched — this
+      // callback has no reference to that system at all, so Day7's letter
+      // and Day8's cake can never be caught by it).
+      for (const id of dailyFlowSystem.dailyCargoIds) {
+        if (cargoSystem.getCargoData(id)) cargoSystem.removeCargo(id);
+      }
+      mailBagSystem.resetDaily();
+      envelopeDispatchMachineSystem.resetDaily();
+      packedMailBagSystem.resetDaily();
+      envelopeStackSystem.resetDaily();
+      mailSystem.resetDaily();
+      lostFoundSystem.resetDaily();
     }
   );
 
@@ -464,11 +482,19 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
       // bursts in alongside the regular cargo — picks today's case and
       // arms its own short spawn delay. UnloadingSystem itself is never
       // touched for this (spec: 不要修改北側雙到貨口).
-      lostFoundSystem.onDailyUnloadStarted();
-      // Today's 12 envelopes burst in alongside regular cargo from the SAME
-      // two north ports (spec二) — UnloadingSystem itself is never touched
-      // for this (spec: 不要修改北側雙到貨口位置).
-      mailSystem.onDailyUnloadStarted();
+      // Day8 exclusion (spec follow-up: "除了巨大蛋糕之外，不要生成...失物招
+      // 領物品、信封") — the finale's own cargo manifest is already a single
+      // giant cake item (cargo-manifest-planner.ts's GIANT_CAKE_DAY), but
+      // lost-found/mail have no day-awareness of their own at all; gating
+      // both calls here (the ONE place either ever gets armed each day) is
+      // the minimal fix — neither system needs new plumbing.
+      if (dailyFlowSystem.currentDay !== 8) {
+        lostFoundSystem.onDailyUnloadStarted();
+        // Today's 12 envelopes burst in alongside regular cargo from the SAME
+        // two north ports (spec二) — UnloadingSystem itself is never touched
+        // for this (spec: 不要修改北側雙到貨口位置).
+        mailSystem.onDailyUnloadStarted();
+      }
     }
   );
   const palletSystem = new PalletSystem(

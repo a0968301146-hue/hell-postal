@@ -14,6 +14,7 @@ import { MAIN_ROOM_CENTER_SPAWN } from '../world-layout/logistics-layout-data';
 import { CAMPFIRE_BENCH_NORTH, CAMPFIRE_BENCH_EAST, CAMPFIRE_BENCH_WEST, CAMPFIRE_BENCH_SOUTH, CAMPFIRE_LOOK_TARGET, CAMPFIRE_CENTER } from '../../data/world/campfire-area-data';
 import { AFTER_WORK_STORIES, AfterWorkStoryDay, FinaleNpcStation, FINALE_ENDING_SEAT, FINALE_CAKE_POS } from './after-work-story-data';
 import { createStoryBubble, showStoryBubbleText, hideStoryBubble, disposeStoryBubble, wrapStoryLine } from './after-work-story-bubble-ui';
+import { createLetterReadingUi, showLetterReadingUi, hideLetterReadingUi, LetterReadingUiHandle } from './letter-reading-ui';
 
 type StoryState =
   | 'inactive' | 'npcWalking' | 'waitingForPlayer' | 'transitioning' | 'dialogue' | 'endTransition' | 'completed'
@@ -23,7 +24,13 @@ type StoryState =
   | 'finaleParty'
   // Terminal state once the credits finish fading in — update() no-ops from
   // here on (spec: "遊戲結束").
-  | 'finaleCredits';
+  | 'finaleCredits'
+  // Day7 only (spec follow-up: "彈出信件閱讀UI...信件像貼在螢幕前展示") —
+  // replaces the old dialogue-bubble flow for the letter's own text. No
+  // typewriter/reveal, no fade-in (the overlay pops up directly over the
+  // still-visible, dimmed world) — closing it (E) goes straight into the
+  // SAME finishStory() ending every other day already uses.
+  | 'letterReading';
 
 /** What should happen once the currently-showing `lines` array runs out
  * (last line consumed via advanceLine, or ESC-hold-skip) — added this round
@@ -186,6 +193,7 @@ export class AfterWorkStorySystem {
   private fadeElapsed = 0;
   private fadeEl: HTMLDivElement;
   private creditsEl: HTMLDivElement;
+  private letterUi: LetterReadingUiHandle;
 
   private escHolding = false;
   private escHoldElapsed = 0;
@@ -214,6 +222,8 @@ export class AfterWorkStorySystem {
     this.creditsEl = document.createElement('div');
     this.creditsEl.style.cssText = 'position:fixed;inset:0;background:transparent;color:#f5f0e0;display:flex;align-items:center;justify-content:center;text-align:center;font-family:sans-serif;font-size:22px;line-height:2;opacity:0;pointer-events:none;transition:opacity 1.5s ease;z-index:10000;white-space:pre-line;';
     document.body.appendChild(this.creditsEl);
+
+    this.letterUi = createLetterReadingUi();
 
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
     document.addEventListener('keyup', (e) => this.onKeyUp(e));
@@ -639,10 +649,30 @@ export class AfterWorkStorySystem {
     this.lockAndFadeToStory();
   }
 
+  /** Day7 only — the letter's own second E-press (spec follow-up: "彈出信件
+   * 閱讀UI"). Deliberately does NOT go through lockAndFadeToStory()/
+   * 'transitioning' — no fade-out/teleport is wanted here at all (spec: the
+   * overlay "貼在螢幕前展示", popping up directly over the still-visible,
+   * dimmed world exactly where the player already is), just the same input
+   * lock every other story state uses. Closing it (onKeyDown's own
+   * 'letterReading' branch) reuses finishStory() for the ending exactly like
+   * every other day. */
+  private beginLetterReading(): void {
+    if (this.state !== 'waitingForPlayer') return;
+    this.hud.hideInteractionPrompt();
+    this.savedActiveTool = this.playerData.activeTool;
+    this.pickupSystem.forceDropHeld();
+    this.playerData.state = 'stamping-minigame';
+    this.playerController.setInputEnabled(false);
+    this.state = 'letterReading';
+    const config = AFTER_WORK_STORIES[this.storyDay];
+    showLetterReadingUi(this.letterUi, config?.letterSender ?? '', config?.letterRecipient ?? '', config?.letterBody ?? []);
+  }
+
   /** Shared "lock player, start the fade-to-black" entry point — used both
-   * by startStory() (player pressed E on a waiting NPC/letter) and by the
-   * day8 finale's own auto-start / campfire-ending beats (which have no
-   * "wait for E" step of their own to fire from). */
+   * by startStory() (player pressed E on a waiting NPC) and by the day8
+   * finale's own auto-start / campfire-ending beats (which have no "wait for
+   * E" step of their own to fire from). */
   private lockAndFadeToStory(): void {
     this.hud.hideInteractionPrompt();
     this.savedActiveTool = this.playerData.activeTool;
@@ -902,6 +932,8 @@ export class AfterWorkStorySystem {
           event.preventDefault();
           if (this.isLetterDay && !this.letterPickedUp) {
             this.letterPickedUp = true;
+          } else if (this.isLetterDay) {
+            this.beginLetterReading();
           } else {
             this.startStory();
           }
@@ -914,6 +946,16 @@ export class AfterWorkStorySystem {
       const bindings = this.settingsManager.inputBindings;
       if (event.code === 'Space' || bindings.matches('interact', event.code) || bindings.matches('pickupPlace', event.code)) {
         if (this.tryFinaleInteract()) event.preventDefault();
+      }
+      return;
+    }
+
+    if (this.state === 'letterReading' && !event.repeat) {
+      const bindings = this.settingsManager.inputBindings;
+      if (event.code === 'Space' || bindings.matches('interact', event.code) || bindings.matches('pickupPlace', event.code)) {
+        event.preventDefault();
+        hideLetterReadingUi(this.letterUi);
+        this.finishStory();
       }
       return;
     }
@@ -973,7 +1015,7 @@ export class AfterWorkStorySystem {
     // reasserting here any further would wrongly fight a genuinely-restored
     // player during that final black-screen beat. 'finaleParty' is
     // deliberately excluded — that phase leaves input genuinely restored.
-    if (this.state === 'transitioning' || this.state === 'dialogue' || (this.state === 'endTransition' && this.fadePhase === 'out')) {
+    if (this.state === 'transitioning' || this.state === 'dialogue' || this.state === 'letterReading' || (this.state === 'endTransition' && this.fadePhase === 'out')) {
       if (this.dialogueReturnMode !== 'finaleStation' && this.playerData.activeTool !== this.savedActiveTool) {
         this.playerData.activeTool = this.savedActiveTool;
       }

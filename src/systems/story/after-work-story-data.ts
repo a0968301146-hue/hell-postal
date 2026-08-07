@@ -18,12 +18,12 @@ import { LOST_FOUND_NPC_SPAWN, LOST_FOUND_NPC_WAIT_SPOT } from '../../data/world
 import { fishingSeatAnchorA, fishingSeatAnchorB, fishingLookTarget } from '../world-layout/fishing-pier-data';
 import { BACK_AREA, MAIN_ROOM_CENTER_SPAWN } from '../world-layout/logistics-layout-data';
 import {
-  COFFEE_CHAIR_PLAYER, COFFEE_CHAIR_NPC, COFFEE_LOOK_TARGET, COFFEE_NPC_SPAWN, COFFEE_NPC_WAIT_SPOT,
+  COFFEE_CHAIR_PLAYER, COFFEE_CHAIR_NPC, COFFEE_LOOK_TARGET,
 } from '../../data/world/coffee-room-layout-data';
 import {
-  CAMPFIRE_BENCH_NORTH, CAMPFIRE_BENCH_SOUTH, CAMPFIRE_LOOK_TARGET, CAMPFIRE_NPC_SPAWN, CAMPFIRE_NPC_WAIT_SPOT,
-  CAMPFIRE_BENCH_EAST, CAMPFIRE_BENCH_WEST,
+  CAMPFIRE_BENCH_SOUTH, CAMPFIRE_BENCH_WEST,
 } from '../../data/world/campfire-area-data';
+import { SEA_PLATFORM_PLAYER, SEA_PLATFORM_NPC, SEA_LOOK_TARGET } from '../../data/world/sea-interaction-data';
 
 /** Kept as the DEFAULT spawn/wait for every day whose NPC simply "walks in
  * from off-scene" rather than starting inside a day-specific new room (days
@@ -63,12 +63,18 @@ export interface AfterWorkStoryDay {
 
   /** Day7 only (spec: "沒有NPC...地上有一封信...E撿起→E打開"). No NPC walk-in
    * /wait/teleport phase at all — trigger() goes straight to a "letter on the
-   * floor" pickup, reusing the SAME dialogue/reveal/skip engine for the
-   * letter's own text with the letter's world position standing in for the
-   * NPC's bubble anchor. */
+   * floor" pickup. Opening it shows the dedicated letter-reading overlay
+   * (letter-reading-ui.ts) instead of the shared NPC dialogue bubble — spec
+   * follow-up: "彈出信件閱讀UI...信件像貼在螢幕前展示". */
   isLetterDay?: boolean;
   /** Where the letter mesh sits (isLetterDay only). */
   letterPos?: THREE.Vector3;
+  /** Letter-reading overlay content (isLetterDay only) — a standalone piece
+   * of world-flavor mail, deliberately NOT connected to the player or any
+   * later day (spec: "不需要連接後續任務"). */
+  letterSender?: string;
+  letterRecipient?: string;
+  letterBody?: string[];
 
   /** Day8 only — the finale (spec: "第8天...生日派對"). Distinct multi-phase
    * flow (cake reveal -> free-roam party -> campfire ending) layered on top
@@ -135,8 +141,8 @@ export const AFTER_WORK_STORIES: Record<number, AfterWorkStoryDay> = {
       '有些新來的員工一開始還不習慣，後來卻變成每天最期待的時間。',
       '這間休息室，就是那時候留下來的。咖啡的味道，我盡量泡得跟他當年一樣。',
     ],
-    npcSpawn: COFFEE_NPC_SPAWN,
-    npcWaitSpot: COFFEE_NPC_WAIT_SPOT,
+    npcSpawn: AFTER_WORK_STORY_NPC_SPAWN,
+    npcWaitSpot: AFTER_WORK_STORY_NPC_WAIT_SPOT,
     seatPlayer: COFFEE_CHAIR_PLAYER,
     seatNpc: COFFEE_CHAIR_NPC,
     lookTarget: COFFEE_LOOK_TARGET,
@@ -169,8 +175,8 @@ export const AFTER_WORK_STORIES: Record<number, AfterWorkStoryDay> = {
       '還有這些，是以前一起扛貨、一起收工的大家，很多人現在都還在附近。',
       '那時候什麼都是手忙腳亂地做，但每個人幫每個人一把，日子反而過得踏實。',
     ],
-    npcSpawn: COFFEE_NPC_SPAWN,
-    npcWaitSpot: COFFEE_NPC_WAIT_SPOT,
+    npcSpawn: AFTER_WORK_STORY_NPC_SPAWN,
+    npcWaitSpot: AFTER_WORK_STORY_NPC_WAIT_SPOT,
     seatPlayer: COFFEE_CHAIR_PLAYER,
     seatNpc: COFFEE_CHAIR_NPC,
     lookTarget: COFFEE_LOOK_TARGET,
@@ -196,18 +202,18 @@ export const AFTER_WORK_STORIES: Record<number, AfterWorkStoryDay> = {
   6: {
     npcName: '阿古',
     lines: [
-      '火生好了，坐過來一點，順便把棉花糖烤了。',
+      '跟我來，今天想帶你去一個地方——就在海面上，走，別怕，這塊浮台很穩。',
       '今天想聊聊我自己的事——其實我一直有個夢想，想開一艘屬於自己的船，到處送貨、到處看看。',
       '不是想離開這裡，只是想帶著這裡教我的東西，走遠一點試試看。',
       '你爺爺聽我說過這件事，他沒有笑我，只說「準備好了就去，這裡會等你回來」。',
-      '現在還在存錢、還在學怎麼看海圖，慢慢來，總有一天會出發。',
-      '火光跳一跳，蟲聲吵一吵，這種晚上聊心事最剛好了。',
+      '現在還在存錢、還在學怎麼看海圖，慢慢來，總有一天會出發，說不定第一件貨就是從這片海出去的。',
+      '海浪輕輕拍著浮台，燈籠晃啊晃的，這種晚上聊心事最剛好了。',
     ],
-    npcSpawn: CAMPFIRE_NPC_SPAWN,
-    npcWaitSpot: CAMPFIRE_NPC_WAIT_SPOT,
-    seatPlayer: CAMPFIRE_BENCH_SOUTH,
-    seatNpc: CAMPFIRE_BENCH_NORTH,
-    lookTarget: CAMPFIRE_LOOK_TARGET,
+    npcSpawn: AFTER_WORK_STORY_NPC_SPAWN,
+    npcWaitSpot: AFTER_WORK_STORY_NPC_WAIT_SPOT,
+    seatPlayer: SEA_PLATFORM_PLAYER,
+    seatNpc: SEA_PLATFORM_NPC,
+    lookTarget: SEA_LOOK_TARGET,
   },
 
   7: {
@@ -217,6 +223,15 @@ export const AFTER_WORK_STORIES: Record<number, AfterWorkStoryDay> = {
     ],
     isLetterDay: true,
     letterPos: letterSpot,
+    letterSender: '阿元',
+    letterRecipient: '故鄉的爹娘',
+    letterBody: [
+      '爹、娘，見信如晤。',
+      '這裡的物流中心規矩雖然多，但大家都很照顧新來的人，不用擔心我在這裡受委屈。',
+      '最近開始學著分辨貨物的種類，聽說有些是要送到很遠、很遠的地方，遠到連老員工都說不清楚確切在哪，只知道「交出去，總會到」。',
+      '手頭寬裕了一些，附上一點錢，買些好吃的，別捨不得用。等我攢夠假期，就回去看你們。',
+      '兒 阿元 敬上',
+    ],
   },
 
   8: {
@@ -269,7 +284,7 @@ export const AFTER_WORK_STORIES: Record<number, AfterWorkStoryDay> = {
       {
         npcName: '阿古',
         lines: ['我的船，說不定明年就能出發了。', '到時候第一件貨，我想送來這裡。'],
-        pos: CAMPFIRE_BENCH_EAST.clone(),
+        pos: SEA_PLATFORM_NPC.clone(),
       },
       {
         npcName: '小柚',

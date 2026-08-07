@@ -35,6 +35,9 @@ import {
   CAMPFIRE_AREA, CAMPFIRE_CENTER, CAMPFIRE_BENCH_NORTH, CAMPFIRE_BENCH_SOUTH, CAMPFIRE_BENCH_EAST, CAMPFIRE_BENCH_WEST,
   CAMPFIRE_STICK_A, CAMPFIRE_STICK_B, CAMPFIRE_ENTRY_CONNECTOR,
 } from '../../data/world/campfire-area-data';
+// Day6's relocated scene ("每日特殊劇情系統" round follow-up — moved off the
+// campfire, spec: "傳送至海面上的特殊互動區").
+import { SEA_INTERACTION_AREA } from '../../data/world/sea-interaction-data';
 
 export const SCENE_CONFIG = {
   playerEyeHeight: 1.6,
@@ -132,6 +135,7 @@ export function createLogisticsScene(scene: THREE.Scene, physics: PhysicsWorldPo
   buildCoffeeRoom(scene, physics);
   buildCampfireArea(scene, physics);
   buildMainHallSkylight(scene, physics);
+  buildSeaInteractionPlatform(scene, physics);
 
   const interactables = new Map<string, InteractableObject>();
   buildBulletinBoard(scene, physics, interactables);
@@ -905,4 +909,38 @@ function buildFishingLantern(scene: THREE.Scene, pos: THREE.Vector3): void {
   const cap = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.08, 8), WOOD_DARK_MAT());
   cap.position.set(pos.x, pos.y + bodyHeight + 0.04, pos.z);
   scene.add(cap);
+}
+
+/** Day6's own relocated dialogue scene ("每日特殊劇情系統" round follow-up,
+ * spec: "Day6不應在營火區進行...傳送至海面上的特殊互動區") — a small
+ * floating wooden raft out in open water, clear of FISHING_PIER's own deck
+ * (never touches or affects it — different X range entirely, see
+ * sea-interaction-data.ts's own doc comment) so Day5's "beach swimming"
+ * scene (which still uses the fishing pier chairs) is completely unaffected.
+ * A simple standalone platform + a mooring post + lantern, low-poly to match
+ * every other decorative prop in this file — no swim mechanic, the player
+ * is teleported to stand on the raft exactly like every other day's own
+ * seatPlayer/seatNpc teleport. */
+function buildSeaInteractionPlatform(scene: THREE.Scene, physics: PhysicsWorldPort): void {
+  const { centerX, centerZ, platformY, radius } = SEA_INTERACTION_AREA;
+
+  const platform = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, 0.15, 12), WOOD_DECK_MAT());
+  platform.position.set(centerX, platformY - 0.075, centerZ);
+  scene.add(platform);
+  physics.createStaticCuboid(centerX, platformY - 0.075, centerZ, radius * 0.9, 0.1, radius * 0.9);
+
+  // A few short mooring-post rails around the rim, purely decorative.
+  const postGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.35, 6);
+  for (let i = 0; i < 4; i++) {
+    const angle = (i / 4) * Math.PI * 2 + Math.PI / 4;
+    const post = new THREE.Mesh(postGeo, WOOD_DARK_MAT());
+    post.position.set(centerX + Math.cos(angle) * radius * 0.85, platformY + 0.1, centerZ + Math.sin(angle) * radius * 0.85);
+    scene.add(post);
+  }
+
+  const lanternPos = new THREE.Vector3(centerX - radius * 0.7, platformY, centerZ - radius * 0.7);
+  buildFishingLantern(scene, lanternPos);
+  const lampLight = new THREE.PointLight(0xffcc66, 0.6, 5);
+  lampLight.position.set(lanternPos.x, lanternPos.y + 0.3, lanternPos.z);
+  scene.add(lampLight);
 }

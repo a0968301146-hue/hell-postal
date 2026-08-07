@@ -58,18 +58,29 @@ export class DailyFlowSystem {
    * ONLY reliable way to know which day just completed — reading
    * `this.currentDay` from inside the callback would be off by one. */
   private onDayCompleted?: (finishedDay: number) => void;
-  private onAllVehiclesDeparted?: () => void;
+  /** Fires the MOMENT the day-complete settlement UI appears (spec follow-up
+   * "每日結算UI彈出時，立即清除地圖上的所有包裹/信封/失物招領物品") — BEFORE
+   * the player has even clicked "continue", let alone walked to press 結束
+   * 今天. Formerly named onAllVehiclesDeparted and unused (see this class's
+   * own git history: removed for lost-found-NPC-spawn purposes in an earlier
+   * round) — repurposed here for a genuinely different job (clearing
+   * logistics objects early), not the old one it was removed for. Fires for
+   * BOTH the real six-vehicle departure path (notifyDayComplete, called from
+   * VehicleControlSystem.showDayCompleteSummary) AND the test cheat's own
+   * forceSettleDayForTesting — same single call site either way, so there is
+   * no cheat-only branch to keep in sync. */
+  private onSettlementShown?: () => void;
   private buttonLabel!: THREE.Sprite;
 
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, cargoSystem: CargoSystem, hud: HUD,
-    resetTools: () => void, onDayCompleted?: (finishedDay: number) => void, onAllVehiclesDeparted?: () => void
+    resetTools: () => void, onDayCompleted?: (finishedDay: number) => void, onSettlementShown?: () => void
   ) {
     this.cargoSystem = cargoSystem;
     this.hud = hud;
     this.resetTools = resetTools;
     this.onDayCompleted = onDayCompleted;
-    this.onAllVehiclesDeparted = onAllVehiclesDeparted;
+    this.onSettlementShown = onSettlementShown;
     this.buildButton(scene, physics);
   }
 
@@ -192,16 +203,18 @@ export class DailyFlowSystem {
     this.state = 'departing';
   }
 
-  /** Called by VehicleControlSystem once BOTH routes have finished
-   * departing and their shipped cargo has been destroyed. Fires
-   * onAllVehiclesDeparted — the ONE "vehicle departure complete" event
-   * ("Expand modular lost found NPC flow" round 四: "使用載具離場完成事件啟
-   * 動NPC，不要在多處輪詢每日流程") external systems (LostFoundSystem) hook
-   * to know it's safe to bring in their own end-of-day content, rather than
-   * polling `state` every frame themselves. */
+  /** Called by VehicleControlSystem the moment the day-complete settlement
+   * UI is about to show (both the real six-vehicle departure path AND the
+   * test cheat's own forceSettleDayForTesting funnel through this one
+   * method — see showDayCompleteSummary). Fires onSettlementShown so
+   * external systems can react to "the day is settled, safe to react" the
+   * instant it happens, rather than polling `state` every frame themselves —
+   * currently used to clear the map's remaining logistics objects (spec
+   * follow-up 五) the moment the summary appears, well before the player
+   * even clicks "continue". */
   notifyDayComplete(): void {
     this.state = 'dayComplete';
-    this.onAllVehiclesDeparted?.();
+    this.onSettlementShown?.();
   }
 
   pressEndDayButton(): void {

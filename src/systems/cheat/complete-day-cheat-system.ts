@@ -193,12 +193,18 @@ export class CompleteDayCheatSystem {
    * 今日貨物／NPC時：請先開始今日工作" — the cheat must never quietly spawn
    * it itself). Mirrors DailyFlowSystem's own state machine: 'ready' means
    * 開始卸貨 hasn't been pressed yet; 'departing'/'dayComplete'/'resetting'
-   * mean a real departure (or this same cheat) already resolved the day. */
+   * mean a real departure (or this same cheat) already resolved the day.
+   * Reads DailyFlowSystem's own `hasUnloadedToday` flag (set the instant
+   * 開始卸貨 fires, regardless of category) rather than
+   * `lostFoundSystem.hasTodaysQueue` — Day8's own finale day (spec follow-
+   * up: "除了巨大蛋糕之外，不要生成...失物招領物品") never populates a
+   * lost-found queue at all, which would otherwise have made this always
+   * return false and permanently disable the cheat button on that one day. */
   private canStartCheat(): boolean {
     const state = this.dailyFlowSystem.state;
     if (state === 'ready') return false;
     if (state === 'departing' || state === 'dayComplete' || state === 'resetting') return false;
-    return this.lostFoundSystem.hasTodaysQueue;
+    return this.dailyFlowSystem.hasUnloadedToday;
   }
 
   /** The cheat button's own E-action (spec二/三/四/五/六 in full). */
