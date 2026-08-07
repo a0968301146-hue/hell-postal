@@ -805,6 +805,11 @@ export class AfterWorkStorySystem {
           this.showCreditsOverlay();
           this.fadePhase = null;
           this.state = 'finaleCredits';
+          // Bug fix ("Day 2 之後測試按鈕不會生成每日特殊劇情NPC") — see the
+          // reset below for the full explanation; harmless here too (no
+          // AFTER_WORK_STORIES entry exists past day 8 for a future
+          // trigger() to wrongly fire against).
+          this.hasTriggeredThisSession = false;
           return;
         }
 
@@ -827,6 +832,22 @@ export class AfterWorkStorySystem {
       if (this.fadeElapsed >= FADE_SECONDS) {
         this.fadePhase = null;
         this.state = 'completed';
+        // Bug fix ("Day 2 之後測試按鈕不會生成每日特殊劇情NPC"): this field
+        // was a correct one-shot-per-session latch back when only day 1 ever
+        // had a story (its own doc comment above still describes that
+        // original intent) — generalizing to 8 days turned it into a bug,
+        // since it was never cleared once set, so trigger() unconditionally
+        // no-op'd for every day after the first one that ever played this
+        // session (its very first guard: `if (hasTriggeredThisSession)
+        // return`) even though DailyFlowSystem.currentDay kept advancing
+        // completely independently — exactly matching the reported symptom
+        // ("日期會增加，NPC不會出現"). Its real job was only ever to stop a
+        // SECOND trigger() call for the SAME day while one is still actively
+        // running (state isn't 'inactive'/'completed' — already guarded by
+        // the very next check below), not to block every later day forever
+        // — so it resets here, the moment a story genuinely finishes,
+        // re-arming trigger() for whichever day comes next.
+        this.hasTriggeredThisSession = false;
       }
     }
   }
