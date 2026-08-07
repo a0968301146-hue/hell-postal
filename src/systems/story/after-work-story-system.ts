@@ -330,6 +330,30 @@ export class AfterWorkStorySystem {
     this.storage.removeItem(STORAGE_KEY);
   }
 
+  /** True while any story is actively playing (i.e. NOT safe to force a
+   * different day's trigger() right now) — 'inactive'/'completed'/
+   * 'finaleCredits' are the only states where nothing is in flight. */
+  get isActive(): boolean {
+    return this.state !== 'inactive' && this.state !== 'completed' && this.state !== 'finaleCredits';
+  }
+
+  /** TEMPORARY TEST HOOK — used only by the new "跳至第八天" button
+   * (complete-day-cheat-system.ts, spec follow-up). Bug root cause this
+   * fixes: trigger(8) silently no-ops if day 8 was EVER already completed
+   * on this browser (hasCompletedDay's own persisted flag, correctly
+   * durable for real players) — so re-testing day 8 a second time without
+   * this reset left the story's own interactive cake prop never spawning at
+   * all, while the REAL cargo cake (an entirely separate object, spawned by
+   * the completely unrelated daily-cargo pipeline) still generated normally
+   * — the player would see what looks like the same giant wrapped cake, but
+   * with zero F-interaction wired, since only the story's own prop carries
+   * that. Real players never call this — resetStoryProgress() below is
+   * their own equivalent (a full "新周目" reset, not day-specific). */
+  resetForDayJumpTesting(): void {
+    this.hasTriggeredThisSession = false;
+    this.resetStoryProgress();
+  }
+
   // --- Trigger (spec一) ---
 
   /** Called from DailyFlowSystem's onDayCompleted callback when

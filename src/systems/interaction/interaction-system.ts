@@ -417,6 +417,7 @@ export class InteractionSystem {
         this.currentTarget.id !== MAIL_RACK_INTERACTABLE_ID &&
         this.currentTarget.id !== VEHICLE_CALL_BUTTON_ID && this.currentTarget.id !== VEHICLE_DEPART_BUTTON_ID &&
         !this.completeDayCheatSystem.isCheatButtonTarget(this.currentTarget.id) &&
+        !this.completeDayCheatSystem.isJumpButtonTarget(this.currentTarget.id) &&
         !this.isLostFoundNpcTarget(this.currentTarget) &&
         !(this.mailBagSystem.isBag(this.currentTarget.id) && isHoldingEnvelope) &&
         this.pickupSystem.canAddToHeld(this.currentTarget)
@@ -680,6 +681,17 @@ export class InteractionSystem {
     if (this.currentTarget && this.completeDayCheatSystem.isCheatButtonTarget(this.currentTarget.id)) {
       if (this.completeDayCheatSystem.canPressCheatButton(this.camera.position)) {
         this.completeDayCheatSystem.pressCheatButton();
+      }
+      this.clearHighlight(this.currentTarget);
+      this.currentTarget = null;
+      return;
+    }
+
+    // Priority 0.86: "跳至第八天" test button — same shape as the cheat
+    // button just above (spec follow-up三: placed right next to it).
+    if (this.currentTarget && this.completeDayCheatSystem.isJumpButtonTarget(this.currentTarget.id)) {
+      if (this.completeDayCheatSystem.canPressJumpButton(this.camera.position)) {
+        this.completeDayCheatSystem.pressJumpToDay8Button();
       }
       this.clearHighlight(this.currentTarget);
       this.currentTarget = null;
@@ -974,6 +986,7 @@ export class InteractionSystem {
         !this.envelopeDispatchMachineSystem.isPackButtonTarget(hit.id) &&
         hit.id !== VEHICLE_CALL_BUTTON_ID && hit.id !== VEHICLE_DEPART_BUTTON_ID && !this.isLostFoundNpcTarget(hit) &&
         !this.completeDayCheatSystem.isCheatButtonTarget(hit.id) &&
+        !this.completeDayCheatSystem.isJumpButtonTarget(hit.id) &&
         this.pickupSystem.canAddToHeld(hit)
       ) {
         if (this.currentTarget !== hit) {
@@ -1204,6 +1217,10 @@ export class InteractionSystem {
           // is centrally owned by CompleteDayCheatSystem.getPromptText() so
           // this branch and the actual E-action (onKeyDown) never disagree.
           this.hud.showInteractionPrompt(newTarget.displayName, this.completeDayCheatSystem.getPromptText());
+        } else if (this.completeDayCheatSystem.isJumpButtonTarget(newTarget.id)) {
+          // TEMPORARY TEST CHEAT — mirrors the branch just above, for the
+          // new "跳至第八天" button (spec follow-up).
+          this.hud.showInteractionPrompt(newTarget.displayName, this.completeDayCheatSystem.getJumpPromptText());
         } else if (newTarget && this.isLostFoundNpcTarget(newTarget)) {
           // "Fix NPC direct interaction and pallet stack handling" round二:
           // crosshair directly on the NPC's own hitbox, empty-handed. Not-

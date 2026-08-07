@@ -611,7 +611,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     scene, interactables, playerData, hud,
     pickupSystem, palletSystem, ladderSystem, envelopeStackSystem, cargoSystem, dailyFlowSystem,
     mailSystem, mailBagSystem, packedMailBagSystem, envelopeDispatchMachineSystem, lostFoundSystem,
-    vehicleControlSystem
+    vehicleControlSystem, afterWorkStorySystem, unloadingSystem
   );
 
   // Interaction system
