@@ -348,8 +348,30 @@ export class AfterWorkStorySystem {
    * — the player would see what looks like the same giant wrapped cake, but
    * with zero F-interaction wired, since only the story's own prop carries
    * that. Real players never call this — resetStoryProgress() below is
-   * their own equivalent (a full "新周目" reset, not day-specific). */
+   * their own equivalent (a full "新周目" reset, not day-specific).
+   *
+   * Second bug found in the same round ("Day8巨型蛋糕仍無法互動" follow-up):
+   * `state` itself is a SEPARATE guard trigger() also checks
+   * (`this.state !== 'inactive' && this.state !== 'completed'`), and once a
+   * playthrough reaches Day8's own credits ending, `state` is left at
+   * 'finaleCredits' FOREVER — that branch of updateEndTransition never
+   * resets it back (by design: a real playthrough's next step is always
+   * `resetForNewRun()`'s own `window.location.reload()`, which wipes this
+   * whole object and every leftover Three.js mesh/DOM overlay along with
+   * it). This test button never reloads the page, so without an explicit
+   * reset here `state` would still read 'finaleCredits' on every SUBSEQUENT
+   * press — silently failing trigger()'s own state guard exactly like the
+   * persisted-flag bug above, leaving only the ordinary dock cargo cake
+   * (never F-interactable) visible again. Tearing down the credits/fade
+   * overlays and restoring player input here mirrors exactly what a fresh
+   * page load would have produced for this system, without needing one. */
   resetForDayJumpTesting(): void {
+    if (this.state === 'finaleCredits') {
+      this.creditsEl.style.opacity = '0';
+      this.fadeEl.style.opacity = '0';
+      this.playerController.setInputEnabled(true);
+    }
+    this.state = 'inactive';
     this.hasTriggeredThisSession = false;
     this.resetStoryProgress();
   }
