@@ -217,20 +217,23 @@ export class FreezerSystem {
     }
   }
 
-  /** "冷凍貨物系統修改" round四, redone in round五: crosshair-aim 冷藏值
-   * readout, merged directly into the existing interaction prompt's own
-   * text (spec: "直接顯示在準心互動UI即可，不用另外開視窗") rather than a
-   * second DOM element — see HUD.updateAimedColdValue/showInteractionPrompt.
-   * Shown only while genuinely aiming at frozen cargo, gone the instant the
-   * crosshair moves off it. Takes `inspectedCargo` as a PARAMETER
-   * (game-app.ts's own already-computed `CargoInspectionSystem.currentCargo`
-   * for this exact frame) rather than running a second independent raycast
-   * of its own — same "reuse the one crosshair raycast" convention
-   * CargoHookSystem already follows (see game-app.ts's own doc comment on
-   * that call site). Called UNCONDITIONALLY alongside refreshHeldItemHud
+  /** "冷凍貨物系統修改" round四, redone in "準心貨物數值提示" round:
+   * crosshair-aim 冷藏值 readout, merged directly into the existing
+   * interaction prompt's own text (spec: "直接顯示在準心互動UI即可，不用
+   * 另外開視窗") rather than a second DOM element — see
+   * HUD.updateAimedColdValue/showInteractionPrompt. Shown ONLY while the
+   * player is genuinely empty-handed (spec規則1: "只有玩家空手時顯示" — a
+   * new restriction this round; previously showed regardless of hold
+   * state) AND aiming at frozen cargo, gone the instant either condition
+   * stops holding. Takes `inspectedCargo` as a PARAMETER (game-app.ts's own
+   * already-computed `CargoInspectionSystem.currentCargo` for this exact
+   * frame) rather than running a second independent raycast of its own —
+   * same "reuse the one crosshair raycast" convention CargoHookSystem
+   * already follows. Called UNCONDITIONALLY alongside refreshHeldItemHud
    * above, for the same "a pause must take effect the same frame" reason. */
   refreshAimedColdValueHud(inspectedCargo: CargoData | null): void {
-    if (inspectedCargo && inspectedCargo.category === 'frozen') {
+    const emptyHanded = this.playerData.heldObjectId === null;
+    if (emptyHanded && inspectedCargo && inspectedCargo.category === 'frozen') {
       this.hud.updateAimedColdValue(inspectedCargo.coldValue);
     } else {
       this.hud.updateAimedColdValue(null);

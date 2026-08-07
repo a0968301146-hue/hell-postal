@@ -9,6 +9,8 @@ import { CargoSystem, CargoData } from '../cargo';
 import { DailyFlowSystem } from '../daily-flow';
 import { PickupSystem } from '../interaction';
 import { ToolSystem } from '../tool';
+import { EnvelopeStackSystem } from '../mail/envelope-stack-system';
+import { LOST_ITEM_ID_PREFIX } from '../lost-found/lost-found-system';
 import {
   CARGO_HOOK_MAX_RANGE, CARGO_HOOK_FLIGHT_SPEED, CARGO_HOOK_MAX_ACTIVE_DURATION,
   CARGO_HOOK_CATCH_DISTANCE, CARGO_HOOK_COOLDOWN, CARGO_HOOK_PULL_SPEED, CargoHookPullClass,
@@ -76,6 +78,13 @@ export class CargoHookSystem {
   private pickupSystem: PickupSystem;
   private toolSystem: ToolSystem;
   private isLocked: () => boolean;
+  /** "貨物勾勾修改" round — envelope pickup never routes through the
+   * generic PickupSystem.pickUp() (see class doc comment on attemptCatch),
+   * so hooking a loose envelope needs the SAME real API E-key pickup
+   * already uses. Also doubles as the "is this id an envelope" signal
+   * (canPickUpTarget returns false for any non-envelope id — see
+   * envelope-stack-system.ts's own eligibleGroundState). */
+  private envelopeStackSystem: EnvelopeStackSystem;
 
   private state: HookState = 'idle';
   private raycaster = new THREE.Raycaster();
@@ -119,7 +128,8 @@ export class CargoHookSystem {
     dailyFlowSystem: DailyFlowSystem,
     pickupSystem: PickupSystem,
     toolSystem: ToolSystem,
-    isLockedFn: () => boolean
+    isLockedFn: () => boolean,
+    envelopeStackSystem: EnvelopeStackSystem
   ) {
     this.camera = camera;
     this.scene = scene;
@@ -133,6 +143,7 @@ export class CargoHookSystem {
     this.pickupSystem = pickupSystem;
     this.toolSystem = toolSystem;
     this.isLocked = isLockedFn;
+    this.envelopeStackSystem = envelopeStackSystem;
     this.lastKnownDay = dailyFlowSystem.currentDay;
 
     this.toolProp = this.buildToolProp();
@@ -202,22 +213,53 @@ export class CargoHookSystem {
     );
   }
 
-  private determinePullClass(cargoData: CargoData): CargoHookPullClass {
-    if (cargoData.category === 'live') return 'live';
-    return cargoData.sizeClass ?? 'medium';
+  private determinePullClassById(id: string): CargoHookPullClass {
+    const cargoData = this.cargoSystem.getCargoData(id);
+    if (cargoData) return cargoData.category === 'live' ? 'live' : (cargoData.sizeClass ?? 'medium');
+    return 'small';
   }
 
   /** Single validity check reused by the fire-time target resolution, the
    * per-frame re-validation during flight, and the caller-supplied
    * crosshair CargoData (spec四, prior round: "只允許勾取具有Cargo資料與可
-   * 活動RigidBody的貨物", judged purely off cargoDataMap membership +
-   * rigidBody state — never mesh/model name). Also excludes pinned/
-   * departing cargo for free: VehicleControlSystem.pinCargoPhysics disables
-   * the SAME rigidBody flag this reads. */
-  private isValidHookTarget(cargoData: CargoData | null | undefined): boolean {
-    if (!cargoData) return false;
-    const obj = this.interactables.get(cargoData.id);
+   * 活動RigidBody的貨物", judged purely off rigidBody state — never
+   * mesh/model name). Also excludes pinned/departing cargo for free:
+   * VehicleControlSystem.pinCargoPhysics disables the SAME rigidBody flag
+   * this reads. "貨物勾勾修改" round: now id-based rather than requiring a
+   * CargoData, so the SAME generic check covers lost-found items and
+   * envelopes too — category-specific eligibility (e.g. an envelope's own
+   * stack-capacity/processing-state rules) is layered on TOP of this by
+   * resolveNonCargoHookId below, never loosened here. */
+  private isValidHookTarget(id: string | null | undefined): boolean {
+    if (!id) return false;
+    const obj = this.interactables.get(id);
     return !!obj && !!obj.rigidBody && obj.rigidBody.isEnabled() && !obj.isHeld && obj.canPickUp;
+  }
+
+  /** "貨物勾勾修改" round — widens targeting beyond real Cargo (spec: "貨物
+   * 勾勾...也可以勾失物招領物品／信件／信件整疊") via the generic
+   * `mesh.userData.interactableId` tag EVERY InteractableObject now carries
+   * (shared/types/interactable.ts), walked the same way
+   * CargoSystem.resolveCargoFromObject walks its own cargoId-only tag — but
+   * only lost-found items (any id with the LOST_ITEM_ID_PREFIX) and
+   * envelopes (envelopeStackSystem.canPickUpTarget — the SAME real
+   * eligibility gate the E-key pickup path already uses, so hook
+   * eligibility can never diverge from normal pickup eligibility) are ever
+   * accepted; anything else found this way (pallets, mail-bag crates,
+   * vehicles, the ladder/tool cart, ...) is deliberately rejected so this
+   * widening can never make those hookable too. */
+  private resolveNonCargoHookId(hitObject: THREE.Object3D): string | null {
+    let current: THREE.Object3D | null = hitObject;
+    while (current) {
+      const id = current.userData.interactableId as string | undefined;
+      if (id) {
+        const isLostItem = id.startsWith(LOST_ITEM_ID_PREFIX);
+        const isEnvelope = this.envelopeStackSystem.canPickUpTarget(id);
+        return (isLostItem || isEnvelope) && this.isValidHookTarget(id) ? id : null;
+      }
+      current = current.parent;
+    }
+    return null;
   }
 
   /** Sweeps the cargo's OWN collider half-extents (InteractableObject's
@@ -304,7 +346,13 @@ export class CargoHookSystem {
     if (hits.length > 0) {
       this.travelDistance = Math.min(hits[0].distance, CARGO_HOOK_MAX_RANGE);
       const cargoData = this.cargoSystem.resolveCargoFromObject(hits[0].object);
-      if (this.isValidHookTarget(cargoData)) this.targetId = cargoData!.id;
+      if (cargoData && this.isValidHookTarget(cargoData.id)) {
+        this.targetId = cargoData.id;
+      } else {
+        // "貨物勾勾修改" round — only tried once real cargo resolution
+        // already failed, so this can never override a genuine cargo hit.
+        this.targetId = this.resolveNonCargoHookId(hits[0].object);
+      }
     }
 
     this.currentDistance = 0;
@@ -322,9 +370,8 @@ export class CargoHookSystem {
     if (this.currentDistance < this.travelDistance) return;
 
     if (this.targetId) {
-      const cargoData = this.cargoSystem.getCargoData(this.targetId);
-      if (this.isValidHookTarget(cargoData)) {
-        this.pullClass = this.determinePullClass(cargoData!);
+      if (this.isValidHookTarget(this.targetId)) {
+        this.pullClass = this.determinePullClassById(this.targetId);
         this.beginAttach();
         return;
       }
@@ -348,8 +395,7 @@ export class CargoHookSystem {
 
   private updateAttached(deltaTime: number): void {
     const obj = this.targetId ? this.interactables.get(this.targetId) : null;
-    const cargoData = this.targetId ? this.cargoSystem.getCargoData(this.targetId) : null;
-    if (!obj || !obj.rigidBody || !this.isValidHookTarget(cargoData)) { this.finishSequence(); return; }
+    if (!obj || !obj.rigidBody || !this.isValidHookTarget(this.targetId)) { this.finishSequence(); return; }
 
     const body = obj.rigidBody;
     const t = body.translation();
@@ -446,8 +492,24 @@ export class CargoHookSystem {
    * failure the cargo is simply released, never deleted — pickUp() never
    * touched its rigidBody in that case, so it keeps whatever velocity this
    * frame's arc math last gave it and gravity/damping take over exactly as
-   * if the hook had just let go mid-air. */
+   * if the hook had just let go mid-air.
+   *
+   * "貨物勾勾修改" round — an ENVELOPE never goes through PickupSystem.
+   * pickUp() at all (see mail-system.ts/envelope-stack-system.ts — E-key
+   * pickup routes through EnvelopeStackSystem.pickUpTarget() instead, which
+   * correctly ADDS to an already-carried stack rather than conflicting with
+   * it), so a caught envelope is handed off through that SAME real API,
+   * satisfying "勾起後的行為與一般貨物一致：可以收回/放下/丟出" by reusing
+   * the mechanism that already provides exactly that for envelopes. Lost-
+   * found items have no such special path — they already go through
+   * pickUp() for normal E-key pickup — so they fall through to the
+   * unchanged cargo branch below. */
   private attemptCatch(obj: InteractableObject): void {
+    if (this.envelopeStackSystem.canPickUpTarget(obj.id)) {
+      this.envelopeStackSystem.pickUpTarget(obj.id);
+      this.finishSequence();
+      return;
+    }
     // bypassToolGate=true: PickupSystem.canAddToHeld() would otherwise
     // reject this hand-off since activeTool is still 'cargoHook' at this
     // exact moment (the tool deliberately stays selected through a catch —
@@ -560,7 +622,7 @@ export class CargoHookSystem {
       this.hud.showToolPrompt(
         this.cooldownTimer > 0 ? `冷卻中 ${this.cooldownTimer.toFixed(1)}s` : '右鍵 發射捕貨鉤'
       );
-      this.hud.setCargoHookReady(this.cooldownTimer <= 0 && this.state === 'idle' && this.isValidHookTarget(inspectedCargo));
+      this.hud.setCargoHookReady(this.cooldownTimer <= 0 && this.state === 'idle' && this.isValidHookTarget(inspectedCargo?.id));
     } else {
       this.hud.setCargoHookReady(false);
       // "Rebuild pallet storage and reset upgrade progression" round二: this

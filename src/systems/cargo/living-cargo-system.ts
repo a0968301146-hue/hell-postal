@@ -235,14 +235,18 @@ export class LivingCargoSystem {
   /** "準心貨物數值提示" round — crosshair-aim 安撫值 readout, merged directly
    * into the existing interaction prompt's own text (same mechanism as
    * FreezerSystem.refreshAimedColdValueHud — see HUD.updateAimedCalmValue/
-   * showInteractionPrompt), never a second DOM element/window. Shown only
-   * while genuinely aiming at live cargo (spec: "只有當準心真正對準該貨物
-   * 時才顯示...離開準心立即隱藏"), updated fresh every frame from the SAME
-   * already-computed `inspectedCargo` game-app.ts passes in (spec: "數值必
-   * 須即時更新，不可只在重新瞄準時刷新" — reading live data every frame,
-   * never a cached/stale snapshot, satisfies this by construction). */
+   * showInteractionPrompt), never a second DOM element/window. Shown ONLY
+   * while the player is genuinely empty-handed (spec規則1: "只有玩家空手時
+   * 顯示" — a new restriction; previously showed regardless of hold state,
+   * including an "F 安撫" hint even while not holding — that hint is gone
+   * now that this whole feature is empty-handed-only) AND aiming at live
+   * cargo, updated fresh every frame from the SAME already-computed
+   * `inspectedCargo` game-app.ts passes in (spec: "數值必須即時更新，不可
+   * 只在重新瞄準時刷新" — reading live data every frame, never a
+   * cached/stale snapshot, satisfies this by construction). */
   refreshAimedCalmValueHud(inspectedCargo: CargoData | null): void {
-    if (inspectedCargo && inspectedCargo.category === 'live') {
+    const emptyHanded = this.playerData.heldObjectId === null;
+    if (emptyHanded && inspectedCargo && inspectedCargo.category === 'live') {
       this.hud.updateAimedCalmValue(inspectedCargo.calmValue);
     } else {
       this.hud.updateAimedCalmValue(null);

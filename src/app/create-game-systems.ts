@@ -541,9 +541,12 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // tool-system.ts's own doc comment on why no callback wiring is needed in
   // either direction (CargoHookSystem watches playerData.activeTool itself).
   const toolSystem = new ToolSystem(playerData, hud, pauseManager, () => playerController.isLocked, pickupSystem);
+  // "貨物勾勾修改" round — widened to also hook lost-found items/envelopes,
+  // needs envelopeStackSystem for the real E-key-equivalent pickup path.
   const cargoHookSystem = new CargoHookSystem(
     camera, scene, pickupSystem.viewModelScene, physics, interactables, cargoSystem,
-    playerData, hud, pauseManager, dailyFlowSystem, pickupSystem, toolSystem, () => playerController.isLocked
+    playerData, hud, pauseManager, dailyFlowSystem, pickupSystem, toolSystem, () => playerController.isLocked,
+    envelopeStackSystem
   );
 
   // Tool cart's own swap UI ("Add ladder tool station and envelope vacuum"

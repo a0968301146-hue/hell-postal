@@ -336,7 +336,10 @@ export class HUD {
    * "冷藏值：XX%" line is now just a stored suffix showInteractionPrompt
    * below appends to its own text, never a second DOM element/window
    * (caller passes null when not aiming at frozen cargo — see
-   * FreezerSystem.refreshAimedColdValueHud). */
+   * FreezerSystem.refreshAimedColdValueHud). "準心貨物數值提示" round:
+   * value now inserted BEFORE the action (spec: "冷凍貨物／冷藏值：68%／E
+   * 拿起"), not after — see showInteractionPrompt below. Caller already
+   * gates this to empty-handed + genuinely aiming at frozen cargo. */
   updateAimedColdValue(coldValue: number | null): void {
     if (coldValue === null) {
       this.aimedColdValueSuffix = '';
@@ -346,31 +349,31 @@ export class HUD {
     this.aimedColdValueSuffix = `\n冷藏值：${pct}%`;
   }
 
-  /** "準心貨物數值提示" round — the crosshair-aim "F 安撫\n安撫值：XX%"
-   * lines for live cargo, same suffix mechanism as updateAimedColdValue
-   * above (caller passes null when not aiming at live cargo — see
-   * LivingCargoSystem.refreshAimedCalmValueHud). The "F 安撫" hint line is
-   * shown unconditionally whenever aiming at live cargo, regardless of
-   * whether it's currently held (spec: "若玩家沒有拿起活物，則仍顯示F安撫
-   * 提示即可" — soothing itself still only works while actually held, this
-   * is purely a discoverability hint). */
+  /** "準心貨物數值提示" round — the crosshair-aim "安撫值：XX%" line for live
+   * cargo, same suffix mechanism/ordering as updateAimedColdValue above
+   * (the earlier "F 安撫" hint line is dropped — the new spec's own worked
+   * examples show only the value line, and this whole feature is now
+   * scoped to empty-handed anyway, so a soothe hint made little sense
+   * here). Caller (LivingCargoSystem.refreshAimedCalmValueHud) already
+   * gates this to empty-handed + genuinely aiming at live cargo. */
   updateAimedCalmValue(calmValue: number | null): void {
     if (calmValue === null) {
       this.aimedCalmValueSuffix = '';
       return;
     }
     const pct = Math.max(0, Math.min(100, Math.round(calmValue)));
-    this.aimedCalmValueSuffix = `\nF 安撫\n安撫值：${pct}%`;
+    this.aimedCalmValueSuffix = `\n安撫值：${pct}%`;
   }
 
-  /** Appends the current crosshair-aim 冷藏值/安撫值 suffixes (each empty
-   * unless genuinely aiming at that category of cargo) directly onto the
-   * SAME prompt text — never a second DOM element/window. Cold before calm
-   * (spec: "若同時具有兩種屬性...依此順序排列") — only one is ever non-empty
-   * today since CargoCategory is exclusive, but the concatenation order
-   * itself already encodes the required priority for whenever that changes. */
+  /** Inserts the current crosshair-aim 冷藏值/安撫值 suffixes (each empty
+   * unless genuinely aiming at that category of cargo while empty-handed)
+   * BETWEEN the name and the action — never a second DOM element/window.
+   * Cold before calm (spec: "若同時具有兩種屬性...依此順序排列") — only one
+   * is ever non-empty today since CargoCategory is exclusive, but the
+   * concatenation order itself already encodes the required priority for
+   * whenever that changes. */
   showInteractionPrompt(name: string, action: string): void {
-    this.promptEl.textContent = `${name}\n${action}${this.aimedColdValueSuffix}${this.aimedCalmValueSuffix}`;
+    this.promptEl.textContent = `${name}${this.aimedColdValueSuffix}${this.aimedCalmValueSuffix}\n${action}`;
     this.promptEl.style.whiteSpace = 'pre-line';
     this.promptEl.classList.add('visible');
   }

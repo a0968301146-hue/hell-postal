@@ -45,6 +45,15 @@ export function createInteractableObject(
   height: number,
   depth: number
 ): InteractableObject {
+  // "貨物勾勾修改" round — a generic reverse-lookup tag, mirroring
+  // CargoSystem's own `mesh.userData.cargoId` convention but for EVERY
+  // interactable (cargo, envelopes, lost-found items, pallets, mail bags,
+  // ...), not just cargo. Lets a raycast hit anywhere in this mesh's own
+  // subtree resolve back to `id` via a simple parent walk, without needing
+  // a per-category resolver (CargoSystem.resolveCargoFromObject only ever
+  // finds cargo). Purely additive — nothing currently reads this field, so
+  // it changes no existing behavior; CargoHookSystem is the first reader.
+  mesh.userData.interactableId = id;
   return {
     id,
     displayName,
