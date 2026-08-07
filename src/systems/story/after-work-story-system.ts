@@ -12,9 +12,11 @@ import { LocalStorageAdapter } from '../../adapters/local-storage/local-storage-
 import { LOST_FOUND_ROOM } from '../../data/world/lost-found-layout-data';
 import { MAIN_ROOM_CENTER_SPAWN } from '../world-layout/logistics-layout-data';
 import { CAMPFIRE_BENCH_NORTH, CAMPFIRE_BENCH_EAST, CAMPFIRE_BENCH_WEST, CAMPFIRE_BENCH_SOUTH, CAMPFIRE_LOOK_TARGET, CAMPFIRE_CENTER } from '../../data/world/campfire-area-data';
-import { AFTER_WORK_STORIES, AfterWorkStoryDay, FinaleNpcStation, FINALE_ENDING_SEAT, FINALE_CAKE_POS } from './after-work-story-data';
+import { AFTER_WORK_STORIES, AfterWorkStoryDay, FinaleNpcStation, FinaleIdleKind, FINALE_ENDING_SEAT, FINALE_CAKE_POS } from './after-work-story-data';
 import { createStoryBubble, showStoryBubbleText, hideStoryBubble, disposeStoryBubble, wrapStoryLine } from './after-work-story-bubble-ui';
 import { createLetterReadingUi, showLetterReadingUi, hideLetterReadingUi, LetterReadingUiHandle } from './letter-reading-ui';
+import { createFinaleConfirmUi, showFinaleConfirmUi, hideFinaleConfirmUi, FinaleConfirmUiHandle } from './finale-confirm-ui';
+import { FinaleParticleBurst, playUnwrapSfx, playCheerSfx, startPartyBgm, stopPartyBgm } from './finale-effects';
 
 type StoryState =
   | 'inactive' | 'npcWalking' | 'waitingForPlayer' | 'transitioning' | 'dialogue' | 'endTransition' | 'completed'
@@ -42,7 +44,17 @@ type StoryState =
   // input decides the outcome once started, matching every other short
   // "cutscene beat" in this file (spec: "沒有倒數，沒有失敗" — this one in
   // particular can't fail or hang, it's a fixed-duration timer).
-  | 'finaleUnwrapping';
+  | 'finaleUnwrapping'
+  // Polish-round follow-up — the campfire E-press now opens a binary
+  // confirm ("今天就到這裡吧？【坐下休息】【再逛一下】") instead of jumping
+  // straight into the ending. 'R' backs out to 'finaleParty' unchanged;
+  // only 'E' here actually starts beginFinaleEnding.
+  | 'finaleEndingConfirm'
+  // Polish-round follow-up — the slow "camera pulls back, NPCs keep
+  // partying, music keeps playing" beat between the "歡迎回家。" line and
+  // the credits (spec follow-up五: "避免突然切到Credits"). Purely a timed
+  // camera lerp; nothing the player does here changes the outcome.
+  | 'finaleEndingHold';
 
 /** What should happen once the currently-showing `lines` array runs out
  * (last line consumed via advanceLine, or ESC-hold-skip) — added this round
@@ -99,6 +111,25 @@ const UNWRAP_DURATION = 1.0;
 /** How long the opened cake + "生日快樂！" bubble lingers on screen after
  * UNWRAP_DURATION before control is handed back for the party phase. */
 const REVEAL_LINGER = 1.2;
+/** How long the cake's own "pop" bounce-settle takes once opened — a plain
+ * overshoot-then-settle scale curve, computed from elapsed time since
+ * onCakeOpened() fired (no separate timer field needed). */
+const CAKE_BOUNCE_DURATION = 0.4;
+
+/** Polish-round follow-up — the "歡迎回家。" line auto-advances after this
+ * long once fully revealed, instead of requiring an E press (spec follow-up
+ * 五: the ending should read as one continuous, hands-off beat, not another
+ * "press E to continue" prompt). R-hold-skip still works throughout for
+ * anyone who wants to skip ahead. */
+const ENDING_LINE_AUTO_ADVANCE_HOLD = 2.0;
+/** How long the slow camera pull-back away from the campfire takes before
+ * credits begin (spec follow-up五: "鏡頭慢慢拉遠...慢慢淡出"). */
+const ENDING_PULLBACK_DURATION = 4.0;
+/** How far back (and up) the camera drifts during that pull-back, in
+ * meters — small enough to stay inside the campfire clearing, framing the
+ * whole gathering rather than a single closeup. */
+const ENDING_PULLBACK_DISTANCE = 3.5;
+const ENDING_PULLBACK_RISE = 1.2;
 
 /** Black-fade duration each way (spec二: "約0.3～0.5秒黑畫面淡入淡出"). */
 const FADE_SECONDS = 0.4;
@@ -210,11 +241,30 @@ export class AfterWorkStorySystem {
   private cakeGroup: THREE.Group | null = null;
   private cakeMesh: THREE.Mesh | null = null;
   private cakeRibbon: THREE.Mesh | null = null;
+  private cakeFlaps: THREE.Mesh[] = [];
   private unwrapElapsed = 0;
   private cakeOpenedFired = false;
-  private finaleStations: { group: THREE.Group; hitbox: THREE.Mesh; bubble: THREE.Sprite; npcName: string; lines: string[] }[] = [];
+  private cakeOpenedAt = 0;
+  private finaleStations: {
+    group: THREE.Group; hitbox: THREE.Mesh; bubble: THREE.Sprite; npcName: string;
+    lines: string[]; repeatLine: string; hasTalked: boolean; idleKind: FinaleIdleKind | undefined;
+    baseYaw: number; idlePhase: number; prop: THREE.Mesh | null;
+  }[] = [];
   private activeFinaleStationIndex = -1;
   private pendingCredits = false;
+  private finaleParticles: FinaleParticleBurst | null = null;
+  /** Running clock used purely to phase-offset idle sine waves (spec follow-
+   * up二) — resets implicitly whenever the party phase (re)starts since it's
+   * only ever read there; never persisted or synced to anything else. */
+  private idleClock = 0;
+
+  private confirmUi: FinaleConfirmUiHandle;
+  private endingLineHoldElapsed = 0;
+  private endingPullbackElapsed = 0;
+  private endingCameraStart = new THREE.Vector3();
+  private endingCameraEnd = new THREE.Vector3();
+  private endingFireBoostLight: THREE.PointLight | null = null;
+  private endingClusterBodies: THREE.Mesh[] = [];
 
   private fadePhase: 'out' | 'in' | null = null;
   private fadeElapsed = 0;
@@ -251,6 +301,7 @@ export class AfterWorkStorySystem {
     document.body.appendChild(this.creditsEl);
 
     this.letterUi = createLetterReadingUi();
+    this.confirmUi = createFinaleConfirmUi();
 
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
     document.addEventListener('keyup', (e) => this.onKeyUp(e));
@@ -425,6 +476,22 @@ export class AfterWorkStorySystem {
     group.add(ribbon);
     this.cakeRibbon = ribbon;
 
+    // Four wrapping-paper "flaps" around the rim (spec follow-up一: "拆開包
+    // 裝時播放拆繩／拆紙動畫") — alongside the ribbon's own spin-and-shrink,
+    // these fold outward during the unwrap beat (updateFinaleUnwrapping) for
+    // a more literal "unwrapping paper" read than the ribbon alone gives.
+    this.cakeFlaps = [];
+    const flapMat = new THREE.MeshStandardMaterial({ color: 0xd88a5a, side: THREE.DoubleSide });
+    for (let i = 0; i < 4; i++) {
+      const angle = (i / 4) * Math.PI * 2;
+      const flap = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.6), flapMat);
+      flap.position.set(Math.cos(angle) * 0.55, 1.4, Math.sin(angle) * 0.55);
+      flap.rotation.y = -angle;
+      flap.rotation.x = -Math.PI / 2.2;
+      group.add(flap);
+      this.cakeFlaps.push(flap);
+    }
+
     group.position.set(FINALE_CAKE_POS.x, FINALE_CAKE_POS.y, FINALE_CAKE_POS.z);
     this.scene.add(group);
     this.npcGroup = group;
@@ -436,13 +503,26 @@ export class AfterWorkStorySystem {
   }
 
   /** Visual swap the instant the unwrap timer finishes (spec follow-up:
-   * "蛋糕箱打開"), called from updateFinaleUnwrapping below. */
+   * "蛋糕箱打開"), called from updateFinaleUnwrapping below — also fires the
+   * confetti/sparkle burst, unwrap+cheer SFX, and starts the party BGM
+   * (spec follow-up一/六: "簡單粒子...播放派對音效...背景音樂切換為派對版
+   * 本...短暫歡呼或鼓掌音效"). The box's own scale "pop" is computed
+   * continuously in updateFinaleUnwrapping from cakeOpenedAt, not set here —
+   * this method only fires the one-shot effects. */
   private onCakeOpened(): void {
     const revealLine = AFTER_WORK_STORIES[this.storyDay]?.finaleRevealLines?.[0] ?? '生日快樂！';
     if (this.npcBubble) showStoryBubbleText(this.npcBubble, revealLine);
+    playUnwrapSfx();
+    playCheerSfx();
+    startPartyBgm();
+    if (this.cakeGroup) {
+      if (!this.finaleParticles) this.finaleParticles = new FinaleParticleBurst(this.scene);
+      const burstOrigin = this.cakeGroup.position.clone().add(new THREE.Vector3(0, 1.2, 0));
+      this.finaleParticles.spawnConfetti(burstOrigin);
+      this.finaleParticles.spawnSparkleBursts(burstOrigin, 3);
+    }
     if (!this.cakeMesh) return;
     (this.cakeMesh.material as THREE.MeshStandardMaterial).color.set(0xffe0b0);
-    this.cakeMesh.scale.set(1, 0.55, 1);
     const icing = new THREE.Mesh(
       new THREE.SphereGeometry(1.35, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2),
       new THREE.MeshStandardMaterial({ color: 0xfff6e6 })
@@ -465,13 +545,33 @@ export class AfterWorkStorySystem {
       hitboxMesh.position.set(0, NPC_BODY_LOCAL_Y, 0);
       group.add(hitboxMesh);
 
+      const baseYaw = npc.facingYaw ?? 0;
+      group.rotation.y = baseYaw;
       group.position.set(npc.pos.x, 0, npc.pos.z);
       this.scene.add(group);
 
       const bubble = createStoryBubble(NPC_HEAD_Y + 0.35);
       group.add(bubble);
 
-      this.finaleStations.push({ group, hitbox: hitboxMesh, bubble, npcName: npc.npcName, lines: npc.lines });
+      // A small held prop for a couple of idle kinds (spec follow-up二:
+      // "拿著飲料...烤棉花糖") — purely decorative, parented to the body so
+      // it moves/disposes with everything else automatically.
+      let prop: THREE.Mesh | null = null;
+      if (npc.idleKind === 'drink') {
+        prop = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.09, 8), new THREE.MeshStandardMaterial({ color: 0xf5efe0 }));
+        prop.position.set(0.22, NPC_BODY_LOCAL_Y + 0.15, 0.18);
+        group.add(prop);
+      } else if (npc.idleKind === 'roast') {
+        prop = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.7, 6), new THREE.MeshStandardMaterial({ color: 0x8a6a45 }));
+        prop.position.set(0.2, NPC_BODY_LOCAL_Y, 0.3);
+        prop.rotation.x = Math.PI / 2.6;
+        group.add(prop);
+      }
+
+      this.finaleStations.push({
+        group, hitbox: hitboxMesh, bubble, npcName: npc.npcName, lines: npc.lines, repeatLine: npc.repeatLine,
+        hasTalked: false, idleKind: npc.idleKind, baseYaw, idlePhase: Math.random() * Math.PI * 2, prop,
+      });
     }
   }
 
@@ -488,6 +588,49 @@ export class AfterWorkStorySystem {
       });
     }
     this.finaleStations = [];
+  }
+
+  /** Per-frame procedural idle motion for every party-phase NPC (spec follow-
+   * up二: "每位NPC都有簡單待機動作...不需要新增AI，只要播放不同Idle動作即
+   * 可"). No skeletal animation exists anywhere in this codebase — every
+   * kind below is a small hand-scripted sine-driven position/rotation tweak
+   * around the station's own baseYaw, each with its own random phase offset
+   * so a room full of NPCs never bobs/sways in visible unison. */
+  private updateFinaleStationIdle(deltaTime: number, elapsedTotal: number): void {
+    for (const st of this.finaleStations) {
+      st.idlePhase += deltaTime;
+      const t = elapsedTotal + st.idlePhase;
+      const body = st.group.children.find((c) => c instanceof THREE.Mesh && c !== st.prop) as THREE.Mesh | undefined;
+      switch (st.idleKind) {
+        case 'sit':
+          if (body) body.position.y = NPC_BODY_LOCAL_Y - 0.12 + Math.sin(t * 1.2) * 0.01;
+          st.group.rotation.y = st.baseYaw + Math.sin(t * 0.5) * 0.08;
+          break;
+        case 'drink':
+          if (st.prop) st.prop.position.y = NPC_BODY_LOCAL_Y + 0.15 + Math.max(0, Math.sin(t * 0.8)) * 0.12;
+          st.group.rotation.y = st.baseYaw + Math.sin(t * 0.6) * 0.15;
+          break;
+        case 'lookAtSky':
+          st.group.rotation.x = -0.35 + Math.sin(t * 0.4) * 0.03;
+          st.group.rotation.y = st.baseYaw;
+          break;
+        case 'lean':
+          st.group.rotation.z = 0.18;
+          st.group.rotation.y = st.baseYaw + Math.sin(t * 0.3) * 0.05;
+          break;
+        case 'roast':
+          if (st.prop) st.prop.rotation.z = Math.sin(t * 1.5) * 0.2;
+          st.group.rotation.y = st.baseYaw + Math.sin(t * 0.4) * 0.06;
+          break;
+        case 'chat':
+        default:
+          st.group.rotation.y = st.baseYaw + Math.sin(t * 0.9) * 0.35;
+          break;
+      }
+      if (body && st.idleKind !== 'sit') {
+        body.position.y = NPC_BODY_LOCAL_Y + Math.sin(t * 1.1) * 0.015;
+      }
+    }
   }
 
   /** Reached once the intro fade-in finishes for day8 (updateTransition's
@@ -529,25 +672,46 @@ export class AfterWorkStorySystem {
     this.state = 'finaleUnwrapping';
     this.unwrapElapsed = 0;
     this.cakeOpenedFired = false;
+    this.cakeOpenedAt = 0;
   }
 
   private updateFinaleUnwrapping(deltaTime: number): void {
     this.unwrapElapsed += deltaTime;
-    // Ribbon spins and shrinks away while "unwrapping" — purely decorative.
+    // Ribbon spins and shrinks away, paper flaps fold outward, while
+    // "unwrapping" — purely decorative (spec follow-up一: "拆繩／拆紙動畫").
+    const t = Math.min(1, this.unwrapElapsed / UNWRAP_DURATION);
     if (this.cakeRibbon) {
-      const t = Math.min(1, this.unwrapElapsed / UNWRAP_DURATION);
       this.cakeRibbon.rotation.y += deltaTime * 8;
       this.cakeRibbon.scale.setScalar(Math.max(0.001, 1 - t));
     }
+    for (let i = 0; i < this.cakeFlaps.length; i++) {
+      this.cakeFlaps[i].rotation.x = -Math.PI / 2.2 - t * Math.PI * 0.55;
+    }
     if (!this.cakeOpenedFired && this.unwrapElapsed >= UNWRAP_DURATION) {
       this.cakeOpenedFired = true;
+      this.cakeOpenedAt = this.unwrapElapsed;
       if (this.cakeRibbon) {
         this.cakeGroup?.remove(this.cakeRibbon);
         this.cakeRibbon.geometry.dispose();
         (this.cakeRibbon.material as THREE.MeshStandardMaterial).dispose();
         this.cakeRibbon = null;
       }
+      for (const flap of this.cakeFlaps) {
+        this.cakeGroup?.remove(flap);
+        flap.geometry.dispose();
+      }
+      (this.cakeFlaps[0]?.material as THREE.MeshStandardMaterial | undefined)?.dispose();
+      this.cakeFlaps = [];
       this.onCakeOpened();
+    }
+    // Scale "pop" (spec follow-up一: "顯示時有一點縮放或彈跳效果") — a plain
+    // overshoot-then-settle curve driven purely by elapsed time since the
+    // box opened, computed fresh every frame rather than a separate tween.
+    if (this.cakeOpenedFired && this.cakeMesh) {
+      const bt = Math.min(1, (this.unwrapElapsed - this.cakeOpenedAt) / CAKE_BOUNCE_DURATION);
+      const overshoot = Math.sin(bt * Math.PI) * 0.18 * (1 - bt);
+      const scaleY = 0.55 + overshoot;
+      this.cakeMesh.scale.set(1 + overshoot * 0.4, scaleY, 1 + overshoot * 0.4);
     }
     if (this.unwrapElapsed >= UNWRAP_DURATION + REVEAL_LINGER) {
       this.enterFinaleParty();
@@ -571,7 +735,11 @@ export class AfterWorkStorySystem {
     this.state = 'finaleParty';
   }
 
-  private updateFinaleParty(): void {
+  private updateFinaleParty(deltaTime: number): void {
+    this.idleClock += deltaTime;
+    this.updateFinaleStationIdle(deltaTime, this.idleClock);
+    if (this.finaleParticles?.isActive) this.finaleParticles.update(deltaTime);
+
     const dir = new THREE.Vector3();
     this.camera.getWorldDirection(dir);
     this.raycaster.set(this.camera.position, dir);
@@ -600,9 +768,9 @@ export class AfterWorkStorySystem {
   }
 
   /** Fires the E-press during the free-roam party phase — either starts a
-   * short per-NPC chat, or (near the campfire) begins the ending. Returns
-   * whether anything happened, purely so onKeyDown knows whether to
-   * preventDefault(). */
+   * short per-NPC chat, or (near the campfire) opens the "sit down" confirm
+   * (spec follow-up四). Returns whether anything happened, purely so
+   * onKeyDown knows whether to preventDefault(). */
   private tryFinaleInteract(): boolean {
     const dir = new THREE.Vector3();
     this.camera.getWorldDirection(dir);
@@ -624,7 +792,7 @@ export class AfterWorkStorySystem {
     const dx = this.camera.position.x - FINALE_ENDING_SEAT.x;
     const dz = this.camera.position.z - FINALE_ENDING_SEAT.z;
     if (Math.sqrt(dx * dx + dz * dz) <= ENDING_SEAT_RADIUS) {
-      this.beginFinaleEnding();
+      this.showEndingConfirm();
       return true;
     }
     return false;
@@ -633,12 +801,17 @@ export class AfterWorkStorySystem {
   /** One party NPC's own short chat — deliberately does NOT lock player
    * input/movement (spec explicitly keeps the party phase free-roam even
    * while talking; this is flavor dialogue, not a cutscene), just reuses the
-   * bubble/reveal/advance/skip engine anchored to that one station. */
+   * bubble/reveal/advance/skip engine anchored to that one station.
+   * Follow-up round (spec follow-up三): the FIRST visit shows the station's
+   * full `lines`; every visit after that shows only its own short
+   * `repeatLine` instead, so re-talking to the same NPC never re-reads a
+   * long conversation. */
   private beginStationDialogue(index: number): void {
     const station = this.finaleStations[index];
     this.activeFinaleStationIndex = index;
     this.npcBubble = station.bubble;
-    this.lines = station.lines;
+    this.lines = station.hasTalked ? [station.repeatLine] : station.lines;
+    station.hasTalked = true;
     this.dialogueReturnMode = 'finaleStation';
     this.beginDialogue();
   }
@@ -651,14 +824,47 @@ export class AfterWorkStorySystem {
     this.state = 'finaleParty';
   }
 
+  /** Campfire "sit down" confirm (spec follow-up四: "按E→顯示確認視窗
+   * 【坐下休息】【再逛一下】"). Locks movement while the choice is up —
+   * same reasoning as every other short decision beat in this file — E
+   * confirms (resolveEndingConfirm(true)), R backs out
+   * (resolveEndingConfirm(false)); see onKeyDown's own 'finaleEndingConfirm'
+   * branch for the actual key handling. */
+  private showEndingConfirm(): void {
+    this.hud.hideInteractionPrompt();
+    this.savedActiveTool = this.playerData.activeTool;
+    this.playerData.state = 'stamping-minigame';
+    this.playerController.setInputEnabled(false);
+    this.state = 'finaleEndingConfirm';
+    showFinaleConfirmUi(this.confirmUi);
+  }
+
+  private resolveEndingConfirm(sitDown: boolean): void {
+    hideFinaleConfirmUi(this.confirmUi);
+    if (sitDown) {
+      this.beginFinaleEnding();
+      return;
+    }
+    // "再逛一下" (spec follow-up四) — just closes the confirm and hands
+    // control straight back to the party, no fade/teleport of any kind.
+    this.playerData.state = 'empty-handed';
+    this.playerData.heldObjectId = null;
+    this.playerData.activeTool = this.savedActiveTool;
+    this.playerController.setInputEnabled(true);
+    this.hud.showInstructions();
+    this.state = 'finaleParty';
+  }
+
   /** Campfire "sit down" beat (spec: "所有NPC聚在一起...『歡迎回家。』") —
    * reuses 'transitioning' AGAIN (fade out → teleportToDialogueSpot, now
    * branching to teleportToFinaleEnding below, → fade in → beginDialogue),
-   * exactly the same shape as every ordinary day's own story start. */
+   * exactly the same shape as every ordinary day's own story start. Only
+   * ever called from resolveEndingConfirm(true) now (spec follow-up四). */
   private beginFinaleEnding(): void {
     const config = AFTER_WORK_STORIES[this.storyDay];
     this.lines = config?.finaleEndingLines ?? ['歡迎回家。'];
     this.dialogueReturnMode = 'finaleEnding';
+    this.endingLineHoldElapsed = 0;
     this.lockAndFadeToStory();
   }
 
@@ -684,24 +890,39 @@ export class AfterWorkStorySystem {
       this.cakeMesh = null;
     }
     this.spawnFinaleEndingCluster();
+
+    // Fire glows a little brighter for the closing shot (spec follow-up六:
+    // "營火火光可略微加強，營造結局氛圍") — a small SUPPLEMENTARY light
+    // layered on top of the campfire's own permanent one (built once in
+    // world-layout-system.ts, never touched from here) rather than reaching
+    // into that file to modify a light this class doesn't own.
+    this.endingFireBoostLight = new THREE.PointLight(0xff8a3a, 1.1, 7);
+    this.endingFireBoostLight.position.set(CAMPFIRE_CENTER.x, 0.6, CAMPFIRE_CENTER.z);
+    this.scene.add(this.endingFireBoostLight);
   }
 
   /** Every returning NPC, gathered around the campfire for the closing beat
    * (spec: "所有NPC聚在一起"). Cycles through the four benches (there are
    * more NPCs than benches — a couple end up sharing a bench's own spot,
    * an acceptable crowd-around-the-fire approximation for a closing shot,
-   * not a gameplay-relevant placement). */
+   * not a gameplay-relevant placement). Each capsule faces a slightly
+   * different way (spec follow-up六: "NPC不要全部面向同一方向") and gets a
+   * small idle bob via updateFinaleEndingClusterIdle (spec follow-up五:
+   * "NPC維持派對狀態"). */
   private spawnFinaleEndingCluster(): void {
     const group = new THREE.Group();
     group.position.set(CAMPFIRE_CENTER.x, 0, CAMPFIRE_CENTER.z);
     const offsets = [CAMPFIRE_BENCH_NORTH, CAMPFIRE_BENCH_EAST, CAMPFIRE_BENCH_WEST, CAMPFIRE_BENCH_SOUTH];
     const roster = AFTER_WORK_STORIES[this.storyDay]?.finaleNpcs ?? [];
     const bodyMat = new THREE.MeshStandardMaterial({ color: 0x8a7a68 });
+    this.endingClusterBodies = [];
     for (let i = 0; i < roster.length; i++) {
       const p = offsets[i % offsets.length];
       const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.9, 4, 8), bodyMat);
       body.position.set(p.x - CAMPFIRE_CENTER.x, NPC_BODY_LOCAL_Y, p.z - CAMPFIRE_CENTER.z);
+      body.rotation.y = (i / roster.length) * Math.PI * 2;
       group.add(body);
+      this.endingClusterBodies.push(body);
     }
     this.scene.add(group);
     this.npcGroup = group;
@@ -711,7 +932,41 @@ export class AfterWorkStorySystem {
     this.npcBubble = bubble;
   }
 
+  /** Reached once the "歡迎回家。" line auto-advances (updateDialogue's own
+   * finaleEnding branch) — the slow "camera pulls back, NPCs keep partying,
+   * music keeps playing" beat before credits (spec follow-up五). */
+  private beginEndingPullback(): void {
+    this.hud.hideChargeBar();
+    this.hud.hideInteractionPrompt();
+    if (this.npcBubble) hideStoryBubble(this.npcBubble);
+    this.endingPullbackElapsed = 0;
+    this.endingCameraStart.copy(this.camera.position);
+    const away = this.endingCameraStart.clone().sub(CAMPFIRE_LOOK_TARGET);
+    away.y = 0;
+    if (away.lengthSq() < 0.0001) away.set(0, 0, 1);
+    away.normalize();
+    this.endingCameraEnd.copy(this.endingCameraStart)
+      .addScaledVector(away, ENDING_PULLBACK_DISTANCE)
+      .setY(this.endingCameraStart.y + ENDING_PULLBACK_RISE);
+    this.state = 'finaleEndingHold';
+  }
+
+  private updateEndingPullback(deltaTime: number): void {
+    this.updateFinaleEndingClusterIdle(deltaTime);
+    this.endingPullbackElapsed += deltaTime;
+    const t = Math.min(1, this.endingPullbackElapsed / ENDING_PULLBACK_DURATION);
+    const eased = t * t * (3 - 2 * t); // smoothstep — gentle ease in/out, no sudden camera snap
+    this.camera.position.lerpVectors(this.endingCameraStart, this.endingCameraEnd, eased);
+    this.camera.lookAt(CAMPFIRE_LOOK_TARGET);
+    if (t >= 1) this.beginCredits();
+  }
+
   private beginCredits(): void {
+    stopPartyBgm();
+    if (this.endingFireBoostLight) {
+      this.scene.remove(this.endingFireBoostLight);
+      this.endingFireBoostLight = null;
+    }
     this.pendingCredits = true;
     this.finishStory();
   }
@@ -870,7 +1125,7 @@ export class AfterWorkStorySystem {
         this.enterFinaleParty();
         break;
       case 'finaleEnding':
-        this.beginCredits();
+        this.beginEndingPullback();
         break;
       case 'endStory':
       default:
@@ -1012,6 +1267,7 @@ export class AfterWorkStorySystem {
     this.npcGroup = null;
     this.cakeGroup = null;
     this.cakeMesh = null;
+    this.endingClusterBodies = [];
   }
 
   // --- Input (spec三/四) ---
@@ -1066,6 +1322,25 @@ export class AfterWorkStorySystem {
           event.preventDefault();
           this.beginUnwrap();
         }
+      }
+      return;
+    }
+
+    // Polish-round follow-up — the campfire's own "今天就到這裡吧？" confirm
+    // (spec follow-up四). Deliberately keyboard-only (E confirms, R backs
+    // out) rather than mouse-clickable buttons — pointer lock stays engaged
+    // throughout this whole system (see this class's own top-of-file doc
+    // comment on why PauseManager is never used), so there is no visible OS
+    // cursor to click a DOM button with; see finale-confirm-ui.ts's own doc
+    // comment for the same reasoning.
+    if (this.state === 'finaleEndingConfirm' && !event.repeat) {
+      const bindings = this.settingsManager.inputBindings;
+      if (event.code === 'Space' || bindings.matches('interact', event.code) || bindings.matches('pickupPlace', event.code)) {
+        event.preventDefault();
+        this.resolveEndingConfirm(true);
+      } else if (event.code === SKIP_HOLD_KEY_CODE) {
+        event.preventDefault();
+        this.resolveEndingConfirm(false);
       }
       return;
     }
@@ -1125,9 +1400,15 @@ export class AfterWorkStorySystem {
     // reasserting here any further would wrongly fight a genuinely-restored
     // player during that final black-screen beat. 'finaleParty' and
     // 'finaleCakeWait' are both deliberately excluded — those phases leave
-    // input genuinely restored (free movement). 'finaleUnwrapping' IS
-    // included — input is locked for that short fixed beat too.
-    if (this.state === 'transitioning' || this.state === 'dialogue' || this.state === 'letterReading' || this.state === 'finaleUnwrapping' || (this.state === 'endTransition' && this.fadePhase === 'out')) {
+    // input genuinely restored (free movement). 'finaleUnwrapping',
+    // 'finaleEndingConfirm', and 'finaleEndingHold' ARE included — input is
+    // locked for all three (the confirm choice, and the whole closing beat
+    // through to credits).
+    if (
+      this.state === 'transitioning' || this.state === 'dialogue' || this.state === 'letterReading' ||
+      this.state === 'finaleUnwrapping' || this.state === 'finaleEndingConfirm' || this.state === 'finaleEndingHold' ||
+      (this.state === 'endTransition' && this.fadePhase === 'out')
+    ) {
       if (this.dialogueReturnMode !== 'finaleStation' && this.playerData.activeTool !== this.savedActiveTool) {
         this.playerData.activeTool = this.savedActiveTool;
       }
@@ -1163,7 +1444,7 @@ export class AfterWorkStorySystem {
     }
 
     if (this.state === 'finaleParty') {
-      this.updateFinaleParty();
+      this.updateFinaleParty(deltaTime);
       return;
     }
 
@@ -1174,6 +1455,11 @@ export class AfterWorkStorySystem {
 
     if (this.state === 'finaleUnwrapping') {
       this.updateFinaleUnwrapping(deltaTime);
+      return;
+    }
+
+    if (this.state === 'finaleEndingHold') {
+      this.updateEndingPullback(deltaTime);
       return;
     }
 
@@ -1230,10 +1516,30 @@ export class AfterWorkStorySystem {
     this.revealMs += deltaTime * 1000;
     if (this.npcBubble) showStoryBubbleText(this.npcBubble, this.revealedText());
 
-    this.hud.showInteractionPrompt(
-      this.currentSpeakerName(),
-      'E／Space：完整顯示／下一句\n長按R：跳過故事'
-    );
+    // Polish-round follow-up — the ending's own "歡迎回家。" line reads as
+    // one continuous, hands-off beat (spec follow-up五: "避免突然切到
+    // Credits") rather than another "press E to continue" prompt: once fully
+    // revealed, it auto-advances after a short hold instead of waiting for
+    // input. Every other dialogueReturnMode (endStory/finaleStation) is
+    // completely unchanged — still purely E/Space-driven. R-hold-skip still
+    // works throughout for anyone who wants to skip ahead.
+    if (this.dialogueReturnMode === 'finaleEnding') {
+      this.updateFinaleEndingClusterIdle(deltaTime);
+      this.hud.showInteractionPrompt(this.currentSpeakerName(), '長按R：跳過故事');
+      if (this.isLineFullyRevealed) {
+        this.endingLineHoldElapsed += deltaTime;
+        if (this.endingLineHoldElapsed >= ENDING_LINE_AUTO_ADVANCE_HOLD) {
+          this.endingLineHoldElapsed = 0;
+          this.advanceLine();
+          return;
+        }
+      }
+    } else {
+      this.hud.showInteractionPrompt(
+        this.currentSpeakerName(),
+        'E／Space：完整顯示／下一句\n長按R：跳過故事'
+      );
+    }
 
     if (this.escHolding) {
       this.escHoldElapsed += deltaTime;
@@ -1248,6 +1554,21 @@ export class AfterWorkStorySystem {
         this.hud.hideChargeBar();
         this.skipStory();
       }
+    }
+  }
+
+  /** Small idle bob for the campfire ending cluster (spec follow-up五: "NPC
+   * 維持派對狀態" — even during the closing beat, the gathered NPCs keep
+   * looking alive rather than freezing in place the moment the player sits
+   * down). Ticked during both the "歡迎回家。" line and the camera
+   * pull-back that follows it. */
+  private updateFinaleEndingClusterIdle(deltaTime: number): void {
+    this.idleClock += deltaTime;
+    for (let i = 0; i < this.endingClusterBodies.length; i++) {
+      const body = this.endingClusterBodies[i];
+      const t = this.idleClock + i * 0.7;
+      body.position.y = NPC_BODY_LOCAL_Y + Math.sin(t * 1.0) * 0.015;
+      body.rotation.y = Math.sin(t * 0.35) * 0.2;
     }
   }
 }

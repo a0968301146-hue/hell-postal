@@ -33,6 +33,15 @@ import { SEA_PLATFORM_PLAYER, SEA_PLATFORM_NPC, SEA_LOOK_TARGET } from '../../da
 export const AFTER_WORK_STORY_NPC_SPAWN = LOST_FOUND_NPC_SPAWN;
 export const AFTER_WORK_STORY_NPC_WAIT_SPOT = LOST_FOUND_NPC_WAIT_SPOT;
 
+/** Which simple procedural idle behavior a finale-party NPC plays while
+ * standing at their own station (spec follow-up 二: "每位NPC都有簡單待機動
+ * 作...不需要新增AI，只要播放不同Idle動作即可"). No skeletal animation
+ * system exists anywhere in this codebase (every character is a plain
+ * capsule primitive) — each kind below is a small, hand-scripted per-frame
+ * position/rotation tweak in after-work-story-system.ts's own
+ * updateFinaleStationIdle, not a real animation clip. */
+export type FinaleIdleKind = 'sit' | 'drink' | 'lookAtSky' | 'lean' | 'chat' | 'roast';
+
 /** One NPC "station" during Day8's own party free-roam phase (spec: "所有
  * NPC分散在不同地點...各自有獨立對話") — a fixed standing position plus its
  * own short E-to-talk line(s), reusing the exact same bubble/raycast/prompt
@@ -40,8 +49,18 @@ export const AFTER_WORK_STORY_NPC_WAIT_SPOT = LOST_FOUND_NPC_WAIT_SPOT;
  * just N simultaneous instances instead of one. */
 export interface FinaleNpcStation {
   npcName: string;
+  /** Shown in full the FIRST time the player talks to this NPC. */
   lines: string[];
+  /** Shown instead of `lines` on every visit AFTER the first (spec follow-up
+   * 三: "第一次顯示完整對話，之後改成較短的一兩句，避免玩家一直重複閱讀長
+   * 對話"). */
+  repeatLine: string;
   pos: THREE.Vector3;
+  /** Initial facing yaw in radians (spec follow-up 六: "NPC不要全部面向同一
+   * 方向") — every station otherwise defaults to identity rotation (all
+   * facing the same way). */
+  facingYaw?: number;
+  idleKind?: FinaleIdleKind;
 }
 
 export interface AfterWorkStoryDay {
@@ -256,17 +275,26 @@ export const AFTER_WORK_STORIES: Record<number, AfterWorkStoryDay> = {
           '這麼多年了，能看到你把這裡撐到今天，我很高興。',
           '你爺爺要是在，一定也會這樣說。',
         ],
+        repeatLine: '你爺爺會以你為榮的。',
         pos: fishingSeatAnchorA.clone(),
+        facingYaw: 0.3,
+        idleKind: 'sit',
       },
       {
         npcName: '阿珠姨',
         lines: ['今天不用煮咖啡了，換我陪你喝一杯。', '辛苦你了，這一整年。'],
+        repeatLine: '今晚真的很開心。',
         pos: COFFEE_CHAIR_NPC.clone(),
+        facingYaw: Math.PI * 0.6,
+        idleKind: 'drink',
       },
       {
         npcName: '阿海',
         lines: ['等等晚一點，再一起去看星星吧。', '今天的星空應該會特別亮。'],
+        repeatLine: '星星還在，慢慢看。',
         pos: new THREE.Vector3(starSeatNpc.x, starSeatNpc.y, starSeatNpc.z),
+        facingYaw: Math.PI * 1.1,
+        idleKind: 'lookAtSky',
       },
       {
         // Moved off COFFEE_CHAIR_PLAYER (which put him in the SAME room as
@@ -275,7 +303,10 @@ export const AFTER_WORK_STORIES: Record<number, AfterWorkStoryDay> = {
         // there first, so it reads naturally as "somewhere he'd wait too".
         npcName: '陳伯',
         lines: ['我把今年的照片也洗出來了，之後放進相本裡。', '這裡的故事，還會繼續下去。'],
+        repeatLine: '這裡的故事，還在繼續呢。',
         pos: new THREE.Vector3(AFTER_WORK_STORY_NPC_WAIT_SPOT.x, 0, AFTER_WORK_STORY_NPC_WAIT_SPOT.z),
+        facingYaw: -Math.PI * 0.5,
+        idleKind: 'lean',
       },
       {
         // Moved off fishingSeatAnchorB (SAME spot as 老碼頭工人) to the main
@@ -283,17 +314,26 @@ export const AFTER_WORK_STORIES: Record<number, AfterWorkStoryDay> = {
         // above (spec follow-up: "分布於不同房間...例如...工作區").
         npcName: '小夏',
         lines: ['夏天要來了，到時候再一起去游泳。', '別又只顧著工作，忘記約我。'],
+        repeatLine: '記得也留點時間給自己。',
         pos: new THREE.Vector3(-3, 0, 15),
+        facingYaw: Math.PI * 0.25,
+        idleKind: 'chat',
       },
       {
         npcName: '阿古',
         lines: ['我的船，說不定明年就能出發了。', '到時候第一件貨，我想送來這裡。'],
+        repeatLine: '總有一天，我會出發的。',
         pos: SEA_PLATFORM_NPC.clone(),
+        facingYaw: -Math.PI * 0.8,
+        idleKind: 'lookAtSky',
       },
       {
         npcName: '小柚',
         lines: ['失物招領的東西，這陣子少了很多迷路的呢。', '大概是大家都學會好好收拾了吧。'],
+        repeatLine: '大家今天都很開心呢。',
         pos: CAMPFIRE_BENCH_WEST.clone(),
+        facingYaw: Math.PI * 0.9,
+        idleKind: 'roast',
       },
     ],
     finaleEndingLines: ['歡迎回家。'],
