@@ -10,12 +10,37 @@ import { SettingsManager, TextSpeed } from '../settings';
 import { PickupSystem } from '../interaction/pickup-system';
 import { LocalStorageAdapter } from '../../adapters/local-storage/local-storage-adapter';
 import { LOST_FOUND_ROOM } from '../../data/world/lost-found-layout-data';
-import { fishingSeatAnchorA, fishingSeatAnchorB, fishingLookTarget } from '../world-layout/fishing-pier-data';
 import { MAIN_ROOM_CENTER_SPAWN } from '../world-layout/logistics-layout-data';
-import { AFTER_WORK_STORIES, AFTER_WORK_STORY_NPC_SPAWN, AFTER_WORK_STORY_NPC_WAIT_SPOT } from './after-work-story-data';
+import { CAMPFIRE_BENCH_NORTH, CAMPFIRE_BENCH_EAST, CAMPFIRE_BENCH_WEST, CAMPFIRE_BENCH_SOUTH, CAMPFIRE_LOOK_TARGET, CAMPFIRE_CENTER } from '../../data/world/campfire-area-data';
+import { AFTER_WORK_STORIES, AfterWorkStoryDay, FinaleNpcStation, FINALE_ENDING_SEAT, FINALE_CAKE_POS } from './after-work-story-data';
 import { createStoryBubble, showStoryBubbleText, hideStoryBubble, disposeStoryBubble, wrapStoryLine } from './after-work-story-bubble-ui';
 
-type StoryState = 'inactive' | 'npcWalking' | 'waitingForPlayer' | 'transitioning' | 'dialogue' | 'endTransition' | 'completed';
+type StoryState =
+  | 'inactive' | 'npcWalking' | 'waitingForPlayer' | 'transitioning' | 'dialogue' | 'endTransition' | 'completed'
+  // "每日特殊劇情系統" round — Day8's own free-roam party phase (spec: "玩家
+  // 可自由走動並按E與每個NPC互動"), the one phase in this whole system where
+  // player movement is NOT locked. Everything else reuses the states above.
+  | 'finaleParty'
+  // Terminal state once the credits finish fading in — update() no-ops from
+  // here on (spec: "遊戲結束").
+  | 'finaleCredits';
+
+/** What should happen once the currently-showing `lines` array runs out
+ * (last line consumed via advanceLine, or ESC-hold-skip) — added this round
+ * so the SAME dialogue/reveal/skip engine (beginDialogue/beginLine/
+ * advanceLine/revealFullLine, all untouched below) can drive four distinct
+ * "what happens after" endings without a second dialogue system:
+ * - 'endStory': the original/only behavior before this round — fade out,
+ *   teleport back to MAIN_ROOM_CENTER_SPAWN, mark the day complete, restore
+ *   control. Used by every ordinary day (1-6) and the day7 letter.
+ * - 'finaleOpenReveal': day8's opening ("快打開！") + reveal ("是蛋糕！")
+ *   lines share one sequence; once it ends, enter the free-roam party phase
+ *   instead of ending the day.
+ * - 'finaleStation': one of the party phase's own short per-NPC chats;  once
+ *   it ends, just return to free-roam (no fade, nothing was ever locked).
+ * - 'finaleEnding': the campfire's closing "歡迎回家。" line; once it ends,
+ *   roll credits instead of restoring control. */
+type DialogueReturnMode = 'endStory' | 'finaleOpenReveal' | 'finaleStation' | 'finaleEnding';
 
 const NPC_SPEED = 1.6; // m/s — same convention as lost-found-npc-system.ts
 const ARRIVE_EPS = 0.08;
@@ -23,9 +48,8 @@ const ARRIVE_EPS = 0.08;
  * exactly (capsule half-length 0.45 + radius 0.28 above the floor) — this
  * NPC's own group always sits at world Y=0 with this as the body mesh's own
  * local Y offset, same convention, since every floor this NPC ever stands on
- * (LOST_FOUND_ROOM, BACK_AREA, the fishing pier deck) shares the identical
- * floorY = -1.5 (confirmed via fishing-pier-data.ts: FISHING_PIER.floorY =
- * PIER.floorY = BACK_AREA.floorY, "無高度斷層"). */
+ * (LOST_FOUND_ROOM, BACK_AREA, the fishing pier deck, the coffee room, the
+ * campfire clearing) shares the identical floorY = -1.5 ("無高度斷層"). */
 const NPC_BODY_LOCAL_Y = LOST_FOUND_ROOM.floorY + 0.28 + 0.45;
 const NPC_HEAD_Y = LOST_FOUND_ROOM.floorY + 1.9;
 const NPC_HITBOX_WIDTH = 0.7;
@@ -35,6 +59,14 @@ const NPC_HITBOX_DEPTH = 0.6;
 /** How close (raycast hit distance, not mere proximity) the crosshair must
  * be to the NPC for "E 交談" to fire (spec: "必須準心對準NPC按E才開始"). */
 const INTERACT_DISTANCE = 3;
+
+/** Day8 party phase's own campfire "sit down" trigger radius — a plain XZ
+ * proximity check rather than a raycast (spec: "玩家最後在營火區坐下才觸發
+ * 結局"; there is no "sit" animation anywhere in this codebase — every other
+ * story day's own "sit" is likewise just a position teleport, see
+ * teleportToDialogueSpot below — so "sits down" is read here as "walks up to
+ * the fire and presses E", the same simplification already established). */
+const ENDING_SEAT_RADIUS = 2.2;
 
 /** Black-fade duration each way (spec二: "約0.3～0.5秒黑畫面淡入淡出"). */
 const FADE_SECONDS = 0.4;
@@ -53,6 +85,14 @@ interface StoryProgress {
   completedDays: number[];
 }
 
+/** Day8's own closing credits — this prototype has no real staff roster, so
+ * this is a short in-universe "thank you" list rather than a literal
+ * production credits screen, kept purely as static text (matches every
+ * other narrative beat in this system, which is plain strings, never a new
+ * asset/animation pipeline). */
+const CREDITS_TEXT =
+  '異世界物流中心\n\n感謝你陪伴這間物流中心走過的每一天\n\n企劃．製作\n物流中心全體員工\n\n特別感謝\n每一位願意把貨物交給我們的旅人\n\n— 全　劇　終 —';
+
 /**
  * "Add day one dock story event" round — a one-time, self-contained cutscene
  * triggered once day 1's own settlement finishes (see create-game-systems.ts's
@@ -60,6 +100,18 @@ interface StoryProgress {
  * afterWorkStorySystem.trigger()`), entirely independent of DailyFlowSystem/
  * LostFoundSystem/PlayerController's own internals (only ever reads their
  * public API/exported data — never modifies them).
+ *
+ * "每日特殊劇情系統" round — generalized to drive ALL 8 days (spec Claude注
+ * 意事項1: "沿用Day1劇情系統，不要建立第二套劇情框架") purely by making the
+ * per-day NPC spawn/wait/dialogue-seat coordinates and the "what happens when
+ * the lines run out" ending (DialogueReturnMode above) data-driven, instead
+ * of hardcoding the lost-found NPC's own spawn and the fishing-pier chairs as
+ * THE one destination for every day. Day7 (no NPC, a letter) and Day8 (no
+ * single NPC, a free-roam multi-NPC finale + credits) still reuse every one
+ * of this class's own primitives — the fade/lock helpers, the typewriter
+ * reveal/advance/skip engine, the story bubble UI — just wired through a
+ * couple of new branches (isLetterDay / DialogueReturnMode) rather than a
+ * parallel system.
  *
  * Deliberately does NOT use PauseManager (spec二: "避免解除Pointer Lock與停
  * 止逐字文字") — instead locks the player via the SAME playerData.state/
@@ -112,10 +164,22 @@ export class AfterWorkStorySystem {
   private lineIndex = 0;
   private wrappedCurrentLine = '';
   private revealMs = 0;
+  private dialogueReturnMode: DialogueReturnMode = 'endStory';
+
+  private isLetterDay = false;
+  private letterPickedUp = false;
+
+  private cakeGroup: THREE.Group | null = null;
+  private cakeMesh: THREE.Mesh | null = null;
+  private finaleOpeningCount = 0;
+  private finaleStations: { group: THREE.Group; hitbox: THREE.Mesh; bubble: THREE.Sprite; npcName: string; lines: string[] }[] = [];
+  private activeFinaleStationIndex = -1;
+  private pendingCredits = false;
 
   private fadePhase: 'out' | 'in' | null = null;
   private fadeElapsed = 0;
   private fadeEl: HTMLDivElement;
+  private creditsEl: HTMLDivElement;
 
   private escHolding = false;
   private escHoldElapsed = 0;
@@ -140,6 +204,10 @@ export class AfterWorkStorySystem {
     this.fadeEl = document.createElement('div');
     this.fadeEl.style.cssText = 'position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;transition:opacity ' + FADE_SECONDS + 's ease;z-index:9999;';
     document.body.appendChild(this.fadeEl);
+
+    this.creditsEl = document.createElement('div');
+    this.creditsEl.style.cssText = 'position:fixed;inset:0;background:transparent;color:#f5f0e0;display:flex;align-items:center;justify-content:center;text-align:center;font-family:sans-serif;font-size:22px;line-height:2;opacity:0;pointer-events:none;transition:opacity 1.5s ease;z-index:10000;white-space:pre-line;';
+    document.body.appendChild(this.creditsEl);
 
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
     document.addEventListener('keyup', (e) => this.onKeyUp(e));
@@ -177,17 +245,32 @@ export class AfterWorkStorySystem {
   trigger(finishedDay: number): void {
     if (this.hasTriggeredThisSession) return;
     if (this.state !== 'inactive' && this.state !== 'completed') return;
-    const day = AFTER_WORK_STORIES[finishedDay] ? finishedDay : 0;
-    if (!day || this.hasCompletedDay(day)) return;
+    const config = AFTER_WORK_STORIES[finishedDay];
+    if (!config || this.hasCompletedDay(finishedDay)) return;
 
     this.hasTriggeredThisSession = true;
-    this.storyDay = day;
-    this.lines = AFTER_WORK_STORIES[day].lines;
-    this.spawnNpc(AFTER_WORK_STORIES[day].npcName);
-    this.state = 'npcWalking';
+    this.storyDay = finishedDay;
+    this.isLetterDay = !!config.isLetterDay;
+    this.letterPickedUp = false;
+    this.pendingCredits = false;
+
+    if (config.isFinaleDay) {
+      this.beginFinaleIntro(config);
+      return;
+    }
+
+    this.dialogueReturnMode = 'endStory';
+    this.lines = config.lines;
+    if (config.isLetterDay) {
+      this.spawnLetterProp(config.letterPos ?? new THREE.Vector3(MAIN_ROOM_CENTER_SPAWN.x, MAIN_ROOM_CENTER_SPAWN.y, MAIN_ROOM_CENTER_SPAWN.z));
+      this.state = 'waitingForPlayer';
+    } else {
+      this.spawnNpc(config.npcSpawn!, config.npcWaitSpot!);
+      this.state = 'npcWalking';
+    }
   }
 
-  private spawnNpc(displayName: string): void {
+  private spawnNpc(spawn: { x: number; z: number }, waitSpot: { x: number; z: number }): void {
     const group = new THREE.Group();
     // Weathered/aged color distinct from the daily lost-found NPC's own
     // 0xc9a05a, purely cosmetic differentiation.
@@ -211,7 +294,7 @@ export class AfterWorkStorySystem {
     group.add(hitboxMesh);
     this.npcHitboxMesh = hitboxMesh;
 
-    group.position.set(AFTER_WORK_STORY_NPC_SPAWN.x, 0, AFTER_WORK_STORY_NPC_SPAWN.z);
+    group.position.set(spawn.x, 0, spawn.z);
     this.scene.add(group);
     this.npcGroup = group;
 
@@ -219,14 +302,312 @@ export class AfterWorkStorySystem {
     group.add(bubble);
     this.npcBubble = bubble;
 
-    this.npcTarget.set(AFTER_WORK_STORY_NPC_WAIT_SPOT.x, 0, AFTER_WORK_STORY_NPC_WAIT_SPOT.z);
-    // displayName is currently only used for the crosshair prompt title
-    // (see isAimingAtNpc/update's own hud.showInteractionPrompt call) —
-    // kept as a field-less local capture via closure would be overkill;
-    // AFTER_WORK_STORIES[this.storyDay].npcName is read fresh each time
-    // instead, so this parameter only needs to exist for callers that might
-    // want to pass a different name in the future.
-    void displayName;
+    this.npcTarget.set(waitSpot.x, 0, waitSpot.z);
+  }
+
+  /** Day7 only — a small letter mesh resting exactly where it'll be found,
+   * never walking anywhere (spec: "沒有NPC...地上有一封信"). Reuses the SAME
+   * npcGroup/npcHitboxMesh/npcBubble fields every other day's NPC uses, so
+   * isAimingAtNpc/disposeNpc/the story bubble all keep working unmodified —
+   * this is just a different "thing the player interacts with", not a
+   * different interaction system. */
+  private spawnLetterProp(pos: THREE.Vector3): void {
+    const group = new THREE.Group();
+    const paper = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.02, 0.3), new THREE.MeshStandardMaterial({ color: 0xf5efe0 }));
+    paper.position.y = 0.02;
+    paper.rotation.y = 0.3;
+    group.add(paper);
+
+    const hitboxMesh = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.4, 0.6), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
+    hitboxMesh.position.y = 0.2;
+    group.add(hitboxMesh);
+    this.npcHitboxMesh = hitboxMesh;
+
+    group.position.set(pos.x, pos.y, pos.z);
+    this.scene.add(group);
+    this.npcGroup = group;
+
+    const bubble = createStoryBubble(pos.y + 0.7);
+    group.add(bubble);
+    this.npcBubble = bubble;
+  }
+
+  // --- Day8 finale (spec八) ---
+
+  /** Kicks the finale straight into the fade+teleport (spec's own shared
+   * "黑幕 → 傳送至劇情地點" beat) WITHOUT the usual npcWalking/
+   * waitingForPlayer beats first — day8 has no single lead NPC to walk up to
+   * and press E on; the cake itself (already carried to the room center per
+   * spec, modeled here as appearing with the fade rather than as a trackable
+   * pickup — seeQ this method's own inline note) IS the trigger. */
+  private beginFinaleIntro(config: AfterWorkStoryDay): void {
+    this.lines = [...(config.finaleOpeningLines ?? []), ...(config.finaleRevealLines ?? [])];
+    this.dialogueReturnMode = 'finaleOpenReveal';
+    this.finaleOpeningCount = config.finaleOpeningLines?.length ?? 0;
+    // Spawned now (not when the cake later "opens") — invisible to the
+    // player either way, since they're scattered across the whole map and
+    // the player's camera is locked on the cake for this entire intro; by
+    // the time free-roam starts they're already waiting in place, avoiding
+    // any pop-in.
+    this.spawnFinaleStations(config.finaleNpcs ?? []);
+    this.spawnCakeProp();
+    this.lockAndFadeToStory();
+  }
+
+  /** Decorative giant cake-box prop at the room's own center spawn (spec:
+   * "外觀像放大版的蛋糕盒...約玩家身高5倍"). Modeled as a set piece that
+   * simply appears once the fade reaches black, rather than as the ACTUAL
+   * item the player picked up from the unload dock and carried over — this
+   * game has no "carry a specific tracked cargo item to a non-dock placement
+   * zone" mechanic anywhere else (every cargo objective ends at the normal
+   * outbound dock), and building one from scratch for a single one-off prop
+   * would be a second, parallel placement system. The day's own cargo
+   * manifest still spawns and ships this same giant item through the
+   * completely ordinary pickup→carry→ship pipeline (see cargo-manifest-
+   * data.ts's day-8 override) — this prop is purely the finale's own
+   * cinematic stand-in for "the thing you just delivered", swapped in the
+   * instant the screen goes black so the player never sees both at once. */
+  private spawnCakeProp(): void {
+    const group = new THREE.Group();
+    const box = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 1.4, 24), new THREE.MeshStandardMaterial({ color: 0xb85c3a }));
+    box.position.y = 0.7;
+    group.add(box);
+    this.cakeMesh = box;
+    const ribbon = new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.08, 8, 24), new THREE.MeshStandardMaterial({ color: 0xe8c840 }));
+    ribbon.rotation.x = Math.PI / 2;
+    ribbon.position.y = 0.7;
+    group.add(ribbon);
+
+    group.position.set(FINALE_CAKE_POS.x, FINALE_CAKE_POS.y, FINALE_CAKE_POS.z);
+    this.scene.add(group);
+    this.npcGroup = group;
+    this.cakeGroup = group;
+
+    const bubble = createStoryBubble(2.4);
+    group.add(bubble);
+    this.npcBubble = bubble;
+  }
+
+  /** Visual swap the instant the opening lines give way to the reveal lines
+   * (spec: "玩家按E打開 → 揭曉蛋糕"), triggered from advanceLine below —
+   * reusing the SAME single dialogue sequence rather than a separate
+   * "opening" vs "reveal" state. */
+  private onCakeOpened(): void {
+    if (!this.cakeMesh) return;
+    (this.cakeMesh.material as THREE.MeshStandardMaterial).color.set(0xffe0b0);
+    this.cakeMesh.scale.set(1, 0.55, 1);
+    const icing = new THREE.Mesh(
+      new THREE.SphereGeometry(1.35, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2),
+      new THREE.MeshStandardMaterial({ color: 0xfff6e6 })
+    );
+    icing.position.y = 1.1;
+    this.cakeGroup?.add(icing);
+  }
+
+  private spawnFinaleStations(list: FinaleNpcStation[]): void {
+    for (const npc of list) {
+      const group = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.9, 4, 8), new THREE.MeshStandardMaterial({ color: 0x8a7a68 }));
+      body.position.y = NPC_BODY_LOCAL_Y;
+      group.add(body);
+
+      const hitboxMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(NPC_HITBOX_WIDTH, NPC_HITBOX_HEIGHT, NPC_HITBOX_DEPTH),
+        new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
+      );
+      hitboxMesh.position.set(0, NPC_BODY_LOCAL_Y, 0);
+      group.add(hitboxMesh);
+
+      group.position.set(npc.pos.x, 0, npc.pos.z);
+      this.scene.add(group);
+
+      const bubble = createStoryBubble(NPC_HEAD_Y + 0.35);
+      group.add(bubble);
+
+      this.finaleStations.push({ group, hitbox: hitboxMesh, bubble, npcName: npc.npcName, lines: npc.lines });
+    }
+  }
+
+  private disposeFinaleStations(): void {
+    for (const st of this.finaleStations) {
+      this.scene.remove(st.group);
+      disposeStoryBubble(st.bubble);
+      st.group.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry?.dispose();
+          if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose());
+          else child.material?.dispose();
+        }
+      });
+    }
+    this.finaleStations = [];
+  }
+
+  /** Party phase entry (spec: "派對開始...玩家可自由走動") — reached once the
+   * opening+reveal dialogue sequence ends (onDialogueSequenceComplete's own
+   * 'finaleOpenReveal' branch). Restores player control exactly like a
+   * normal day's finishStory() would, but WITHOUT the fade/teleport/mark-
+   * completed steps — the day isn't over yet, the party is just starting. */
+  private enterFinaleParty(): void {
+    this.hud.hideChargeBar();
+    this.hud.hideInteractionPrompt();
+    if (this.npcBubble) hideStoryBubble(this.npcBubble);
+    this.playerData.state = 'empty-handed';
+    this.playerData.heldObjectId = null;
+    this.playerData.activeTool = this.savedActiveTool;
+    this.playerController.setInputEnabled(true);
+    this.hud.showInstructions();
+    this.state = 'finaleParty';
+  }
+
+  private updateFinaleParty(): void {
+    const dir = new THREE.Vector3();
+    this.camera.getWorldDirection(dir);
+    this.raycaster.set(this.camera.position, dir);
+    let bestIdx = -1;
+    let bestDist = INTERACT_DISTANCE;
+    for (let i = 0; i < this.finaleStations.length; i++) {
+      const hits = this.raycaster.intersectObject(this.finaleStations[i].hitbox, true);
+      if (hits.length > 0 && hits[0].distance <= bestDist) {
+        bestDist = hits[0].distance;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx >= 0) {
+      this.hud.showInteractionPrompt(this.finaleStations[bestIdx].npcName, 'E 交談');
+      return;
+    }
+
+    const dx = this.camera.position.x - FINALE_ENDING_SEAT.x;
+    const dz = this.camera.position.z - FINALE_ENDING_SEAT.z;
+    if (Math.sqrt(dx * dx + dz * dz) <= ENDING_SEAT_RADIUS) {
+      this.hud.showInteractionPrompt('營火', 'E 坐下休息');
+      return;
+    }
+
+    this.hud.hideInteractionPrompt();
+  }
+
+  /** Fires the E-press during the free-roam party phase — either starts a
+   * short per-NPC chat, or (near the campfire) begins the ending. Returns
+   * whether anything happened, purely so onKeyDown knows whether to
+   * preventDefault(). */
+  private tryFinaleInteract(): boolean {
+    const dir = new THREE.Vector3();
+    this.camera.getWorldDirection(dir);
+    this.raycaster.set(this.camera.position, dir);
+    let bestIdx = -1;
+    let bestDist = INTERACT_DISTANCE;
+    for (let i = 0; i < this.finaleStations.length; i++) {
+      const hits = this.raycaster.intersectObject(this.finaleStations[i].hitbox, true);
+      if (hits.length > 0 && hits[0].distance <= bestDist) {
+        bestDist = hits[0].distance;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx >= 0) {
+      this.beginStationDialogue(bestIdx);
+      return true;
+    }
+
+    const dx = this.camera.position.x - FINALE_ENDING_SEAT.x;
+    const dz = this.camera.position.z - FINALE_ENDING_SEAT.z;
+    if (Math.sqrt(dx * dx + dz * dz) <= ENDING_SEAT_RADIUS) {
+      this.beginFinaleEnding();
+      return true;
+    }
+    return false;
+  }
+
+  /** One party NPC's own short chat — deliberately does NOT lock player
+   * input/movement (spec explicitly keeps the party phase free-roam even
+   * while talking; this is flavor dialogue, not a cutscene), just reuses the
+   * bubble/reveal/advance/skip engine anchored to that one station. */
+  private beginStationDialogue(index: number): void {
+    const station = this.finaleStations[index];
+    this.activeFinaleStationIndex = index;
+    this.npcBubble = station.bubble;
+    this.lines = station.lines;
+    this.dialogueReturnMode = 'finaleStation';
+    this.beginDialogue();
+  }
+
+  private endStationDialogue(): void {
+    this.hud.hideChargeBar();
+    this.hud.hideInteractionPrompt();
+    if (this.npcBubble) hideStoryBubble(this.npcBubble);
+    this.activeFinaleStationIndex = -1;
+    this.state = 'finaleParty';
+  }
+
+  /** Campfire "sit down" beat (spec: "所有NPC聚在一起...『歡迎回家。』") —
+   * reuses 'transitioning' AGAIN (fade out → teleportToDialogueSpot, now
+   * branching to teleportToFinaleEnding below, → fade in → beginDialogue),
+   * exactly the same shape as every ordinary day's own story start. */
+  private beginFinaleEnding(): void {
+    const config = AFTER_WORK_STORIES[this.storyDay];
+    this.lines = config?.finaleEndingLines ?? ['歡迎回家。'];
+    this.dialogueReturnMode = 'finaleEnding';
+    this.lockAndFadeToStory();
+  }
+
+  private teleportToFinaleEnding(): void {
+    const seat = new THREE.Vector3(FINALE_ENDING_SEAT.x, FINALE_ENDING_SEAT.y, FINALE_ENDING_SEAT.z + 1.4);
+    const bodyY = seat.y + 0.9;
+    const cameraY = bodyY + 0.6;
+    this.physics.setPlayerPosition(new THREE.Vector3(seat.x, bodyY, seat.z));
+    this.camera.position.set(seat.x, cameraY, seat.z);
+    this.camera.lookAt(new THREE.Vector3(CAMPFIRE_LOOK_TARGET.x, CAMPFIRE_LOOK_TARGET.y, CAMPFIRE_LOOK_TARGET.z));
+
+    this.disposeFinaleStations();
+    if (this.cakeGroup) {
+      this.scene.remove(this.cakeGroup);
+      this.cakeGroup.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry?.dispose();
+          if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose());
+          else child.material?.dispose();
+        }
+      });
+      this.cakeGroup = null;
+      this.cakeMesh = null;
+    }
+    this.spawnFinaleEndingCluster();
+  }
+
+  /** Every returning NPC, gathered around the campfire for the closing beat
+   * (spec: "所有NPC聚在一起"). Cycles through the four benches (there are
+   * more NPCs than benches — a couple end up sharing a bench's own spot,
+   * an acceptable crowd-around-the-fire approximation for a closing shot,
+   * not a gameplay-relevant placement). */
+  private spawnFinaleEndingCluster(): void {
+    const group = new THREE.Group();
+    group.position.set(CAMPFIRE_CENTER.x, 0, CAMPFIRE_CENTER.z);
+    const offsets = [CAMPFIRE_BENCH_NORTH, CAMPFIRE_BENCH_EAST, CAMPFIRE_BENCH_WEST, CAMPFIRE_BENCH_SOUTH];
+    const roster = AFTER_WORK_STORIES[this.storyDay]?.finaleNpcs ?? [];
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x8a7a68 });
+    for (let i = 0; i < roster.length; i++) {
+      const p = offsets[i % offsets.length];
+      const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.9, 4, 8), bodyMat);
+      body.position.set(p.x - CAMPFIRE_CENTER.x, NPC_BODY_LOCAL_Y, p.z - CAMPFIRE_CENTER.z);
+      group.add(body);
+    }
+    this.scene.add(group);
+    this.npcGroup = group;
+
+    const bubble = createStoryBubble(NPC_HEAD_Y + 0.9);
+    group.add(bubble);
+    this.npcBubble = bubble;
+  }
+
+  private beginCredits(): void {
+    this.pendingCredits = true;
+    this.finishStory();
+  }
+
+  private showCreditsOverlay(): void {
+    this.creditsEl.textContent = CREDITS_TEXT;
+    this.creditsEl.style.opacity = '1';
   }
 
   // --- Empty-handed "E 交談" while waiting (spec一步驟4/5) ---
@@ -240,8 +621,23 @@ export class AfterWorkStorySystem {
     return hits.length > 0 && hits[0].distance <= INTERACT_DISTANCE;
   }
 
+  private currentSpeakerName(): string {
+    if (this.dialogueReturnMode === 'finaleStation' && this.activeFinaleStationIndex >= 0) {
+      return this.finaleStations[this.activeFinaleStationIndex]?.npcName ?? '';
+    }
+    return AFTER_WORK_STORIES[this.storyDay]?.npcName ?? '';
+  }
+
   private startStory(): void {
     if (this.state !== 'waitingForPlayer') return;
+    this.lockAndFadeToStory();
+  }
+
+  /** Shared "lock player, start the fade-to-black" entry point — used both
+   * by startStory() (player pressed E on a waiting NPC/letter) and by the
+   * day8 finale's own auto-start / campfire-ending beats (which have no
+   * "wait for E" step of their own to fire from). */
+  private lockAndFadeToStory(): void {
     this.hud.hideInteractionPrompt();
     this.savedActiveTool = this.playerData.activeTool;
     this.pickupSystem.forceDropHeld();
@@ -255,19 +651,32 @@ export class AfterWorkStorySystem {
 
   // --- Teleport (spec二) ---
 
-  private teleportToChairs(): void {
-    const seatFloorY = fishingSeatAnchorA.y; // === fishingSeatAnchorB.y, same deck
+  /** Generalizes the old hardcoded teleportToChairs() — every ordinary day
+   * (1-6) now reads ITS OWN seatPlayer/seatNpc/lookTarget from
+   * AFTER_WORK_STORIES instead of the fishing-pier chairs being the only
+   * possible destination. Day7 (letter) has no seatPlayer at all, so this
+   * simply no-ops — the letter is read exactly where it was found. */
+  private teleportToDialogueSpot(): void {
+    if (this.dialogueReturnMode === 'finaleEnding') {
+      this.teleportToFinaleEnding();
+      return;
+    }
+
+    const config = AFTER_WORK_STORIES[this.storyDay];
+    if (!config?.seatPlayer) return;
+
+    const seatFloorY = config.seatPlayer.y;
     const playerBodyY = seatFloorY + 0.9; // resting-capsule-on-floor formula, see player-system.ts's own createPlayer/update
     const playerCameraY = playerBodyY + 0.6;
 
-    this.physics.setPlayerPosition(new THREE.Vector3(fishingSeatAnchorA.x, playerBodyY, fishingSeatAnchorA.z));
-    this.camera.position.set(fishingSeatAnchorA.x, playerCameraY, fishingSeatAnchorA.z);
-    this.camera.lookAt(fishingLookTarget);
+    this.physics.setPlayerPosition(new THREE.Vector3(config.seatPlayer.x, playerBodyY, config.seatPlayer.z));
+    this.camera.position.set(config.seatPlayer.x, playerCameraY, config.seatPlayer.z);
+    if (config.lookTarget) this.camera.lookAt(config.lookTarget);
 
-    if (this.npcGroup) {
-      this.npcGroup.position.set(fishingSeatAnchorB.x, 0, fishingSeatAnchorB.z);
-      const dx = fishingSeatAnchorA.x - fishingSeatAnchorB.x;
-      const dz = fishingSeatAnchorA.z - fishingSeatAnchorB.z;
+    if (config.seatNpc && this.npcGroup) {
+      this.npcGroup.position.set(config.seatNpc.x, 0, config.seatNpc.z);
+      const dx = config.seatPlayer.x - config.seatNpc.x;
+      const dz = config.seatPlayer.z - config.seatNpc.z;
       this.npcGroup.rotation.y = Math.atan2(dx, dz);
     }
   }
@@ -312,11 +721,32 @@ export class AfterWorkStorySystem {
 
   private advanceLine(): void {
     if (this.lineIndex >= this.lines.length - 1) {
-      this.finishStory();
+      this.onDialogueSequenceComplete();
       return;
     }
     this.lineIndex++;
+    if (this.dialogueReturnMode === 'finaleOpenReveal' && this.lineIndex === this.finaleOpeningCount) this.onCakeOpened();
     this.beginLine();
+  }
+
+  /** What happens once the current `lines` array is exhausted — see
+   * DialogueReturnMode's own doc comment above for what each branch means. */
+  private onDialogueSequenceComplete(): void {
+    switch (this.dialogueReturnMode) {
+      case 'finaleStation':
+        this.endStationDialogue();
+        break;
+      case 'finaleOpenReveal':
+        this.enterFinaleParty();
+        break;
+      case 'finaleEnding':
+        this.beginCredits();
+        break;
+      case 'endStory':
+      default:
+        this.finishStory();
+        break;
+    }
   }
 
   // --- End (spec三 last line / 四 Esc skip) ---
@@ -331,7 +761,8 @@ export class AfterWorkStorySystem {
    * way as before (only now 'endTransition' is ALSO excluded, so a second
    * advanceLine/skipStory call arriving mid-fade can't restart the
    * transition or double-teleport/double-mark-completed — spec:
-   * "finishStory()只能成功執行一次"). */
+   * "finishStory()只能成功執行一次"). Also the shared exit point for day8's
+   * own credits roll (pendingCredits) — see updateEndTransition below. */
   private finishStory(): void {
     if (this.state === 'completed' || this.state === 'inactive' || this.state === 'endTransition') return;
     this.state = 'endTransition';
@@ -352,11 +783,25 @@ export class AfterWorkStorySystem {
    * clear, all inside teleportToMainRoomCenter), NPC removal, clearing the
    * story's own input-lock state, then restoring player movement/tools/
    * interaction — all while the screen is still fully black, so none of it
-   * is ever visible as a pop/snap. */
+   * is ever visible as a pop/snap.
+   *
+   * Day8's own credits ending (pendingCredits) takes a different branch here
+   * — it marks the day complete and shows the credits overlay instead of
+   * teleporting/restoring control/fading back in, since the game is over. */
   private updateEndTransition(deltaTime: number): void {
     this.fadeElapsed += deltaTime;
     if (this.fadePhase === 'out') {
       if (this.fadeElapsed >= FADE_SECONDS) {
+        if (this.pendingCredits) {
+          this.markDayCompleted(this.storyDay);
+          this.disposeNpc();
+          this.disposeFinaleStations();
+          this.showCreditsOverlay();
+          this.fadePhase = null;
+          this.state = 'finaleCredits';
+          return;
+        }
+
         this.teleportToMainRoomCenter();
 
         this.markDayCompleted(this.storyDay);
@@ -380,18 +825,18 @@ export class AfterWorkStorySystem {
     }
   }
 
-  /** Teleports the player from the fishing-pier chairs back to
+  /** Teleports the player from the story's own dialogue spot back to
    * MAIN_ROOM_CENTER_SPAWN (logistics-layout-data.ts) — mirrors
-   * teleportToChairs' own manual physics+camera write pattern exactly
+   * teleportToDialogueSpot's own manual physics+camera write pattern exactly
    * (PlayerController.update()'s own automatic camera sync doesn't run yet
    * at this point, since input is still disabled), plus a residual-velocity
-   * reset teleportToChairs never needed (that teleport happens while the
-   * player is still walking under their own control moments earlier in the
-   * SAME frame budget; this one follows a screen-black beat with input
+   * reset teleportToDialogueSpot never needed (that teleport happens while
+   * the player is still walking under their own control moments earlier in
+   * the SAME frame budget; this one follows a screen-black beat with input
    * already off, so leftover gravity/jump state must be explicitly
    * cleared). */
   private teleportToMainRoomCenter(): void {
-    const bodyY = MAIN_ROOM_CENTER_SPAWN.y + 0.9; // resting-capsule-on-floor formula, matches teleportToChairs
+    const bodyY = MAIN_ROOM_CENTER_SPAWN.y + 0.9; // resting-capsule-on-floor formula, matches teleportToDialogueSpot
     const cameraY = bodyY + 0.6;
 
     this.physics.setPlayerPosition(new THREE.Vector3(MAIN_ROOM_CENTER_SPAWN.x, bodyY, MAIN_ROOM_CENTER_SPAWN.z));
@@ -414,6 +859,8 @@ export class AfterWorkStorySystem {
       }
     });
     this.npcGroup = null;
+    this.cakeGroup = null;
+    this.cakeMesh = null;
   }
 
   // --- Input (spec三/四) ---
@@ -426,8 +873,20 @@ export class AfterWorkStorySystem {
       if (event.code === 'Space' || bindings.matches('interact', event.code) || bindings.matches('pickupPlace', event.code)) {
         if (this.isAimingAtNpc()) {
           event.preventDefault();
-          this.startStory();
+          if (this.isLetterDay && !this.letterPickedUp) {
+            this.letterPickedUp = true;
+          } else {
+            this.startStory();
+          }
         }
+      }
+      return;
+    }
+
+    if (this.state === 'finaleParty' && !event.repeat) {
+      const bindings = this.settingsManager.inputBindings;
+      if (event.code === 'Space' || bindings.matches('interact', event.code) || bindings.matches('pickupPlace', event.code)) {
+        if (this.tryFinaleInteract()) event.preventDefault();
       }
       return;
     }
@@ -465,13 +924,13 @@ export class AfterWorkStorySystem {
   }
 
   private skipStory(): void {
-    this.finishStory();
+    this.onDialogueSequenceComplete();
   }
 
   // --- Per-frame (called UNCONDITIONALLY from game-app.ts, spec二: no PauseManager) ---
 
   update(deltaTime: number): void {
-    if (this.state === 'inactive' || this.state === 'completed') return;
+    if (this.state === 'inactive' || this.state === 'completed' || this.state === 'finaleCredits') return;
 
     // Defensive per-frame re-assertion — ToolSystem's own digit-key
     // tool-switch has no awareness of this class's own lock (spec二:
@@ -485,9 +944,12 @@ export class AfterWorkStorySystem {
     // 'dialogue'; by the time it flips to 'in', updateEndTransition has
     // already restored activeTool once AND re-enabled input for real, so
     // reasserting here any further would wrongly fight a genuinely-restored
-    // player during that final black-screen beat.
+    // player during that final black-screen beat. 'finaleParty' is
+    // deliberately excluded — that phase leaves input genuinely restored.
     if (this.state === 'transitioning' || this.state === 'dialogue' || (this.state === 'endTransition' && this.fadePhase === 'out')) {
-      if (this.playerData.activeTool !== this.savedActiveTool) this.playerData.activeTool = this.savedActiveTool;
+      if (this.dialogueReturnMode !== 'finaleStation' && this.playerData.activeTool !== this.savedActiveTool) {
+        this.playerData.activeTool = this.savedActiveTool;
+      }
     }
 
     if (this.state === 'npcWalking') {
@@ -497,8 +959,12 @@ export class AfterWorkStorySystem {
 
     if (this.state === 'waitingForPlayer') {
       if (this.isAimingAtNpc()) {
-        const name = AFTER_WORK_STORIES[this.storyDay]?.npcName ?? '';
-        this.hud.showInteractionPrompt(name, 'E 交談');
+        const name = this.currentSpeakerName();
+        if (this.isLetterDay) {
+          this.hud.showInteractionPrompt(name || '信件', this.letterPickedUp ? 'E 打開信件' : 'E 撿起信件');
+        } else {
+          this.hud.showInteractionPrompt(name, 'E 交談');
+        }
       } else {
         this.hud.hideInteractionPrompt();
       }
@@ -512,6 +978,11 @@ export class AfterWorkStorySystem {
 
     if (this.state === 'dialogue') {
       this.updateDialogue(deltaTime);
+      return;
+    }
+
+    if (this.state === 'finaleParty') {
+      this.updateFinaleParty();
       return;
     }
 
@@ -542,7 +1013,7 @@ export class AfterWorkStorySystem {
     if (this.fadePhase === 'out') {
       if (this.fadeElapsed >= FADE_SECONDS) {
         // Screen is fully black now — safe to teleport without a visible pop.
-        this.teleportToChairs();
+        this.teleportToDialogueSpot();
         this.fadePhase = 'in';
         this.fadeElapsed = 0;
         this.fadeEl.style.opacity = '0';
@@ -560,7 +1031,7 @@ export class AfterWorkStorySystem {
     if (this.npcBubble) showStoryBubbleText(this.npcBubble, this.revealedText());
 
     this.hud.showInteractionPrompt(
-      AFTER_WORK_STORIES[this.storyDay]?.npcName ?? '',
+      this.currentSpeakerName(),
       'E／Space：完整顯示／下一句\n長按Esc：跳過故事'
     );
 

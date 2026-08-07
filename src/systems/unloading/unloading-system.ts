@@ -288,7 +288,7 @@ export class UnloadingSystem {
    * stays fixed by construction. Finally dealt round-robin into
    * UNLOAD_BURST_CONFIG.waveCount waves, same as before. */
   private buildSpawnPlan(): PlannedSpawn[][] {
-    const { manifest } = buildDailyCargoManifest();
+    const { manifest } = buildDailyCargoManifest(this.dailyFlowSystem.currentDay);
     const shuffledItems = shuffle(manifest);
 
     const portCount = UNLOAD_PORTS.length;

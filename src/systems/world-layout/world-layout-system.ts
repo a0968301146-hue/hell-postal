@@ -25,6 +25,16 @@ import {
   FISHING_PIER, FISHING_CHAIR_A, FISHING_CHAIR_B, FISHING_ROD_A, FISHING_ROD_B,
   FISHING_BUCKET, FISHING_TACKLE_BOX, FISHING_LANTERN,
 } from './fishing-pier-data';
+// "每日特殊劇情系統" round — two new rooms/areas, same "plain data file,
+// geometry built here" split every other room already follows.
+import {
+  COFFEE_ROOM, COFFEE_ROOM_DOOR, COFFEE_TABLE_CENTER, COFFEE_CHAIR_PLAYER, COFFEE_CHAIR_NPC,
+  COFFEE_PROJECTOR_SCREEN_CENTER, COFFEE_PROJECTOR_POS,
+} from '../../data/world/coffee-room-layout-data';
+import {
+  CAMPFIRE_AREA, CAMPFIRE_CENTER, CAMPFIRE_BENCH_NORTH, CAMPFIRE_BENCH_SOUTH, CAMPFIRE_BENCH_EAST, CAMPFIRE_BENCH_WEST,
+  CAMPFIRE_STICK_A, CAMPFIRE_STICK_B,
+} from '../../data/world/campfire-area-data';
 
 export const SCENE_CONFIG = {
   playerEyeHeight: 1.6,
@@ -119,6 +129,9 @@ export function createLogisticsScene(scene: THREE.Scene, physics: PhysicsWorldPo
   const lostFoundFloor = buildLostFoundRoom(scene, physics);
   const shelfSurfaces = buildWestWallShelves(scene, physics);
   buildFishingPier(scene, physics);
+  buildCoffeeRoom(scene, physics);
+  buildCampfireArea(scene, physics);
+  buildMainHallSkylight(scene, physics);
 
   const interactables = new Map<string, InteractableObject>();
   buildBulletinBoard(scene, physics, interactables);
@@ -384,7 +397,15 @@ function buildLostFoundRoom(scene: THREE.Scene, physics: PhysicsWorldPort): THRE
   const midY = floorY + ceilingHeight / 2;
 
   addWall(scene, physics, wallMat, cx, midY, minZ, width, ceilingHeight, WALL_THICKNESS); // north
-  addWall(scene, physics, wallMat, cx, midY, maxZ, width, ceilingHeight, WALL_THICKNESS); // south
+
+  // South wall — "每日特殊劇情系統" round: gapped for COFFEE_ROOM_DOOR, the
+  // ONLY route into the new Day2/Day4 coffee room just south of here (same
+  // solid-before/gap/solid-after pattern as the west wall's own NPC gate
+  // just below).
+  const coffeeGapL = COFFEE_ROOM_DOOR.centerX - COFFEE_ROOM_DOOR.halfWidth;
+  const coffeeGapR = COFFEE_ROOM_DOOR.centerX + COFFEE_ROOM_DOOR.halfWidth;
+  addWall(scene, physics, wallMat, (minX + coffeeGapL) / 2, midY, maxZ, coffeeGapL - minX, ceilingHeight, WALL_THICKNESS);
+  addWall(scene, physics, wallMat, (coffeeGapR + maxX) / 2, midY, maxZ, maxX - coffeeGapR, ceilingHeight, WALL_THICKNESS);
 
   // West wall — gap for the NPC's own outward-facing gate, same
   // solid-before/solid-after pattern as every other gate opening in this
@@ -400,6 +421,219 @@ function buildLostFoundRoom(scene: THREE.Scene, physics: PhysicsWorldPort): THRE
   scene.add(roomLabel);
 
   return floor;
+}
+
+/** Day2/Day4 mid-size coffee room, south of the lost-found room ("每日特殊
+ * 劇情系統" round, spec: "在失物招領房間南方，新增一間中型休息室，尺寸約
+ * 6m×6m，含木地板、咖啡桌、兩張椅子、桌上兩杯咖啡，暖色系燈光"). Only the
+ * NORTH wall is gapped (mirrors LOST_FOUND_ROOM's own south-wall gap cut for
+ * COFFEE_ROOM_DOOR, same centerX so the two openings line up into one
+ * doorway) — east/south/west stay fully solid, this room has no other
+ * entrance. */
+function buildCoffeeRoom(scene: THREE.Scene, physics: PhysicsWorldPort): void {
+  const { minX, maxX, minZ, maxZ, floorY, ceilingHeight } = COFFEE_ROOM;
+  const width = maxX - minX;
+  const depth = maxZ - minZ;
+  const cx = (minX + maxX) / 2;
+  const cz = (minZ + maxZ) / 2;
+
+  const floorGeo = new THREE.PlaneGeometry(width, depth);
+  const floor = new THREE.Mesh(floorGeo, stdMat(0x8a6a45)); // warm wood flooring
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(cx, floorY, cz);
+  scene.add(floor);
+  physics.createStaticCuboid(cx, floorY - WALL_THICKNESS / 2, cz, width / 2, WALL_THICKNESS / 2, depth / 2);
+
+  const wallMat = stdMat(0x5a4a3a, { side: THREE.DoubleSide });
+  const midY = floorY + ceilingHeight / 2;
+
+  const doorGapL = COFFEE_ROOM_DOOR.centerX - COFFEE_ROOM_DOOR.halfWidth;
+  const doorGapR = COFFEE_ROOM_DOOR.centerX + COFFEE_ROOM_DOOR.halfWidth;
+  addWall(scene, physics, wallMat, (minX + doorGapL) / 2, midY, minZ, doorGapL - minX, ceilingHeight, WALL_THICKNESS);
+  addWall(scene, physics, wallMat, (doorGapR + maxX) / 2, midY, minZ, maxX - doorGapR, ceilingHeight, WALL_THICKNESS);
+  addWall(scene, physics, wallMat, cx, midY, maxZ, width, ceilingHeight, WALL_THICKNESS); // south
+  addWall(scene, physics, wallMat, minX, midY, cz, WALL_THICKNESS, ceilingHeight, depth); // west
+  addWall(scene, physics, wallMat, maxX, midY, cz, WALL_THICKNESS, ceilingHeight, depth); // east
+
+  // Warm-colored lamp (spec: "暖色系燈光") — a small local point light plus a
+  // simple fixture mesh, distinct from the building's own flat ambient/
+  // directional pair.
+  const lamp = new THREE.PointLight(0xffb060, 0.9, 6);
+  lamp.position.set(cx, floorY + ceilingHeight - 0.4, cz);
+  scene.add(lamp);
+  const lampMesh = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), stdMat(0xffcc88, { emissive: 0xffaa55, emissiveIntensity: 0.6 }));
+  lampMesh.position.copy(lamp.position);
+  scene.add(lampMesh);
+
+  // Coffee table + two chairs + two cups.
+  const tableMat = stdMat(0x6b4a2a);
+  const table = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.45, 16), tableMat);
+  table.position.set(COFFEE_TABLE_CENTER.x, floorY + 0.225, COFFEE_TABLE_CENTER.z);
+  scene.add(table);
+  physics.createStaticCuboid(table.position.x, table.position.y, table.position.z, 0.5, 0.225, 0.5);
+
+  const chairMat = stdMat(0x4a3a2a);
+  for (const seat of [COFFEE_CHAIR_PLAYER, COFFEE_CHAIR_NPC]) {
+    const chair = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.45, 0.45), chairMat);
+    chair.position.set(seat.x, floorY + 0.225, seat.z);
+    scene.add(chair);
+  }
+
+  const cupMat = stdMat(0xffffff);
+  const cupGeo = new THREE.CylinderGeometry(0.06, 0.05, 0.08, 10);
+  const cupA = new THREE.Mesh(cupGeo, cupMat);
+  cupA.position.set(COFFEE_TABLE_CENTER.x - 0.15, floorY + 0.45 + 0.04, COFFEE_TABLE_CENTER.z);
+  scene.add(cupA);
+  const cupB = new THREE.Mesh(cupGeo, cupMat);
+  cupB.position.set(COFFEE_TABLE_CENTER.x + 0.15, floorY + 0.45 + 0.04, COFFEE_TABLE_CENTER.z);
+  scene.add(cupB);
+
+  // Day4-only projector + screen, built as permanent room furniture (see
+  // coffee-room-layout-data.ts's own doc comment on COFFEE_PROJECTOR_*).
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.6), stdMat(0xe8e8e0, { side: THREE.DoubleSide }));
+  screen.position.copy(COFFEE_PROJECTOR_SCREEN_CENTER);
+  scene.add(screen);
+  const frame = new THREE.Mesh(new THREE.RingGeometry(1.35, 1.5, 4), stdMat(0x3a3a3a, { side: THREE.DoubleSide }));
+  frame.position.copy(COFFEE_PROJECTOR_SCREEN_CENTER);
+  frame.position.z -= 0.01;
+  scene.add(frame);
+  const projector = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.18, 0.4), stdMat(0x2a2a2a));
+  projector.position.copy(COFFEE_PROJECTOR_POS);
+  scene.add(projector);
+
+  const roomLabel = createFloatingLabel('休息室', { width: 0.7, bg: 'rgba(40,30,20,0.75)' });
+  roomLabel.position.set(cx, floorY + ceilingHeight - 0.5, cz);
+  scene.add(roomLabel);
+}
+
+/** Outdoor campfire rest area outside the land-vehicle exit ("每日特殊劇情系
+ * 統" round, spec: "陸運出口外側，延伸一塊戶外空地，含營火、木頭、四周石頭
+ * 、木頭長椅、烤棉花糖架") — Day6's own story scene, later reused by Day8's
+ * finale ending. Purely decorative open-air geometry, no walls (it's an
+ * outdoor clearing, not a room). */
+function buildCampfireArea(scene: THREE.Scene, physics: PhysicsWorldPort): void {
+  const { minX, maxX, minZ, maxZ, floorY } = CAMPFIRE_AREA;
+  const width = maxX - minX;
+  const depth = maxZ - minZ;
+  const cx = (minX + maxX) / 2;
+  const cz = (minZ + maxZ) / 2;
+
+  const floorGeo = new THREE.PlaneGeometry(width, depth);
+  const floor = new THREE.Mesh(floorGeo, stdMat(0x5a4a38)); // packed dirt clearing
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(cx, floorY, cz);
+  scene.add(floor);
+  physics.createStaticCuboid(cx, floorY - WALL_THICKNESS / 2, cz, width / 2, WALL_THICKNESS / 2, depth / 2);
+
+  // Stone ring + firewood + fire glow.
+  const stoneMat = stdMat(0x777066);
+  const ringCount = 8;
+  for (let i = 0; i < ringCount; i++) {
+    const angle = (i / ringCount) * Math.PI * 2;
+    const stone = new THREE.Mesh(new THREE.SphereGeometry(0.14, 6, 6), stoneMat);
+    stone.position.set(CAMPFIRE_CENTER.x + Math.cos(angle) * 0.65, floorY + 0.1, CAMPFIRE_CENTER.z + Math.sin(angle) * 0.65);
+    scene.add(stone);
+  }
+  const woodMat = stdMat(0x4a3322);
+  for (let i = 0; i < 4; i++) {
+    const log = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.6, 6), woodMat);
+    log.position.set(CAMPFIRE_CENTER.x, floorY + 0.1, CAMPFIRE_CENTER.z);
+    log.rotation.z = Math.PI / 2;
+    log.rotation.y = (i / 4) * Math.PI;
+    scene.add(log);
+  }
+  const fireLight = new THREE.PointLight(0xff6a20, 1.4, 8);
+  fireLight.position.set(CAMPFIRE_CENTER.x, floorY + 0.5, CAMPFIRE_CENTER.z);
+  scene.add(fireLight);
+  const fireGlow = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.6, 8), stdMat(0xff8020, { emissive: 0xff5500, emissiveIntensity: 1.0, transparent: true, opacity: 0.85 }));
+  fireGlow.position.set(CAMPFIRE_CENTER.x, floorY + 0.35, CAMPFIRE_CENTER.z);
+  scene.add(fireGlow);
+
+  // Four log benches, one per compass side (spec: "木頭長椅").
+  const benchMat = stdMat(0x5a4530);
+  for (const bench of [CAMPFIRE_BENCH_NORTH, CAMPFIRE_BENCH_SOUTH, CAMPFIRE_BENCH_EAST, CAMPFIRE_BENCH_WEST]) {
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.35, 0.35), benchMat);
+    seat.position.set(bench.x, floorY + 0.175, bench.z);
+    const toCenter = Math.atan2(CAMPFIRE_CENTER.x - bench.x, CAMPFIRE_CENTER.z - bench.z);
+    seat.rotation.y = toCenter;
+    scene.add(seat);
+    physics.createStaticCuboid(seat.position.x, seat.position.y, seat.position.z, 0.45, 0.175, 0.175);
+  }
+
+  // Marshmallow-roasting sticks, leaning near the west bench (spec: "烤棉花
+  // 糖架").
+  const stickMat = stdMat(0x8a6a45);
+  for (const stick of [CAMPFIRE_STICK_A, CAMPFIRE_STICK_B]) {
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.9, 6), stickMat);
+    rod.position.set(stick.x, floorY + 0.3, stick.z);
+    rod.rotation.x = Math.PI / 3.2;
+    scene.add(rod);
+  }
+
+  const areaLabel = createFloatingLabel('營火區', { width: 0.7, bg: 'rgba(40,25,15,0.75)' });
+  areaLabel.position.set(cx, floorY + 2.2, cz);
+  scene.add(areaLabel);
+}
+
+/** Decorative skylight above the main hall (BACK_AREA) + a permanently-
+ * visible starfield ("每日特殊劇情系統" round, Day3 spec: "在物流中心大廳
+ * 加入一個大型天窗，夜晚可透過天窗看到星空、月亮、偶爾流星"). No day/night
+ * lighting state exists anywhere in this codebase (confirmed via research —
+ * a single fixed ambient+directional pair, never varied), and BACK_AREA has
+ * no roof mesh to begin with (open-topped, like every other room here), so
+ * this is scoped down to purely decorative geometry: a suspended frame +
+ * an always-visible starfield/moon high above the hall. Day3's own "night"
+ * framing is carried entirely by dialogue, not an actual lighting change —
+ * shooting stars are handled by AfterWorkStorySystem's own Day3 story step
+ * (a transient animated streak), not built here. */
+function buildMainHallSkylight(scene: THREE.Scene, _physics: PhysicsWorldPort): void {
+  const cx = (BACK_AREA.minX + BACK_AREA.maxX) / 2;
+  const cz = (BACK_AREA.minZ + BACK_AREA.maxZ) / 2;
+  const skyY = BACK_AREA.floorY + BACK_AREA.ceilingHeight + 0.15;
+
+  const frameMat = stdMat(0x2a2a30, { side: THREE.DoubleSide });
+  const frameThickness = 0.15;
+  const frameSize = 6;
+  const half = frameSize / 2;
+  const beamA = new THREE.Mesh(new THREE.BoxGeometry(frameSize, frameThickness, frameThickness), frameMat);
+  beamA.position.set(cx, skyY, cz - half);
+  scene.add(beamA);
+  const beamB = new THREE.Mesh(new THREE.BoxGeometry(frameSize, frameThickness, frameThickness), frameMat);
+  beamB.position.set(cx, skyY, cz + half);
+  scene.add(beamB);
+  const beamC = new THREE.Mesh(new THREE.BoxGeometry(frameThickness, frameThickness, frameSize), frameMat);
+  beamC.position.set(cx - half, skyY, cz);
+  scene.add(beamC);
+  const beamD = new THREE.Mesh(new THREE.BoxGeometry(frameThickness, frameThickness, frameSize), frameMat);
+  beamD.position.set(cx + half, skyY, cz);
+  scene.add(beamD);
+
+  const glassMat = stdMat(0x0a1030, { transparent: true, opacity: 0.35, side: THREE.DoubleSide });
+  const glass = new THREE.Mesh(new THREE.PlaneGeometry(frameSize, frameSize), glassMat);
+  glass.rotation.x = Math.PI / 2;
+  glass.position.set(cx, skyY, cz);
+  scene.add(glass);
+
+  // Moon.
+  const moon = new THREE.Mesh(new THREE.SphereGeometry(0.6, 16, 16), stdMat(0xf5f0dd, { emissive: 0xd8d0a0, emissiveIntensity: 0.6 }));
+  moon.position.set(cx + 4, skyY + 18, cz - 3);
+  scene.add(moon);
+
+  // Starfield — a scattered point cloud high above the skylight.
+  const starCount = 200;
+  const starPositions = new Float32Array(starCount * 3);
+  for (let i = 0; i < starCount; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 6 + Math.random() * 18;
+    starPositions[i * 3] = cx + Math.cos(angle) * radius;
+    starPositions[i * 3 + 1] = skyY + 12 + Math.random() * 12;
+    starPositions[i * 3 + 2] = cz + Math.sin(angle) * radius;
+  }
+  const starGeo = new THREE.BufferGeometry();
+  starGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+  const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.12, sizeAttenuation: true });
+  const stars = new THREE.Points(starGeo, starMat);
+  scene.add(stars);
 }
 
 /** West-wall FREEZER CABINETS ("Add freezer shelves and frozen cargo

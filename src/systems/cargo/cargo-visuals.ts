@@ -312,6 +312,26 @@ function buildSpool(preset: CargoShapePreset): THREE.Mesh {
   return mesh;
 }
 
+/** Day8 finale's own one-off cargo item — a giant, short/squat, UPRIGHT
+ * cylindrical cake box ("每日特殊劇情系統" round, spec: "外觀像放大版的蛋糕
+ * 盒"). Unlike buildBarrel/buildSpool above, `width`/`depth` here are read as
+ * the literal diameter and `height` as the literal upright height — it never
+ * rolls (spawned via spawnDailyBox with a box collider + uprightRequired,
+ * see cargo-shape-presets.ts's own doc comment on the 'giant-cake-box'
+ * preset for why colliderKind stays 'box' despite the round mesh). */
+function buildCakeBox(preset: CargoShapePreset): THREE.Mesh {
+  const { width: w, height: h, depth: d } = preset.dimensions;
+  const radius = Math.max(w, d) / 2;
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, h, 24), stdMat(preset.color));
+  const ribbon = new THREE.Mesh(new THREE.TorusGeometry(radius, h * 0.06, 8, 24), stdMat(darken(preset.color, 0.3)));
+  ribbon.rotation.x = Math.PI / 2;
+  mesh.add(ribbon);
+  const lid = new THREE.Mesh(new THREE.CylinderGeometry(radius * 1.03, radius * 1.03, h * 0.08, 24), stdMat(darken(preset.color, 0.15)));
+  lid.position.y = h / 2 + h * 0.04;
+  mesh.add(lid);
+  return mesh;
+}
+
 function buildLargeCrate(preset: CargoShapePreset): THREE.Mesh {
   const { width: w, height: h, depth: d } = preset.dimensions;
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), stdMat(preset.color));
@@ -628,6 +648,7 @@ export function buildCargoShapeMesh(preset: CargoShapePreset): THREE.Mesh {
     case 'closed-box-fragile': return buildClosedBoxFragile(preset);
     case 'barrel': return buildBarrel(preset);
     case 'spool': return buildSpool(preset);
+    case 'cake-box': return buildCakeBox(preset);
     case 'large-crate': return buildLargeCrate(preset);
     case 'carpet-roll': return buildCarpetRoll(preset);
     case 'furniture-rack': return buildFurnitureRack(preset);

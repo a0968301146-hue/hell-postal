@@ -8,7 +8,7 @@
 // instead (`from '../cargo/cargo-manifest-planner'`).
 import { CargoCategory } from './cargo-category-data';
 import { CargoRegion } from './cargo-region-data';
-import { CargoShapePreset, getCargoShapePresetsByCategory } from './cargo-shape-presets';
+import { CargoShapePreset, getCargoShapePresetsByCategory, GIANT_CAKE_BOX_PRESET } from './cargo-shape-presets';
 import {
   CARGO_CAPACITY_ITEM_VOLUME_MULTIPLIER, CARGO_CAPACITY_SAFE_FILL_RATE, CARGO_MANIFEST_CATEGORY_ORDER,
   CARGO_MANIFEST_PRESET_CAP_RATIO, DAILY_CARGO_CATEGORY_QUOTA, DAILY_CARGO_REGION_QUOTA,
@@ -227,12 +227,32 @@ function planVehicleCapacity(manifest: CargoManifestItem[]): VehicleCapacityRepo
   });
 }
 
+/** Day8 finale's own cargo day (spec: "今天的貨物：只有一項") — the ONE day
+ * this file's own fixed 90-item quota (DAILY_CARGO_CATEGORY_QUOTA) is
+ * overridden entirely, per after-work-story-data.ts's own day-8 finale
+ * entry. Kept as a local constant rather than importing the story data file
+ * (systems/cargo has no other reason to depend on systems/story) — the day
+ * number itself is the one piece of coupling that already exists implicitly
+ * via DailyFlowSystem.currentDay, same as every other day-numbered special
+ * case in this codebase. */
+const GIANT_CAKE_DAY = 8;
+
 /** Builds one full day's cargo manifest (spec三: fixed 90-item total, fixed
  * per-category and per-region quotas decided before any shape is picked)
  * plus a generator-only vehicle capacity estimate (spec四). DEV-mode only
  * console report of each vehicle's estimated load — silent in production
- * builds (spec四: "正式環境不要顯示這個除錯輸出"). */
-export function buildDailyCargoManifest(): { manifest: CargoManifestItem[]; capacityReport: VehicleCapacityReport[] } {
+ * builds (spec四: "正式環境不要顯示這個除錯輸出").
+ *
+ * "每日特殊劇情系統" round — `currentDay` is optional and defaults to a
+ * normal day (undefined never matches GIANT_CAKE_DAY) so every existing
+ * caller/test keeps working unchanged; only UnloadingSystem's own
+ * buildSpawnPlan passes the real day, giving day8 its single-item override. */
+export function buildDailyCargoManifest(currentDay?: number): { manifest: CargoManifestItem[]; capacityReport: VehicleCapacityReport[] } {
+  if (currentDay === GIANT_CAKE_DAY) {
+    const manifest: CargoManifestItem[] = [{ category: 'large', region: 'domestic', preset: GIANT_CAKE_BOX_PRESET }];
+    return { manifest, capacityReport: planVehicleCapacity(manifest) };
+  }
+
   const manifest: CargoManifestItem[] = [];
   for (const category of CARGO_MANIFEST_CATEGORY_ORDER) {
     const count = DAILY_CARGO_CATEGORY_QUOTA[category];

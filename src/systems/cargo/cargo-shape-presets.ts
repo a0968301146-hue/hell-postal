@@ -43,7 +43,10 @@ export type CargoVisualKind =
   | 'large-crate' | 'carpet-roll' | 'furniture-rack' | 'statue-rack'
   | 'ore-crate' | 'timber-bundle'
   | 'frost-crate' | 'frost-crate-fish' | 'frost-metal-box' | 'frost-herb-box'
-  | 'cage';
+  | 'cage'
+  // Day8 finale's own one-off cargo item ("每日特殊劇情系統" round) — see
+  // cargo-visuals.ts's buildCakeBox.
+  | 'cake-box';
 
 /** Which physics collider shape this preset uses (spec四: "Collider優先簡化"
  * — cuboid for everything except barrel/spool, which stay true rolling
@@ -311,6 +314,26 @@ export function pickWeightedCargoShapePreset(category: CargoCategory): CargoShap
   }
   return presets[presets.length - 1];
 }
+
+/** Day8 finale's own one-off cargo item ("每日特殊劇情系統" round, spec:
+ * "今天的貨物：只有一項...外觀像放大版的蛋糕盒，約玩家身高5倍"). Deliberately
+ * kept OUT of LARGE_CARGO_SHAPE_PRESETS/CARGO_SHAPE_PRESETS — this preset
+ * must NEVER be selectable by the normal weighted-random daily pick (it
+ * would be bizarre showing up on an ordinary day); cargo-manifest-planner.ts
+ * reads this export directly and only when building day 8's own manifest.
+ * `category:'large'` still makes it qualify for the same reduced throw
+ * impulse every other 'large' item gets (pickup-system.ts's own
+ * shapeType==='large' check) once spawned. Dimensions are a deliberately
+ * scaled-down "giant" (not literally 5x player height — a truly ~9m object
+ * would not fit through NORTH_GATES' 4m-wide unload opening, see
+ * logistics-layout-data.ts's own NORTH_GATES) — still roughly 1.5x the
+ * largest confirmed preset's own longest dimension (statue-rack, 1.6m), the
+ * biggest item this game has ever spawned. */
+export const GIANT_CAKE_BOX_PRESET: CargoShapePreset = {
+  id: 'giant-cake-box', displayName: '巨型蛋糕盒', category: 'large', sizeClass: 'large',
+  dimensions: { width: 2.4, height: 2.0, depth: 2.4 }, mass: 80, stackable: false, throwable: false,
+  palletAllowed: false, uprightRequired: true, spawnWeight: 0, visualKind: 'cake-box', colliderKind: 'box', color: 0xd88a5a,
+};
 
 /** NOT part of the generation pool (spec五: "暫不進正式生成池...保留在資料
  * 註解或 future presets，不得生成") — kept only as a documented placeholder
