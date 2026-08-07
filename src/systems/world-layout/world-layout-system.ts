@@ -33,7 +33,7 @@ import {
 } from '../../data/world/coffee-room-layout-data';
 import {
   CAMPFIRE_AREA, CAMPFIRE_CENTER, CAMPFIRE_BENCH_NORTH, CAMPFIRE_BENCH_SOUTH, CAMPFIRE_BENCH_EAST, CAMPFIRE_BENCH_WEST,
-  CAMPFIRE_STICK_A, CAMPFIRE_STICK_B, CAMPFIRE_ENTRY_CONNECTOR,
+  CAMPFIRE_STICK_A, CAMPFIRE_STICK_B, CAMPFIRE_ENTRY_CONNECTOR, CAMPFIRE_WEST_EXTENSION,
 } from '../../data/world/campfire-area-data';
 // Day6's relocated scene ("每日特殊劇情系統" round follow-up — moved off the
 // campfire, spec: "傳送至海面上的特殊互動區").
@@ -544,6 +544,26 @@ function buildCampfireArea(scene: THREE.Scene, physics: PhysicsWorldPort): void 
     connectorFloor.position.set(ccx, c.floorY, ccz);
     scene.add(connectorFloor);
     physics.createStaticCuboid(ccx, c.floorY - WALL_THICKNESS / 2, ccz, cWidth / 2, WALL_THICKNESS / 2, cDepth / 2);
+  }
+
+  // West extension — "露營區地形擴建" round (spec: "露營區地面向西方延伸").
+  // Butts directly against CAMPFIRE_AREA's own west edge (same Z-span, no
+  // gap) — a real, collidable static-cuboid floor patch, not just decoration
+  // (spec: "不要只增加裝飾物，要增加真正可碰撞的地面板塊"). Purely additive:
+  // CAMPFIRE_AREA's own rectangle (and everything positioned relative to its
+  // center — the fire, all four benches, the roasting sticks) is completely
+  // untouched by this.
+  {
+    const w = CAMPFIRE_WEST_EXTENSION;
+    const wWidth = w.maxX - w.minX;
+    const wDepth = w.maxZ - w.minZ;
+    const wcx = (w.minX + w.maxX) / 2;
+    const wcz = (w.minZ + w.maxZ) / 2;
+    const westFloor = new THREE.Mesh(new THREE.PlaneGeometry(wWidth, wDepth), stdMat(0x5a4a38));
+    westFloor.rotation.x = -Math.PI / 2;
+    westFloor.position.set(wcx, w.floorY, wcz);
+    scene.add(westFloor);
+    physics.createStaticCuboid(wcx, w.floorY - WALL_THICKNESS / 2, wcz, wWidth / 2, WALL_THICKNESS / 2, wDepth / 2);
   }
 
   // Stone ring + firewood + fire glow.

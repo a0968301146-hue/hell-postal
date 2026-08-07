@@ -36,6 +36,27 @@ export const CAMPFIRE_ENTRY_CONNECTOR = {
   floorY: CAMPFIRE_AREA.floorY,
 };
 
+/** "露營區地形擴建" round (spec: "露營區地面向西方延伸...延伸距離約等同主房
+ * 子的寬度") — a second walkable floor patch directly west of CAMPFIRE_AREA's
+ * own footprint, same Z-span (33..41) so it butts seamlessly against
+ * CAMPFIRE_AREA's own west edge (x=9) with no gap/seam and no void between
+ * them. Deliberately a SEPARATE rectangle rather than widening
+ * CAMPFIRE_AREA itself — CAMPFIRE_CENTER/the four benches/the roasting
+ * sticks are all derived from CAMPFIRE_AREA's own center, so widening that
+ * rectangle asymmetrically would have shifted the campfire/NPC seats west
+ * along with it (spec explicitly forbids moving them: "不要移動營火...不要
+ * 移動NPC座標"). East/south/north of CAMPFIRE_AREA are untouched by this —
+ * only a new patch of ground appears to the west. Width matches BACK_AREA's
+ * own (the main hall's) width, spec's own "主房子的寬度" — an already-
+ * existing area constant, not a new hardcoded number. */
+export const CAMPFIRE_WEST_EXTENSION = {
+  minX: CAMPFIRE_AREA.minX - (BACK_AREA.maxX - BACK_AREA.minX),
+  maxX: CAMPFIRE_AREA.minX,
+  minZ: CAMPFIRE_AREA.minZ,
+  maxZ: CAMPFIRE_AREA.maxZ,
+  floorY: CAMPFIRE_AREA.floorY,
+};
+
 const areaCx = (CAMPFIRE_AREA.minX + CAMPFIRE_AREA.maxX) / 2;
 const areaCz = (CAMPFIRE_AREA.minZ + CAMPFIRE_AREA.maxZ) / 2;
 
