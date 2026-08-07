@@ -137,6 +137,13 @@ export interface CargoData {
    * drives whether coldValue ticks up or down THIS frame. Same "only
    * meaningful for frozen cargo" caveat as coldValue above. */
   isInsideFreezerShelf: boolean;
+  /** "活物貨物系統" round — ONLY meaningful for `category === 'live'` items
+   * (spec三: "所有活物貨物都有calmValue（安撫值）"); stays at its init value
+   * (0) for every other category, never read by anything for them. 0~100,
+   * starts at 100 for a freshly spawned live item (see createDailyCargoData
+   * below) and is ticked by LivingCargoSystem's own per-frame update —
+   * never mutated anywhere else. */
+  calmValue: number;
 }
 
 /** Single-source-of-truth shipping status snapshot (Phase 7: 統一狀態來源)
@@ -204,6 +211,7 @@ export function createCargoData(id: string, preset: CargoLabelPreset, dimensions
     coldValue: 0,
     coldValueCap: 100,
     isInsideFreezerShelf: false,
+    calmValue: 0,
   };
 }
 
@@ -273,6 +281,10 @@ export function createDailyCargoData(id: string, preset: CargoShapePreset, regio
     // once coldValue actually crosses a tier boundary for the first time.
     coldValueCap: 100,
     isInsideFreezerShelf: false,
+    // 活物貨物系統: "生成時：100" — only live cargo ever actually
+    // decays/recovers (LivingCargoSystem's own update() skips every
+    // non-live category), so 0 for everything else is a harmless default.
+    calmValue: preset.category === 'live' ? 100 : 0,
   };
 }
 
@@ -315,6 +327,7 @@ export interface SerializedCargoData {
   coldValue: number;
   coldValueCap: number;
   isInsideFreezerShelf: boolean;
+  calmValue: number;
 }
 
 export function serializeCargoData(data: CargoData): SerializedCargoData {
@@ -336,6 +349,7 @@ export function serializeCargoData(data: CargoData): SerializedCargoData {
     coldValue: data.coldValue,
     coldValueCap: data.coldValueCap,
     isInsideFreezerShelf: data.isInsideFreezerShelf,
+    calmValue: data.calmValue,
   };
 }
 
@@ -358,6 +372,7 @@ export function deserializeCargoData(saved: SerializedCargoData): CargoData {
     coldValue: saved.coldValue,
     coldValueCap: saved.coldValueCap,
     isInsideFreezerShelf: saved.isInsideFreezerShelf,
+    calmValue: saved.calmValue,
   };
 }
 

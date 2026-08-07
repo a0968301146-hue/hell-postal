@@ -2,6 +2,7 @@ import { SettingsManager } from '../settings';
 import { UNSHIPPED_PENALTY_PER_ITEM, LOST_FOUND_MISSED_PENALTY, LOST_ITEM_UNSTORED_PENALTY_PER_ITEM } from './scoring-data';
 import { DepartureSettlement, LostFoundSettlementInput, MailSettlementInput } from './scoring-types';
 import { FrozenSettlementInput } from '../cargo/cold-value-data';
+import { LiveSettlementInput } from '../cargo/living-cargo-data';
 
 /**
  * Owns the departure settlement math (spec四-10: 成功出貨數量/未出貨數量/未
@@ -36,7 +37,8 @@ export class ScoringSystem {
    * snapshot (spec七/八: 兩條獨立項目, computed once, not re-derived here). */
   settleDeparture(
     total: number, shippedCorrect: number, unshipped: number,
-    lostFound: LostFoundSettlementInput, mail: MailSettlementInput, frozen: FrozenSettlementInput
+    lostFound: LostFoundSettlementInput, mail: MailSettlementInput, frozen: FrozenSettlementInput,
+    live: LiveSettlementInput
   ): DepartureSettlement {
     const penalty = unshipped * UNSHIPPED_PENALTY_PER_ITEM;
     // "Add sequential lost-found visitors and held cargo feedback" round
@@ -63,6 +65,19 @@ export class ScoringSystem {
     );
     const totalPenalty = penalty + lostFoundPenalty + lostItemPenalty + mailPenalty + frozenPenalty;
     if (totalPenalty > 0) this.settingsManager.addScore(-totalPenalty);
+
+    // "活物貨物系統" round spec六 — a BONUS (added, never subtracted): each
+    // correctly-shipped live item earns up to ONE UNSHIPPED_PENALTY_PER_ITEM
+    // (the same per-item unit reused everywhere else in this file), scaled
+    // by its own calmValue tier's percentage (living-cargo-data.ts's
+    // getCalmValueTier: 80+->100%, 60->95%, 40->90%, 20->80%, else->70%) —
+    // reuses the SAME per-item magnitude, never a second bonus-only constant.
+    const liveBonus = Math.round(
+      (live.tier100 * 1.0 + live.tier95 * 0.95 + live.tier90 * 0.9 + live.tier80 * 0.8 + live.tier70 * 0.7)
+      * UNSHIPPED_PENALTY_PER_ITEM
+    );
+    if (liveBonus > 0) this.settingsManager.addScore(liveBonus);
+
     const settlement: DepartureSettlement = {
       total,
       shipped: shippedCorrect,
@@ -85,6 +100,13 @@ export class ScoringSystem {
       frozenTier50: frozen.tier50,
       frozenTier25: frozen.tier25,
       frozenPenalty,
+      liveTotal: live.total,
+      liveTier100: live.tier100,
+      liveTier95: live.tier95,
+      liveTier90: live.tier90,
+      liveTier80: live.tier80,
+      liveTier70: live.tier70,
+      liveBonus,
       finalScore: this.settingsManager.progress.score,
     };
     this.onSettlement?.(settlement);

@@ -6,3 +6,4 @@ export * from './cargo-visuals';
 export * from './cargo-label-visuals';
 export * from './cargo-system';
 export * from './cold-value-data';
+export * from './living-cargo-data';

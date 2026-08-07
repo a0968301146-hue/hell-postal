@@ -17,6 +17,7 @@ import { LadderSystem } from '../ladder/ladder-system';
 import { EnvelopeStackSystem } from '../mail/envelope-stack-system';
 import { CargoSystem } from '../cargo/cargo-system';
 import { FrozenSettlementInput, createEmptyFrozenSettlementInput, tallyFrozenColdValue } from '../cargo/cold-value-data';
+import { LiveSettlementInput, createEmptyLiveSettlementInput, tallyLiveCalmValue } from '../cargo/living-cargo-data';
 import { DailyFlowSystem } from '../daily-flow/daily-flow-system';
 import { MailSystem } from '../mail/mail-system';
 import { MailBagSystem } from '../mail/mail-bag-system';
@@ -225,11 +226,11 @@ export class CompleteDayCheatSystem {
     this.isExecuting = true;
     try {
       this.clearHeldState();
-      const { total: cargoTotal, frozen: frozenSettlement } = this.completeCargo();
+      const { total: cargoTotal, frozen: frozenSettlement, live: liveSettlement } = this.completeCargo();
       const mailSettlement = this.completeMail();
       this.lostFoundSystem.completeAllNpcForTesting();
       const lostFoundSettlement = this.lostFoundSystem.settleAtDeparture();
-      this.vehicleControlSystem.forceSettleDayForTesting(cargoTotal, lostFoundSettlement, mailSettlement, frozenSettlement);
+      this.vehicleControlSystem.forceSettleDayForTesting(cargoTotal, lostFoundSettlement, mailSettlement, frozenSettlement, liveSettlement);
       this.completedCheatDayId = this.dailyFlowSystem.currentDay;
     } finally {
       this.isExecuting = false;
@@ -261,21 +262,24 @@ export class CompleteDayCheatSystem {
    * expect (spec: "全部視為送到正確載具...全部計入正常完成數量...不可重複計
    * 算"), then physically destroyed via CargoSystem's own existing public
    * removeCargo() (spec: "清除仍留在世界中的相關Mesh、RigidBody、Collider"). */
-  private completeCargo(): { total: number; frozen: FrozenSettlementInput } {
+  private completeCargo(): { total: number; frozen: FrozenSettlementInput; live: LiveSettlementInput } {
     const total = this.dailyFlowSystem.totalCargoCount;
     // "Add freezer shelves and frozen cargo freshness system" round spec六
     // — read straight off each item's own CURRENT coldValue (whatever it
     // actually decayed/recovered to) BEFORE removeCargo() tears it down,
     // exactly mirroring the real departure scan's own tallying — never
     // fabricated as a flat 100% just because this is the test cheat.
+    // "活物貨物系統" round spec六 — same convention for calmValue.
     const frozen = createEmptyFrozenSettlementInput();
+    const live = createEmptyLiveSettlementInput();
     for (const id of this.dailyFlowSystem.dailyCargoIds) {
       const data = this.cargoSystem.getCargoData(id);
       if (!data) continue;
       if (data.category === 'frozen') tallyFrozenColdValue(frozen, data.coldValue);
+      if (data.category === 'live') tallyLiveCalmValue(live, data.calmValue);
       this.cargoSystem.removeCargo(id);
     }
-    return { total, frozen };
+    return { total, frozen, live };
   }
 
   /** spec二 items 2-6: every single Envelope spawned today (dailyEnvelopeIds

@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { CargoSystem } from './cargo-system';
@@ -5,6 +6,7 @@ import { CargoData } from './cargo-data';
 import { PlayerInteractionData } from '../../core/game-state';
 import { HUD } from '../hud';
 import { PalletSystem } from '../pallet/pallet-system';
+import { MistEmitter } from '../../adapters/three/particle-burst';
 import {
   WEST_WALL_SHELVES, WestWallShelfConfig, SHELF_LEVEL_Y_OFFSETS, SHELF_BOARD_THICKNESS,
   SHELF_FRAME_TOP_MARGIN, BACK_AREA,
@@ -72,6 +74,11 @@ export class FreezerSystem {
   private hud: HUD;
 
   private zones: FreezerZone[] = [];
+  /** "冷凍貨物系統修改" round新增: purely decorative continuous mist/frost
+   * particles per cabinet group (spec二: "持續播放、低密度、循環即可") — never
+   * touches the sensor zones, collision, or the cabinet model itself, and
+   * never read by any gameplay logic. */
+  private mistEmitters: MistEmitter[] = [];
 
   /** How many zones currently claim a given cargo id as "inside" — the ONE
    * source `CargoData.isInsideFreezerShelf` is derived from. A transition
@@ -81,7 +88,7 @@ export class FreezerSystem {
   private claimCounts: Map<string, number> = new Map();
 
   constructor(
-    physics: PhysicsSystem, cargoSystem: CargoSystem, palletSystem: PalletSystem,
+    scene: THREE.Scene, physics: PhysicsSystem, cargoSystem: CargoSystem, palletSystem: PalletSystem,
     playerData: PlayerInteractionData, hud: HUD
   ) {
     this.physics = physics;
@@ -92,6 +99,16 @@ export class FreezerSystem {
 
     for (const shelf of WEST_WALL_SHELVES) {
       this.zones.push(...buildZonesForShelf(physics, shelf));
+    }
+
+    const structureHeight = SHELF_LEVEL_Y_OFFSETS[SHELF_LEVEL_Y_OFFSETS.length - 1] + SHELF_BOARD_THICKNESS / 2 + SHELF_FRAME_TOP_MARGIN;
+    for (const shelf of WEST_WALL_SHELVES) {
+      const origin = new THREE.Vector3(shelf.centerX, BACK_AREA.floorY + structureHeight * 0.6, shelf.centerZ);
+      const halfExtents = new THREE.Vector3(shelf.depth * 0.35, structureHeight * 0.45, shelf.width * 0.4);
+      this.mistEmitters.push(new MistEmitter(scene, origin, {
+        color: 0xeaf6ff, size: 0.05, count: 16, halfExtents,
+        fallSpeed: 0.12, driftSpeed: 0.04, opacity: 0.4,
+      }));
     }
   }
 
@@ -182,6 +199,7 @@ export class FreezerSystem {
   update(deltaTime: number): void {
     this.updateZoneMembership();
     this.tickColdValues(deltaTime);
+    for (const mist of this.mistEmitters) mist.update(deltaTime);
   }
 
   /** Held frozen cargo's own live 冷藏值 readout — a separate, tiny method

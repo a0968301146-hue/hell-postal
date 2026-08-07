@@ -75,5 +75,17 @@ export interface DepartureSettlement {
   frozenTier50: number;
   frozenTier25: number;
   frozenPenalty: number;
+  /** "活物貨物系統" round spec六 — only correctly-shipped `category==='live'`
+   * cargo is ever tallied here (an unshipped live item is already covered
+   * by the normal per-item `penalty` above, never double-counted). A BONUS
+   * (added to score), not a penalty — five fixed tiers, see
+   * living-cargo-data.ts's own getCalmValueTier(). */
+  liveTotal: number;
+  liveTier100: number;
+  liveTier95: number;
+  liveTier90: number;
+  liveTier80: number;
+  liveTier70: number;
+  liveBonus: number;
   finalScore: number;
 }

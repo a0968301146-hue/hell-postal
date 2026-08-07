@@ -666,6 +666,34 @@ export class PickupSystem implements PickupPort {
     }
   }
 
+  /** "失物招領系統修改" round — swaps the CURRENTLY-HELD viewmodel clone's
+   * own geometry/material to match its (already-updated) world mesh, e.g.
+   * right after LostFoundSystem.revealLostItem() swaps the black-ball
+   * placeholder's world mesh to the real model — spec: "黑色球直接在玩家手
+   * 上變成真正的失物外觀", never requiring the item to be dropped/re-picked-
+   * up first. `addHeldViewMesh` above only clones geometry/material ONCE at
+   * pickup time, so without this the viewmodel would keep showing the stale
+   * black sphere indefinitely even after the world mesh (and any later
+   * pickup) already shows the real thing. No-op if `id` isn't anywhere in
+   * the current held stack. */
+  refreshHeldViewMesh(id: string): void {
+    const idx = this.heldStack.indexOf(id);
+    if (idx === -1) return;
+    const obj = this.interactables.get(id);
+    const viewMesh = this.heldViewMeshes[idx];
+    if (!obj || !viewMesh) return;
+
+    const oldGeo = viewMesh.geometry;
+    const oldMat = viewMesh.material;
+    viewMesh.geometry = obj.mesh.geometry.clone();
+    viewMesh.material = Array.isArray(obj.mesh.material)
+      ? obj.mesh.material.map((m) => m.clone())
+      : (obj.mesh.material as THREE.Material).clone();
+    oldGeo.dispose();
+    if (Array.isArray(oldMat)) oldMat.forEach((m) => m.dispose());
+    else oldMat.dispose();
+  }
+
   private disposeViewMesh(mesh: THREE.Mesh): void {
     this.viewModelScene.remove(mesh);
     mesh.traverse((child) => {

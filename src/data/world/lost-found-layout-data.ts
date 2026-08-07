@@ -105,17 +105,3 @@ export const LOST_FOUND_CABINET_WALL_CLEARANCE = 0.15;
  * depth, computed in lost-found-cabinet-system.ts. */
 export const LOST_FOUND_CABINET_ANCHOR_Z = 12.0;
 
-/** "Add lost-found item cleaning system" round — where the player holds E to
- * clean a black-ball placeholder into its real model. Placed in the SAME
- * BACK_AREA nook as the storage cabinet (open floor just south of it, still
- * hugging the shared west wall), rather than inside LOST_FOUND_ROOM itself —
- * the room's own former counter/desk was already removed entirely in an
- * earlier round (see LOST_FOUND_NPC_WAIT_SPOT's own doc comment above:
- * "移除失物招領櫃檯"), so the storage cabinet is the only real "櫃" fixture
- * left to anchor a new counter-side fixture near. Verified clear of the
- * cabinet's own computed footprint (x -9.75..-9.16, z 10.48..13.52 — see
- * lost-found-cabinet-system.ts) with over 1.2m of edge-to-edge clearance on
- * the Z axis, and well north of WEST_WALL_SHELVES' own start
- * (logistics-layout-data.ts: shelfGroupStartZ = LOST_FOUND_DOOR.centerZ +
- * LOST_FOUND_DOOR.halfWidth + 0.8 = 18.3). */
-export const LOST_FOUND_CLEANING_STATION_POS = { x: -9.5, z: 15.0 };

@@ -23,4 +23,9 @@ export interface PickupPort {
    * placing it (the object stays wherever it was left — still invisible/
    * physics-disabled — it's the caller's job to dispose or restore it). */
   forceDropHeld(): void;
+  /** "失物招領系統修改" round — swaps the currently-held VIEWMODEL clone's
+   * geometry/material to match its (already-updated) world mesh, e.g. right
+   * after an in-place model swap while the item is still held. No-op if
+   * `id` isn't anywhere in the current held stack. */
+  refreshHeldViewMesh(id: string): void;
 }

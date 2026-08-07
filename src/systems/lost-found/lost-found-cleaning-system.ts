@@ -1,101 +1,58 @@
 import * as THREE from 'three';
-import { PhysicsSystem } from '../../adapters/rapier/physics-system';
-import { InteractableObject } from '../../shared/types/interactable';
 import { PlayerInteractionData } from '../../core/game-state';
 import { PauseManager } from '../../core/pause-manager';
 import { HUD } from '../hud';
-import { createFloatingLabel } from '../../adapters/three/world-label-system';
-import { LOST_FOUND_CLEANING_STATION_POS, LOST_FOUND_ROOM } from '../../data/world/lost-found-layout-data';
+import { ParticleBurst } from '../../adapters/three/particle-burst';
 import { LostFoundSystem, LOST_ITEM_ID_PREFIX } from './lost-found-system';
 
-const STATION_WIDTH = 0.5;
-const STATION_HEIGHT = 0.7;
-const STATION_DEPTH = 0.4;
-const STATION_INTERACT_DISTANCE = 2.5;
-
-/** spec: "清潔時間：0.5秒". */
-const CLEANING_DURATION_SECONDS = 0.5;
+/** spec: "約1秒左右即可". */
+const CLEANING_DURATION_SECONDS = 1.0;
 
 const CLEANING_PROMPT_TEXT = '正在清潔...';
-const AIM_PROMPT_ACTION = '按住 E 清潔';
+const HOLD_PROMPT_ACTION = '按住 F 清潔';
 
 /**
- * "Add lost-found item cleaning system" round — the standalone "walk to the
- * cleaning station, aim, hold E for 0.5s" interaction that turns a held
- * black-ball placeholder into its real model (via LostFoundSystem's own
- * revealLostItem). Deliberately self-contained and independent of
- * InteractionSystem, mirroring AfterWorkStorySystem's own established
- * pattern for "an aim-driven E interaction with its own hold-timer/HUD
- * feedback" (own THREE.Raycaster against ONLY this station's mesh, own
- * dedicated keydown/keyup listeners for 'KeyE', own per-frame hold-timer) —
- * the station mesh is deliberately NEVER registered into the shared
- * `interactables` map (same reasoning AfterWorkStorySystem's own NPC hitbox
- * doc comment gives: avoids any risk of InteractionSystem's generic pickup/
- * placement fallback chain trying to do something with it), so this file
- * requires zero changes to interaction-system.ts (spec: "不修改...
- * Interaction").
+ * "失物招領系統修改" round — replaces the old fixed cleaning-station/aim/E
+ * flow entirely (spec: "不要再使用「失物招領工作台」...不需要放到工作台、工
+ * 作台UI、工作台互動流程"). The new flow works ANYWHERE, the instant the
+ * player is simply holding an uncleaned lost item: hold F for
+ * CLEANING_DURATION_SECONDS (spec: "拿起→按F→播放粒子→直接變回真正物品"),
+ * no walking to a fixture, no aiming, no putting the item down. Still
+ * entirely self-contained and independent of InteractionSystem (own
+ * dedicated keydown/keyup listeners for 'KeyF'), mirroring the OLD station
+ * system's own established "self-contained, zero interaction-system.ts
+ * changes" convention — only the TRIGGER condition changed, not the overall
+ * shape of the class.
  */
 export class LostFoundCleaningSystem {
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
   private hud: HUD;
   private playerData: PlayerInteractionData;
-  private interactables: Map<string, InteractableObject>;
   private pauseManager: PauseManager;
   private isLocked: () => boolean;
   private lostFoundSystem: LostFoundSystem;
-  private raycaster = new THREE.Raycaster();
-  private stationMesh!: THREE.Mesh;
 
   private isCleaning = false;
   private cleaningElapsed = 0;
   private cleaningItemId: string | null = null;
+  private burst: ParticleBurst | null = null;
 
   constructor(
-    scene: THREE.Scene, physics: PhysicsSystem, camera: THREE.PerspectiveCamera, hud: HUD,
-    playerData: PlayerInteractionData, interactables: Map<string, InteractableObject>,
-    pauseManager: PauseManager, isLockedFn: () => boolean, lostFoundSystem: LostFoundSystem
+    scene: THREE.Scene, camera: THREE.PerspectiveCamera, hud: HUD,
+    playerData: PlayerInteractionData, pauseManager: PauseManager, isLockedFn: () => boolean,
+    lostFoundSystem: LostFoundSystem
   ) {
     this.scene = scene;
     this.camera = camera;
     this.hud = hud;
     this.playerData = playerData;
-    this.interactables = interactables;
     this.pauseManager = pauseManager;
     this.isLocked = isLockedFn;
     this.lostFoundSystem = lostFoundSystem;
 
-    this.buildStation(physics);
-
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
     document.addEventListener('keyup', (e) => this.onKeyUp(e));
-  }
-
-  private buildStation(physics: PhysicsSystem): void {
-    const floorY = LOST_FOUND_ROOM.floorY; // BACK_AREA shares the same floor level
-    const { x, z } = LOST_FOUND_CLEANING_STATION_POS;
-    const centerY = floorY + STATION_HEIGHT / 2;
-
-    const geo = new THREE.BoxGeometry(STATION_WIDTH, STATION_HEIGHT, STATION_DEPTH);
-    const mat = new THREE.MeshStandardMaterial({ color: 0x7a95a0 });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(x, centerY, z);
-    this.scene.add(mesh);
-    this.stationMesh = mesh;
-
-    physics.createStaticCuboid(x, centerY, z, STATION_WIDTH / 2, STATION_HEIGHT / 2, STATION_DEPTH / 2);
-
-    const label = createFloatingLabel('清潔台\n拿著未知失物並按住E清潔', { width: 1.1, bg: 'rgba(20,30,35,0.75)' });
-    label.position.set(x, floorY + STATION_HEIGHT + 0.4, z);
-    this.scene.add(label);
-  }
-
-  private isAimingAtStation(): boolean {
-    const dir = new THREE.Vector3();
-    this.camera.getWorldDirection(dir);
-    this.raycaster.set(this.camera.position, dir);
-    const hits = this.raycaster.intersectObject(this.stationMesh, true);
-    return hits.length > 0 && hits[0].distance <= STATION_INTERACT_DISTANCE;
   }
 
   /** The currently-held item's id, but ONLY if it's a lost item that still
@@ -109,10 +66,9 @@ export class LostFoundCleaningSystem {
   }
 
   private onKeyDown(event: KeyboardEvent): void {
-    if (event.code !== 'KeyE' || event.repeat) return;
+    if (event.code !== 'KeyF' || event.repeat) return;
     if (!this.isLocked() || this.pauseManager.isPaused) return;
     if (this.isCleaning) return;
-    if (!this.isAimingAtStation()) return;
     const id = this.heldDirtyLostItemId();
     if (!id) return;
     this.isCleaning = true;
@@ -121,7 +77,7 @@ export class LostFoundCleaningSystem {
   }
 
   private onKeyUp(event: KeyboardEvent): void {
-    if (event.code !== 'KeyE') return;
+    if (event.code !== 'KeyF') return;
     this.cancelCleaning();
   }
 
@@ -131,6 +87,20 @@ export class LostFoundCleaningSystem {
     this.cleaningElapsed = 0;
     this.cleaningItemId = null;
     this.hud.hideChargeBar();
+    if (this.burst) { this.burst.dispose(); this.burst = null; }
+  }
+
+  /** Roughly where the held-item viewmodel visually reads on screen, in
+   * WORLD space — the viewmodel itself renders through a separate
+   * camera-local overlay pass (see pickup-system.ts's own viewModelScene),
+   * so a world-space particle burst can only ever approximate that position
+   * (camera-forward + a slight downward offset, mirroring the viewmodel's
+   * own screen-center-low anchor) rather than exactly coincide with it —
+   * close enough for a short decorative sparkle effect. */
+  private heldItemWorldPosition(): THREE.Vector3 {
+    const forward = new THREE.Vector3();
+    this.camera.getWorldDirection(forward);
+    return this.camera.position.clone().add(forward.multiplyScalar(0.6)).add(new THREE.Vector3(0, -0.15, 0));
   }
 
   /** Called every frame from game-app.ts's own paused-gated update block,
@@ -140,14 +110,26 @@ export class LostFoundCleaningSystem {
    * documents for cargoHookSystem/spraySystem. */
   update(deltaTime: number): void {
     if (this.isCleaning) {
-      // Re-validate every frame (aim drifted off the station, or the held
-      // item changed/was dropped) — cancels exactly like an early E release.
-      if (!this.isAimingAtStation() || this.playerData.heldObjectId !== this.cleaningItemId) {
+      // Re-validate every frame (item dropped/changed) — cancels exactly
+      // like an early F release.
+      if (this.playerData.heldObjectId !== this.cleaningItemId) {
         this.cancelCleaning();
       } else {
         this.cleaningElapsed += deltaTime;
         this.hud.showChargeBar(Math.min(this.cleaningElapsed / CLEANING_DURATION_SECONDS, 1));
-        this.hud.showInteractionPrompt('清潔台', CLEANING_PROMPT_TEXT);
+        this.hud.showInteractionPrompt('清潔中', CLEANING_PROMPT_TEXT);
+
+        const origin = this.heldItemWorldPosition();
+        if (!this.burst) {
+          this.burst = new ParticleBurst(this.scene, origin, {
+            color: 0xfff6c8, count: 22, size: 0.045, speedMin: 0.15, speedMax: 0.45,
+            durationSeconds: CLEANING_DURATION_SECONDS + 0.3, gravity: 0.05, opacity: 0.85,
+          });
+        } else {
+          this.burst.setOrigin(origin);
+          this.burst.update(deltaTime);
+        }
+
         if (this.cleaningElapsed >= CLEANING_DURATION_SECONDS) {
           // Non-null: isCleaning only stays true while cleaningItemId was
           // set at start and never cleared until completion (see
@@ -159,18 +141,18 @@ export class LostFoundCleaningSystem {
           this.cleaningItemId = null;
           this.hud.hideChargeBar();
           this.lostFoundSystem.revealLostItem(id);
-          // spec: "完成後：物品名稱恢復正常" — refresh the prompt right away
-          // rather than leaving the stale "？？？" text on screen until some
-          // unrelated event happens to re-show it.
-          const obj = this.interactables.get(id);
-          if (obj) this.hud.showInteractionPrompt(obj.displayName, '已清潔完成');
         }
         return;
       }
+    } else if (this.burst) {
+      // Cleaning ended (completed or cancelled) but the burst is still
+      // fading out — let it finish on its own rather than cutting it dead.
+      this.burst.update(deltaTime);
+      if (this.burst.done) this.burst = null;
     }
 
-    if (this.isAimingAtStation() && this.heldDirtyLostItemId()) {
-      this.hud.showInteractionPrompt('清潔台', AIM_PROMPT_ACTION);
+    if (this.heldDirtyLostItemId()) {
+      this.hud.showInteractionPrompt('未知失物', HOLD_PROMPT_ACTION);
     }
   }
 }

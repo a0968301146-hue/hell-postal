@@ -44,6 +44,7 @@ import { MainMenuSystem } from '../systems/main-menu/main-menu-system';
 import { loadRunState, saveRunState, generateRunId } from '../systems/main-menu/run-state-data';
 // "Add freezer shelves and frozen cargo freshness system" round.
 import { FreezerSystem } from '../systems/cargo/freezer-system';
+import { LivingCargoSystem } from '../systems/cargo/living-cargo-system';
 
 /** Every gameplay system GameApp constructs once at startup and keeps for
  * the rest of the session (Phase 6: "系統建立、建構子注入、註冊" moved out of
@@ -110,6 +111,8 @@ export interface GameSystems {
   mainMenuSystem: MainMenuSystem;
   /** "Add freezer shelves and frozen cargo freshness system" round. */
   freezerSystem: FreezerSystem;
+  /** "活物貨物系統" round. */
+  livingCargoSystem: LivingCargoSystem;
 }
 
 /** Back-references into GameApp's own small orchestration methods — the
@@ -297,12 +300,13 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   const lostFoundSystem = new LostFoundSystem(
     scene, physics, interactables, pickupSystem, lostFoundUI
   );
-  // "Add lost-found item cleaning system" round — the black-ball-reveal
-  // interaction's own standalone system (self-contained raycast/keydown, see
-  // its own class doc comment for why this needs zero InteractionSystem
-  // changes).
+  // "失物招領系統修改" round — the black-ball-reveal interaction's own
+  // standalone system (self-contained keydown, see its own class doc
+  // comment for why this needs zero InteractionSystem changes). Fires
+  // anywhere the instant the player holds F while carrying an uncleaned
+  // lost item — no fixed station anymore.
   const lostFoundCleaningSystem = new LostFoundCleaningSystem(
-    scene, physics, camera, hud, playerData, interactables, pauseManager,
+    scene, camera, hud, playerData, pauseManager,
     () => playerController.isLocked, lostFoundSystem
   );
 
@@ -499,7 +503,13 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // "冷凍貨物系統修改" round三 added a PalletSystem dependency: per-location
   // decay rates need palletSystem.isCargoOnAnyPallet() to tell "resting on a
   // pallet" apart from "resting on the floor".
-  const freezerSystem = new FreezerSystem(physics, cargoSystem, palletSystem, playerData, hud);
+  const freezerSystem = new FreezerSystem(scene, physics, cargoSystem, palletSystem, playerData, hud);
+  // "活物貨物系統" round — entirely independent of FreezerSystem (spec七: "不
+  // 要影響目前冷藏值系統"), its own calmValue field/decay triggers/F-soothe/
+  // HUD panel.
+  const livingCargoSystem = new LivingCargoSystem(
+    scene, camera, physics, cargoSystem, playerData, pauseManager, () => playerController.isLocked, hud
+  );
   // Foldable ladder + immovable tool cart ("Add ladder tool station and
   // envelope vacuum" round一/二) — built near the pallet system since the
   // ladder's own wall slot is derived from the pallet racks' own wall
@@ -653,6 +663,6 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     upgradeSystem, similarCargoHighlight, mediaPlayerSystem,
     toolSystem, cargoHookSystem, spraySystem,
     ladderSystem, toolStationSystem, envelopeVacuumSystem,
-    afterWorkStorySystem, completeDayCheatSystem, mainMenuSystem, freezerSystem,
+    afterWorkStorySystem, completeDayCheatSystem, mainMenuSystem, freezerSystem, livingCargoSystem,
   };
 }

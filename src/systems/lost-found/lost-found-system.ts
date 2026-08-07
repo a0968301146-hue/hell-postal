@@ -441,6 +441,13 @@ export class LostFoundSystem {
 
     obj.displayName = preset.displayName;
     this.cleanedItemIds.add(id);
+    // "失物招領系統修改" round — the swap above only ever updated the
+    // (hidden-while-held) WORLD mesh; if the player is still holding this
+    // item right now (the new flow's whole point — no more drop-at-station
+    // requirement), the visible viewmodel clone needs the exact same swap
+    // or it would keep showing the stale black sphere. No-op if not
+    // currently held.
+    this.pickupSystem.refreshHeldViewMesh(id);
     return true;
   }
 

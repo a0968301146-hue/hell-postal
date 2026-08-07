@@ -1,4 +1,5 @@
 import { coldValueTierColor } from '../cargo/cold-value-data';
+import { calmValueTierColor } from '../cargo/living-cargo-data';
 
 export class HUD {
   private hudRoot: HTMLElement;
@@ -22,6 +23,17 @@ export class HUD {
   private coldValuePercentEl: HTMLElement;
   private coldValueTrackEl: HTMLElement;
   private coldValueFillEl: HTMLElement;
+  /** "活物貨物系統" round spec四 — same right-side vertical-slider shape as
+   * coldValue above, offset horizontally so both can be visible together
+   * (spec七: "兩個UI可以同時顯示在右側" — a single item can't currently be
+   * both frozen AND live at once since CargoCategory is exclusive, but a
+   * multi-carry player could easily be holding one of each simultaneously,
+   * so the two panels are independent DOM elements/positions rather than
+   * sharing one). */
+  private calmValuePanelEl: HTMLElement;
+  private calmValuePercentEl: HTMLElement;
+  private calmValueTrackEl: HTMLElement;
+  private calmValueFillEl: HTMLElement;
   /** "冷凍貨物系統修改" round五 (UI correction pass) — the crosshair-aim
    * "\n冷藏值：XX%" line is no longer its own separate DOM element/window
    * (spec四: "這個提示直接顯示在準心互動UI即可。不用另外開視窗。"); instead
@@ -139,6 +151,29 @@ export class HUD {
     this.coldValuePanelEl.appendChild(this.coldValuePercentEl);
     this.coldValuePanelEl.appendChild(this.coldValueTrackEl);
     hud.appendChild(this.coldValuePanelEl);
+
+    // "活物貨物系統" round spec四 — same right-side vertical-slider shape as
+    // 冷藏值 above (spec: "位置：與冷藏值相同"), offset to its own slot
+    // (#calm-value-panel sits further right, see style.css) so both can be
+    // visible together without overlapping. No color-tier fixed CSS either
+    // — background set inline per-frame (calmValueTierColor: green/yellow/
+    // red), hidden entirely unless holding live cargo.
+    this.calmValuePanelEl = document.createElement('div');
+    this.calmValuePanelEl.id = 'calm-value-panel';
+    const calmLabel = document.createElement('div');
+    calmLabel.id = 'calm-value-label';
+    calmLabel.textContent = '安撫值';
+    this.calmValuePercentEl = document.createElement('div');
+    this.calmValuePercentEl.id = 'calm-value-percent';
+    this.calmValueTrackEl = document.createElement('div');
+    this.calmValueTrackEl.id = 'calm-value-slider';
+    this.calmValueFillEl = document.createElement('div');
+    this.calmValueFillEl.id = 'calm-value-slider-fill';
+    this.calmValueTrackEl.appendChild(this.calmValueFillEl);
+    this.calmValuePanelEl.appendChild(calmLabel);
+    this.calmValuePanelEl.appendChild(this.calmValuePercentEl);
+    this.calmValuePanelEl.appendChild(this.calmValueTrackEl);
+    hud.appendChild(this.calmValuePanelEl);
   }
 
   /** "Add tool hotbar and cargo hook" round spec九: "工具欄UI可接入既有HUD容
@@ -268,6 +303,22 @@ export class HUD {
     this.coldValueFillEl.style.background = coldValueTierColor(coldValue);
     this.coldValuePanelEl.classList.add('visible');
     this.coldValuePanelEl.classList.toggle('cold-value-blink', coldValue < 25);
+  }
+
+  /** "活物貨物系統" round spec四 — shown only while actively holding a
+   * live-category item (caller passes null otherwise); mirrors
+   * updateColdValueStatus above exactly (top-anchored fill height = calmValue
+   * %, background color tiered via calmValueTierColor), no blink. */
+  updateCalmValueStatus(calmValue: number | null): void {
+    if (calmValue === null) {
+      this.calmValuePanelEl.classList.remove('visible');
+      return;
+    }
+    const pct = Math.max(0, Math.min(100, Math.round(calmValue)));
+    this.calmValuePercentEl.textContent = `${pct}%`;
+    this.calmValueFillEl.style.height = `${pct}%`;
+    this.calmValueFillEl.style.background = calmValueTierColor(calmValue);
+    this.calmValuePanelEl.classList.add('visible');
   }
 
   /** "冷凍貨物系統修改" round四, redone in round五 — the crosshair-aim
@@ -433,6 +484,7 @@ export class HUD {
     lostItemTotal: number; lostItemHandedOver: number; lostItemStoredCount: number; lostItemUnstoredCount: number; lostItemPenalty: number;
     mailTotal: number; mailShipped: number; mailUnshipped: number; mailPenalty: number;
     frozenTotal: number; frozenTier100: number; frozenTier75: number; frozenTier50: number; frozenTier25: number; frozenPenalty: number;
+    liveTotal: number; liveTier100: number; liveTier95: number; liveTier90: number; liveTier80: number; liveTier70: number; liveBonus: number;
     finalScore: number; onContinue: () => void;
   }): void {
     const {
@@ -440,6 +492,7 @@ export class HUD {
       lostItemTotal, lostItemHandedOver, lostItemStoredCount, lostItemUnstoredCount, lostItemPenalty,
       mailTotal, mailShipped, mailUnshipped, mailPenalty,
       frozenTotal, frozenTier100, frozenTier75, frozenTier50, frozenTier25, frozenPenalty,
+      liveTotal, liveTier100, liveTier95, liveTier90, liveTier80, liveTier70, liveBonus,
       finalScore, onContinue,
     } = params;
     // "Add sequential lost-found visitors and held cargo feedback" round
@@ -479,6 +532,13 @@ export class HUD {
       <p>100%新鮮：${frozenTier100}　75%新鮮：${frozenTier75}　50%新鮮：${frozenTier50}　25%新鮮：${frozenTier25}</p>
       <p>冷藏扣分：${frozenPenalty > 0 ? '-' : ''}${frozenPenalty}</p>
     ` : '';
+    // "活物貨物系統" round spec六 — same independent-line-item convention as
+    // frozenLine above, but a BONUS (added, never subtracted).
+    const liveLine = liveTotal > 0 ? `
+      <p>今日活物貨物總數：${liveTotal}</p>
+      <p>100%安撫：${liveTier100}　95%安撫：${liveTier95}　90%安撫：${liveTier90}　80%安撫：${liveTier80}　70%安撫：${liveTier70}</p>
+      <p>安撫加分：+${liveBonus}</p>
+    ` : '';
     this.shipmentSummaryEl.innerHTML = `
       <p class="summary-title">六台載具已出發</p>
       <p>今日貨物總數：${total}</p>
@@ -489,6 +549,7 @@ export class HUD {
       ${lostItemLine}
       ${mailLine}
       ${frozenLine}
+      ${liveLine}
       <p>當日最終分數：${finalScore}</p>
       <p class="summary-title">今日貨物已全部送出</p>
       <button id="settlement-continue-btn">繼續</button>

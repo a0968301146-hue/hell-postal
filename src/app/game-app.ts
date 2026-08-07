@@ -276,6 +276,10 @@ export class GameApp {
       // else while the manual/settlement panel is open is the least
       // surprising choice).
       s.freezerSystem.update(deltaTime);
+      // "活物貨物系統" round — same paused-gated convention as freezerSystem
+      // just above (the actual calmValue tick must freeze while paused,
+      // exactly like coldValue does).
+      s.livingCargoSystem.update(deltaTime);
       // "Add ladder tool station and envelope vacuum" round一 — same
       // "no-op unless currently being carried" self-guard as
       // palletSystem.update just above.
@@ -363,6 +367,10 @@ export class GameApp {
     // (the coldValue TICK itself stays inside the paused block above —
     // freezerSystem.update(deltaTime) — only this HUD refresh runs here).
     s.freezerSystem.refreshHeldItemHud();
+    // "活物貨物系統" round — same unconditional convention as
+    // freezerSystem.refreshHeldItemHud above (a pause must take effect on
+    // the held-item 安撫值 HUD readout the same frame it begins).
+    s.livingCargoSystem.refreshHeldItemHud();
     // "冷凍貨物系統修改" round四 — same unconditional convention, reusing
     // `inspectedCargo` (computed just above by cargoInspectionSystem.update())
     // rather than a second raycast.
