@@ -41,6 +41,13 @@ export class HUD {
    * #interaction-prompt text it already renders every frame. Empty string
    * whenever not aiming at frozen cargo. */
   private aimedColdValueSuffix = '';
+  /** "準心貨物數值提示" round — same suffix pattern as aimedColdValueSuffix
+   * above, for live cargo's own "F 安撫\n安撫值：XX%" lines (spec: "冷凍貨物
+   * 只顯示冷藏值...活物貨物只顯示安撫值...若同時具有兩種屬性，則冷藏值在
+   * 前、安撫值在後" — showInteractionPrompt below appends cold THEN calm, so
+   * this ordering holds automatically whenever both are ever non-empty).
+   * Empty string whenever not aiming at live cargo. */
+  private aimedCalmValueSuffix = '';
 
   constructor() {
     const hud = document.createElement('div');
@@ -339,12 +346,31 @@ export class HUD {
     this.aimedColdValueSuffix = `\n冷藏值：${pct}%`;
   }
 
-  /** Appends the current crosshair-aim 冷藏值 suffix (empty string unless
-   * genuinely aiming at frozen cargo) directly onto the SAME prompt text —
-   * spec四: "除了原本物件名稱，請增加冷藏值：XX%...直接顯示在準心互動UI即
-   * 可，不用另外開視窗". */
+  /** "準心貨物數值提示" round — the crosshair-aim "F 安撫\n安撫值：XX%"
+   * lines for live cargo, same suffix mechanism as updateAimedColdValue
+   * above (caller passes null when not aiming at live cargo — see
+   * LivingCargoSystem.refreshAimedCalmValueHud). The "F 安撫" hint line is
+   * shown unconditionally whenever aiming at live cargo, regardless of
+   * whether it's currently held (spec: "若玩家沒有拿起活物，則仍顯示F安撫
+   * 提示即可" — soothing itself still only works while actually held, this
+   * is purely a discoverability hint). */
+  updateAimedCalmValue(calmValue: number | null): void {
+    if (calmValue === null) {
+      this.aimedCalmValueSuffix = '';
+      return;
+    }
+    const pct = Math.max(0, Math.min(100, Math.round(calmValue)));
+    this.aimedCalmValueSuffix = `\nF 安撫\n安撫值：${pct}%`;
+  }
+
+  /** Appends the current crosshair-aim 冷藏值/安撫值 suffixes (each empty
+   * unless genuinely aiming at that category of cargo) directly onto the
+   * SAME prompt text — never a second DOM element/window. Cold before calm
+   * (spec: "若同時具有兩種屬性...依此順序排列") — only one is ever non-empty
+   * today since CargoCategory is exclusive, but the concatenation order
+   * itself already encodes the required priority for whenever that changes. */
   showInteractionPrompt(name: string, action: string): void {
-    this.promptEl.textContent = `${name}\n${action}${this.aimedColdValueSuffix}`;
+    this.promptEl.textContent = `${name}\n${action}${this.aimedColdValueSuffix}${this.aimedCalmValueSuffix}`;
     this.promptEl.style.whiteSpace = 'pre-line';
     this.promptEl.classList.add('visible');
   }

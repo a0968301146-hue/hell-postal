@@ -375,6 +375,9 @@ export class GameApp {
     // `inspectedCargo` (computed just above by cargoInspectionSystem.update())
     // rather than a second raycast.
     s.freezerSystem.refreshAimedColdValueHud(inspectedCargo);
+    // "準心貨物數值提示" round — same unconditional convention, reusing the
+    // SAME `inspectedCargo` rather than a second raycast.
+    s.livingCargoSystem.refreshAimedCalmValueHud(inspectedCargo);
     // "Add day one dock story event" round — same unconditional/self-
     // guarding convention as cargoHookSystem/spraySystem/envelopeVacuumSystem
     // above: this class deliberately never uses PauseManager itself (see its
