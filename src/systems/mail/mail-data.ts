@@ -38,8 +38,10 @@ export const MAIL_DESTINATIONS: MailDestinationInfo[] = [
   { id: 'taipei', displayName: '阿爾戈斯', region: 'domestic', icon: '🏰', color: 0xd4af37 },
   // 赫菲斯提亞｜矮人鍛造之城 — 矮人族鍛造都市，火焰與鐵的工匠文化。
   { id: 'taichung', displayName: '赫菲斯提亞', region: 'domestic', icon: '⚒️', color: 0xcc5500 },
-  // 東雲／常世群島｜東方群島 — 東方海域群島，海上貿易與朝霞海浪意象
-  // （刻意不使用任何現實地球國家的國旗／國徽等素材）。
+  // 常世群島｜東方群島 — 東方海域群島，海上貿易與朝霞海浪意象（刻意不使用
+  // 任何現實地球國家的國旗／國徽等素材）。"世界觀地區命名修正" 回合：「東
+  // 雲」不是正式地區名稱，僅保留作為常世群島內某座島嶼的候選名稱（見
+  // envelope-data.ts 的舊版地址範例）。
   { id: 'japan', displayName: '東方群島', region: 'international', icon: '🌅', color: 0xff7f50 },
   // 阿耳忒彌西亞｜精靈之島 — 精靈族島嶼國度，森林、月光與自然魔法。
   { id: 'usa', displayName: '精靈之島', region: 'international', icon: '🌙', color: 0x5f8a6f },
