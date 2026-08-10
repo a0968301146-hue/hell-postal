@@ -20,12 +20,29 @@ export interface MailDestinationInfo {
 /** Four destinations, roughly evenly generated (spec二) — the ONE place
  * destination/region/display data lives; mail-system.ts's daily spawn and
  * mail-bag-system.ts's pattern selection both read this list rather than
- * hand-picking destinations inline. */
+ * hand-picking destinations inline.
+ *
+ * "世界地名與郵票圖樣調整" round — real-world place names replaced with the
+ * game's own fantasy world locations (`id` values are UNCHANGED internal
+ * keys, never shown to the player — only displayName/icon/color are player-
+ * facing, so this is the ONE place their whole in-game identity is defined;
+ * every OTHER system, e.g. envelope-dispatch-machine-data.ts's own
+ * REGION_GRID, must read displayName from here via getMailDestination()
+ * rather than keeping a second hardcoded copy — spec: "不要讓不同系統各自硬
+ * 編碼地點名稱"). domestic/international grouping is UNCHANGED from before
+ * (still 2+2) — 阿爾戈斯/赫菲斯提亞 are both mainland-kingdom cities,
+ * 東方群島/精靈之島 are both overseas territories, mirroring the original
+ * Taiwan-domestic/overseas-international split exactly. */
 export const MAIL_DESTINATIONS: MailDestinationInfo[] = [
-  { id: 'taipei', displayName: '台北', region: 'domestic', icon: '🏙️', color: 0x4169e1 },
-  { id: 'taichung', displayName: '台中', region: 'domestic', icon: '🌇', color: 0xf4a460 },
-  { id: 'japan', displayName: '日本', region: 'international', icon: '🗻', color: 0xff69b4 },
-  { id: 'usa', displayName: '美國', region: 'international', icon: '🗽', color: 0x228b22 },
+  // 阿爾戈斯｜王都 — 王國首都，政治與商業中心，繁華華麗（王城/城門意象）。
+  { id: 'taipei', displayName: '阿爾戈斯', region: 'domestic', icon: '🏰', color: 0xd4af37 },
+  // 赫菲斯提亞｜矮人鍛造之城 — 矮人族鍛造都市，火焰與鐵的工匠文化。
+  { id: 'taichung', displayName: '赫菲斯提亞', region: 'domestic', icon: '⚒️', color: 0xcc5500 },
+  // 東雲／常世群島｜東方群島 — 東方海域群島，海上貿易與朝霞海浪意象
+  // （刻意不使用任何現實地球國家的國旗／國徽等素材）。
+  { id: 'japan', displayName: '東方群島', region: 'international', icon: '🌅', color: 0xff7f50 },
+  // 阿耳忒彌西亞｜精靈之島 — 精靈族島嶼國度，森林、月光與自然魔法。
+  { id: 'usa', displayName: '精靈之島', region: 'international', icon: '🌙', color: 0x5f8a6f },
 ];
 
 export function getMailDestination(id: MailDestination): MailDestinationInfo {

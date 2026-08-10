@@ -1126,7 +1126,7 @@ export class InteractionSystem {
           const canPress = this.envelopeDispatchMachineSystem.canPressPackButton(this.camera.position, this.pickupSystem.heldCount);
           this.hud.showInteractionPrompt(newTarget.displayName, canPress ? 'E 打包信件' : '需空手且靠近按鈕');
         } else if (this.packedMailBagSystem.isBag(newTarget.id)) {
-          // Crosshair inspect (spec十: "台北信封袋\n內含5封信\nE 拿起") — the
+          // Crosshair inspect (spec十: "阿爾戈斯信封袋\n內含5封信\nE 拿起") — the
           // actual pickup itself needs no special-cased branch at all here;
           // it already falls through to Priority 1's fully generic
           // this.pickupSystem.pickUp(this.currentTarget) below, exactly like

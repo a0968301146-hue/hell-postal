@@ -27,23 +27,27 @@ export interface StampableItem {
   appliedStampId: string | null;
 }
 
+// "世界地名與郵票圖樣調整" round — recipient/street text reworked to fit the
+// same fantasy locations destination-data.ts now uses (this whole flow is
+// disabled, ENABLE_LEGACY_COUNTER/ENABLE_LEGACY_MAIL_FLOW both false, but
+// kept internally consistent rather than left referencing real-world cities).
 const ENVELOPE_ADDRESSES: { recipient: string; street: string; destId: string }[] = [
-  // 台中市 x3
-  { recipient: '王小明', street: '台灣大道二段', destId: 'taichung-city' },
-  { recipient: '林美玲', street: '中港路一段', destId: 'taichung-city' },
-  { recipient: '張雅婷', street: '公益路三段', destId: 'taichung-city' },
-  // 台北市 x3
-  { recipient: 'Emily Chen', street: '信義路五段', destId: 'taipei-city' },
-  { recipient: '陳大衛', street: '忠孝東路四段', destId: 'taipei-city' },
-  { recipient: '李秀英', street: '中山北路二段', destId: 'taipei-city' },
-  // 日本 x3
-  { recipient: '佐藤優', street: '東京都新宿區', destId: 'japan' },
-  { recipient: '田中花子', street: '大阪府堺市', destId: 'japan' },
-  { recipient: '鈴木太郎', street: '京都府上京區', destId: 'japan' },
-  // 美國 x3
-  { recipient: 'Alex Smith', street: 'California', destId: 'united-states' },
-  { recipient: 'John Williams', street: 'New York', destId: 'united-states' },
-  { recipient: 'Sarah Johnson', street: 'Texas', destId: 'united-states' },
+  // 赫菲斯提亞 x3
+  { recipient: '鐵爐岡·柏克', street: '鍛造大道二段', destId: 'taichung-city' },
+  { recipient: '灰砧·霍恩', street: '熔火街一段', destId: 'taichung-city' },
+  { recipient: '鋼須·多林', street: '礦工路三段', destId: 'taichung-city' },
+  // 阿爾戈斯 x3
+  { recipient: '艾蜜莉亞·凡爾', street: '王城大道五段', destId: 'taipei-city' },
+  { recipient: '大衛·亞爾登', street: '商會街四段', destId: 'taipei-city' },
+  { recipient: '秀英·蘭道', street: '中央廣場二段', destId: 'taipei-city' },
+  // 東方群島 x3
+  { recipient: '朝井優', street: '常世島新宿町', destId: 'japan' },
+  { recipient: '汐花子', street: '朝霞島堺町', destId: 'japan' },
+  { recipient: '潮太郎', street: '東雲島上京町', destId: 'japan' },
+  // 精靈之島 x3
+  { recipient: '銀葉·星語', street: '月光林道', destId: 'united-states' },
+  { recipient: '風歌·夜露', street: '古樹之徑', destId: 'united-states' },
+  { recipient: '露娜·星塵', street: '藤蔓小徑', destId: 'united-states' },
 ];
 
 export function createAllEnvelopes(): EnvelopeData[] {

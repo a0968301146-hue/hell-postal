@@ -6,11 +6,17 @@ export interface Destination {
   color: number;
 }
 
+// "世界地名與郵票圖樣調整" round — this legacy counter/stamp-minigame flow is
+// currently disabled (ENABLE_LEGACY_COUNTER/ENABLE_LEGACY_MAIL_FLOW both
+// false, feature-flags.ts), but its own data still mirrors the same
+// real-world place names the live mail-data.ts once did — renamed here to
+// the same fantasy locations for consistency, ids left unchanged (internal
+// keys, never shown to the player).
 export const DESTINATIONS: Destination[] = [
-  { id: 'taichung-city', name: '台中市', displayName: '台中市', icon: '🌇', color: 0xF4A460 },
-  { id: 'taipei-city', name: '台北市', displayName: '台北市', icon: '🏙️', color: 0x4169E1 },
-  { id: 'japan', name: '日本', displayName: '日本', icon: '🗻', color: 0xFF69B4 },
-  { id: 'united-states', name: '美國', displayName: '美國', icon: '🗽', color: 0x228B22 },
+  { id: 'taichung-city', name: '赫菲斯提亞', displayName: '赫菲斯提亞', icon: '⚒️', color: 0xCC5500 },
+  { id: 'taipei-city', name: '阿爾戈斯', displayName: '阿爾戈斯', icon: '🏰', color: 0xD4AF37 },
+  { id: 'japan', name: '東方群島', displayName: '東方群島', icon: '🌅', color: 0xFF7F50 },
+  { id: 'united-states', name: '精靈之島', displayName: '精靈之島', icon: '🌙', color: 0x5F8A6F },
 ];
 
 export function getDestinationById(id: string): Destination | undefined {

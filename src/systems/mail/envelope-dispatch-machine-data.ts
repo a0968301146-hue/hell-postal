@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { BACK_AREA, WALL_THICKNESS, WEST_WALL_SHELVES } from '../world-layout';
 import { LOST_FOUND_DOOR } from '../../data/world/lost-found-layout-data';
 import { MailDestination } from './mail-types';
+import { getMailDestination } from './mail-data';
 
 /** "Add regional envelope dispatch machine" round, reshaped into a
  * basketball-arcade/chute silhouette by its first follow-up round, then
@@ -117,16 +118,22 @@ export interface DispatchHoleConfig {
  * faces WEST (-X) to aim at this machine — mirrors PALLET_WALL_SLOTS's own
  * verified reasoning for the opposite-facing east wall (there: facing +X,
  * left=-Z/north) — so facing -X, the player's own left hand points +Z
- * (south). Spec's own 2x2 layout (top-left 台中, top-right 日本, bottom-left
- * 台北, bottom-right 美國) is described from the PLAYER's own point of view,
- * so "left" columns sit at +Z (south) and "right" columns at -Z (north) in
- * world space. Unchanged by this round's own explicit instruction ("不需要
- * 因為機台向東延伸而改變洞口配置"). */
-const REGION_GRID: { region: MailDestination; displayName: string; row: 'top' | 'bottom'; col: 'left' | 'right' }[] = [
-  { region: 'taichung', displayName: '台中', row: 'top', col: 'left' },
-  { region: 'japan', displayName: '日本', row: 'top', col: 'right' },
-  { region: 'taipei', displayName: '台北', row: 'bottom', col: 'left' },
-  { region: 'usa', displayName: '美國', row: 'bottom', col: 'right' },
+ * (south). Spec's own 2x2 layout (top-left 赫菲斯提亞, top-right 東方群島,
+ * bottom-left 阿爾戈斯, bottom-right 精靈之島) is described from the
+ * PLAYER's own point of view, so "left" columns sit at +Z (south) and
+ * "right" columns at -Z (north) in world space. Unchanged by this round's
+ * own explicit instruction ("不需要因為機台向東延伸而改變洞口配置").
+ *
+ * "世界地名與郵票圖樣調整" round — displayName is no longer hardcoded here;
+ * it's read from getMailDestination() (mail-data.ts's own MAIL_DESTINATIONS,
+ * the ONE place a destination's player-facing name lives) so this grid and
+ * every stamp/envelope/mail-bag texture can never drift out of sync with
+ * each other again (spec: "確認郵票圖樣與目的地資料是同一套資料來源"). */
+const REGION_GRID: { region: MailDestination; row: 'top' | 'bottom'; col: 'left' | 'right' }[] = [
+  { region: 'taichung', row: 'top', col: 'left' },
+  { region: 'japan', row: 'top', col: 'right' },
+  { region: 'taipei', row: 'bottom', col: 'left' },
+  { region: 'usa', row: 'bottom', col: 'right' },
 ];
 
 /** Genuinely-recessed hole sizing (spec二's own suggested ranges: width
@@ -154,7 +161,7 @@ const holeCenterX = backPanelFrontX - HOLE_DEPTH / 2;
 
 export const DISPATCH_HOLES: DispatchHoleConfig[] = REGION_GRID.map((cell) => ({
   region: cell.region,
-  displayName: cell.displayName,
+  displayName: getMailDestination(cell.region).displayName,
   centerX: holeCenterX,
   centerY: cell.row === 'top' ? gridCenterY + rowOffsetY : gridCenterY - rowOffsetY,
   // "col: left" is the PLAYER's own left (south, +Z) — see REGION_GRID's own doc comment above.

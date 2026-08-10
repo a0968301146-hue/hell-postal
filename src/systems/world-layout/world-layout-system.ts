@@ -135,6 +135,7 @@ export function createLogisticsScene(scene: THREE.Scene, physics: PhysicsWorldPo
   buildCampfireArea(scene, physics);
   buildMainHallSkylight(scene, physics);
   buildSeaInteractionPlatform(scene, physics);
+  buildIthacaTownSign(scene);
 
   const interactables = new Map<string, InteractableObject>();
   buildBulletinBoard(scene, physics, interactables);
@@ -368,6 +369,24 @@ function buildBackArea(scene: THREE.Scene, physics: PhysicsWorldPort): THREE.Mes
   addWall(scene, physics, wallMat, (landGapR + maxX) / 2, midY, maxZ, maxX - landGapR, ceilingHeight, WALL_THICKNESS);
 
   return floor;
+}
+
+/** "世界地名與郵票圖樣調整" round — a purely decorative welcome sign naming
+ * this whole building's own town (spec: "伊塔卡港鎮｜主角故鄉、物流中心" —
+ * confirmed with the requester that this should be a landmark/signboard
+ * ONLY, not a new mail destination/stamp, since Ithaca is the PLAYER's own
+ * location rather than something they'd ship mail to). Mounted just inside
+ * the south wall's own land-vehicle gate — the first thing a player sees
+ * walking in from the land-vehicle dock — as a simple camera-facing sprite
+ * label, the exact same convention every other room/area name already uses
+ * (buildCampfireArea's own "營火區" label, the coffee room's "休息室" label).
+ * No collider, no interactable registration — text only. */
+function buildIthacaTownSign(scene: THREE.Scene): void {
+  const label = createFloatingLabel('伊塔卡港鎮\n異世界物流中心', {
+    width: 1.3, canvasHeight: 140, fontSize: 30, bg: 'rgba(20,35,45,0.78)', fg: '#ffe9b3',
+  });
+  label.position.set(LAND_GATE.centerX, BACK_AREA.floorY + 2.6, BACK_AREA.maxZ - 1.2);
+  scene.add(label);
 }
 
 /** West-side lost & found room ("Reduce daily cargo and add lost found

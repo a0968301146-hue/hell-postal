@@ -148,7 +148,7 @@ export class MailBagSystem {
   }
 
   /** Cycles this bag's destinationPattern through the four destinations
-   * (spec六: 台北/台中/日本/美國) — a simple press-F-to-cycle rather than a
+   * (spec六: 阿爾戈斯/赫菲斯提亞/東方群島/精靈之島) — a simple press-F-to-cycle rather than a
    * separate popup menu, reusing the existing E/F key surface with zero new
    * UI system. Region is auto-derived and re-locked alongside the pattern.
    * "Allow mail box pattern changes with contents" round: F now works
