@@ -13,14 +13,15 @@ export const MAIL_WORK_AREA_Z = 17.0;
 
 /** Stamp table — moved to the north wall ("Improve mail table placement and
  * open mail bags" round 一: "工作桌貼齊北牆"). Sits in the solid wall segment
- * WEST of the north-a unload gate (gate span x -2..2) — clear of both north
- * unload ports/chutes and their UNLOAD_ZONE drop path (x -1.7..6.7,
- * z 10.3..14.3, see daily-flow-data.ts), and positioned between the
- * lost-found cabinet (x -9.85..-9.16, z 10.48..13.52) and the 開始卸貨/結束
- * 今天 button posts (x=-4, z 11.2/12.8) with clear standing gaps on both
- * sides (spec: "與左右其他設施保留明顯間距，不要連成一整排") — table spans
- * x -7.8..-6.2, leaving ~1.36m to the cabinet's east edge and ~1.8m to the
- * button posts. posZ is derived from the north wall's own physical inner
+ * WEST of the north cargo-chute room's own doorway ("重製出貨口" round —
+ * data/world/cargo-chute-room-layout-data.ts's CARGO_CHUTE_DOORWAY, span
+ * x -1.8..1.8) — clear of both the doorway itself and the 開始卸貨/結束今天
+ * button posts (relocated the same round, x≈-3.3), and positioned between
+ * the lost-found cabinet (x -9.85..-9.16, z 10.48..13.52) and those buttons
+ * with clear standing gaps on both sides (spec: "與左右其他設施保留明顯間
+ * 距，不要連成一整排") — table spans x -7.8..-6.2, leaving ~1.36m to the
+ * cabinet's east edge and comfortable clearance to the button posts. posZ is
+ * derived from the north wall's own physical inner
  * face (BACK_AREA.minZ + WALL_THICKNESS/2) plus a small real-world gap
  * (STAMP_TABLE_WALL_CLEARANCE) so the table's back never overlaps the wall's
  * own Mesh/Collider (spec: "保留約0.05~0.1m，避免Mesh／Collider重疊") —

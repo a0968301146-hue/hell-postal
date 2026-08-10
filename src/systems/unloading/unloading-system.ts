@@ -6,8 +6,8 @@ import {
   DailyFlowSystem, UNLOAD_PORTS, UnloadPortConfig, UNLOAD_SPAWN_JITTER_X, UNLOAD_SPAWN_JITTER_Z,
   UNLOAD_BUTTON_POS, UNLOAD_BURST_CONFIG,
 } from '../daily-flow';
-import { BACK_AREA } from '../world-layout';
-import { SCENE_CONFIG } from '../world-layout';
+import { BACK_AREA, SCENE_CONFIG } from '../world-layout';
+import { CARGO_CHUTE_ROOM } from '../../data/world/cargo-chute-room-layout-data';
 import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/world-label-system';
 
 const IDLE_TEXT = '開始卸貨\n按 E 卸貨';
@@ -138,68 +138,69 @@ export class UnloadingSystem {
     this.dailyFlowSystem = dailyFlowSystem;
     this.onFirstUnload = onFirstUnload;
     UNLOAD_PORTS.forEach((config, i) => {
-      this.buildChute(config);
-      this.ports.push(this.buildGate(config, i));
+      this.buildChuteHousing(config);
+      this.ports.push(this.buildHatch(config, i));
     });
     this.buildButton();
   }
 
-  private buildChute(config: UnloadPortConfig): void {
-    const { topX, topY, topZ, bottomX, bottomZ, width, thickness } = config.chute;
-    const bottomY = BACK_AREA.floorY;
-    const rise = topY - bottomY;
-    const run = bottomZ - topZ;
-    const length = Math.sqrt(rise * rise + run * run);
-    // Same convention as scene-manager.ts's buildRamp(): positive angle
-    // tilts the box's +Z-local end DOWN and further +Z, i.e. sloping down
-    // from the gate (topZ) toward the room interior (bottomZ). Cargo no
-    // longer slides down this (it launches on its own trajectory instead),
-    // but the ramp housing stays as the physical "launch tube" the burst
-    // mechanism protrudes from (spec四: "牆面裝置") — now steeper since
-    // topY sits near the ceiling instead of the floor.
-    const angle = Math.atan2(rise, run);
+  /** "重製出貨口" round — 4 vertical wall panels forming a square shaft
+   * above the new north room (spec三: "不可視區域...玩家正常視角不可見的位
+   * 置"), from the room's own ceiling line up to the chute's own top. Purely
+   * a containment/occlusion housing (keeps the spawn point genuinely hidden
+   * and stops any errant lateral velocity from letting cargo drift out
+   * sideways) — replaces the old single tilted "launch tube" ramp entirely. */
+  private buildChuteHousing(config: UnloadPortConfig): void {
+    const { centerX, centerZ, baseY, topY, width, depth, wallThickness } = config.chute;
+    const height = topY - baseY;
+    const centerY = (baseY + topY) / 2;
+    const mat = new THREE.MeshStandardMaterial({ color: 0x555850 });
 
-    const cx = (topX + bottomX) / 2;
-    const cy = (topY + bottomY) / 2;
-    const cz = (topZ + bottomZ) / 2;
+    const wallSpecs: [number, number, number, number][] = [
+      [centerX - width / 2 - wallThickness / 2, centerZ, wallThickness, depth + wallThickness * 2],
+      [centerX + width / 2 + wallThickness / 2, centerZ, wallThickness, depth + wallThickness * 2],
+      [centerX, centerZ - depth / 2 - wallThickness / 2, width, wallThickness],
+      [centerX, centerZ + depth / 2 + wallThickness / 2, width, wallThickness],
+    ];
+    for (const [x, z, sx, sz] of wallSpecs) {
+      const geo = new THREE.BoxGeometry(sx, height, sz);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(x, centerY, z);
+      this.scene.add(mesh);
+      this.physics.createStaticCuboid(x, centerY, z, sx / 2, height / 2, sz / 2);
+    }
 
-    const geo = new THREE.BoxGeometry(width, thickness, length);
-    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x777a70 }));
-    mesh.position.set(cx, cy, cz);
-    mesh.rotation.x = angle;
-    this.scene.add(mesh);
-
-    this.physics.createStaticCuboidRotatedX(cx, cy, cz, width / 2, thickness / 2, length / 2, angle, 0.3);
-
-    // "卸貨區" floating label, centered over the drop zone — separate from
-    // the gate's own label below (spec: "卸貨區漂浮文字改為：「卸貨區」").
+    // "卸貨區" floating label, centered over the drop zone.
     const zoneLabel = createFloatingLabel('卸貨區', { width: 0.8, bg: 'rgba(30,30,20,0.75)' });
-    zoneLabel.position.set(topX, BACK_AREA.floorY + 1.6, (topZ + bottomZ) / 2 + 1.0);
+    zoneLabel.position.set(centerX, baseY + 0.6, centerZ);
     this.scene.add(zoneLabel);
   }
 
-  private buildGate(config: UnloadPortConfig, index: number): PortRuntime {
-    const { centerX, centerZ, width, height, thickness, openOffsetY } = config.gate;
-    const gateClosedY = BACK_AREA.floorY + height / 2;
+  /** "重製出貨口" round — the visual "gate" open/close cue is now a
+   * horizontal hatch/trapdoor at the chute's own base, sliding straight UP
+   * into the pipe when open (reuses the EXACT SAME gateAnimT lerp animation
+   * every other part of this class already drives — see update()/
+   * resetGate()/updateDeviceShake() below, unchanged — just applied to a
+   * horizontal panel's Y position instead of a vertical wall panel's).
+   * Floats well above player height at the room's own ceiling line, so
+   * unlike the old vertical wall-gate (which sat in a passable opening a
+   * player could otherwise walk through) this needs no permanent
+   * player-blocking safety collider — nothing needs to be stopped from
+   * crossing a plane 4.5m+ off the floor. */
+  private buildHatch(config: UnloadPortConfig, index: number): PortRuntime {
+    const { centerX, centerZ, centerY, width, depth, thickness, openOffsetY } = config.gate;
+    const gateClosedY = centerY;
     const gateOpenY = gateClosedY + openOffsetY;
     const gateBaseX = centerX;
 
-    const geo = new THREE.BoxGeometry(width, height, thickness);
+    const geo = new THREE.BoxGeometry(width, thickness, depth);
     const gateMat = new THREE.MeshStandardMaterial({ color: 0x5a4a35, emissive: 0x000000 });
     const mesh = new THREE.Mesh(geo, gateMat);
     mesh.position.set(centerX, gateClosedY, centerZ);
     this.scene.add(mesh);
 
-    // Permanent invisible safety collider spanning the FULL wall opening
-    // (floor to ceiling) — stays solid at all times regardless of the
-    // visual panel's open/close animation, so nothing can ever physically
-    // cross this wall plane in either direction (spec: "防止貨品飛出場景的
-    // 隱藏安全碰撞"). Cargo always spawns already on the room side of this
-    // plane, so it never needs to cross it.
-    this.physics.createStaticCuboid(centerX, BACK_AREA.floorY + BACK_AREA.ceilingHeight / 2, centerZ, width / 2, BACK_AREA.ceilingHeight / 2, thickness / 2);
-
-    const label = createFloatingLabel(`北側卸貨口 ${index + 1}`, { width: 0.9, bg: 'rgba(30,30,20,0.75)' });
-    label.position.set(centerX + 0.6, gateClosedY + height / 2 + 0.5, centerZ);
+    const label = createFloatingLabel(UNLOAD_PORTS.length > 1 ? `北側出貨口 ${index + 1}` : '北側出貨口', { width: 0.9, bg: 'rgba(30,30,20,0.75)' });
+    label.position.set(centerX + 0.6, gateClosedY + 0.5, centerZ);
     this.scene.add(label);
 
     return { config, gateMesh: mesh, gateMat, gateClosedY, gateOpenY, gateBaseX, deviceShakeTimer: 0 };
@@ -359,7 +360,10 @@ export class UnloadingSystem {
     const halfW = preset.dimensions.width / 2;
     const halfD = preset.dimensions.depth / 2;
     const halfH = preset.dimensions.height / 2;
-    const ceilingLimitY = BACK_AREA.floorY + BACK_AREA.ceilingHeight - halfH - CEILING_CLEARANCE_BUFFER;
+    // "重製出貨口" round — the ceiling limit is now the CHUTE's own top
+    // (cargo spawns well above the room's own visible ceiling line, inside
+    // the pipe), not BACK_AREA's ceiling.
+    const chuteTopLimitY = port.config.chute.topY - halfH - CEILING_CLEARANCE_BUFFER;
 
     const fitting = port.config.lanes.filter((l) => halfW <= l.maxHalfWidth && halfD <= l.maxHalfDepth);
     const candidates = fitting.length > 0 ? fitting : port.config.lanes;
@@ -370,13 +374,13 @@ export class UnloadingSystem {
       return aFirst - bFirst;
     });
 
-    let lastCandidate = { x: port.config.gate.centerX, y: Math.min(port.config.spawnY, ceilingLimitY), z: port.config.chute.topZ + 0.5 };
+    let lastCandidate = { x: port.config.chute.centerX, y: Math.min(port.config.spawnY, chuteTopLimitY), z: port.config.chute.centerZ };
     for (const lane of ordered) {
       const jitterX = (Math.random() - 0.5) * Math.min(UNLOAD_SPAWN_JITTER_X, lane.maxHalfWidth * 0.3);
       const jitterZ = (Math.random() - 0.5) * Math.min(UNLOAD_SPAWN_JITTER_Z, lane.maxHalfDepth * 0.3);
       const x = lane.x + jitterX;
       const z = lane.z + jitterZ;
-      const y = Math.min(port.config.spawnY + lane.yOffset, ceilingLimitY);
+      const y = Math.min(port.config.spawnY + lane.yOffset, chuteTopLimitY);
       lastCandidate = { x, y, z };
       const blocked = this.physics.castShape(new THREE.Vector3(x, y, z), new THREE.Vector3(halfW, halfH, halfD));
       if (!blocked) return lastCandidate;
@@ -438,32 +442,32 @@ export class UnloadingSystem {
    * "落到倉庫地面後不得再自動搬動玩家整理中的物品") — it can never be
    * re-added, since spawnOne is the only place new entries are created. */
   private isInUnloadDangerZone(port: UnloadPortConfig, pos: THREE.Vector3): boolean {
-    const withinX = pos.x > port.gate.centerX - port.gate.width / 2 - 0.5 && pos.x < port.gate.centerX + port.gate.width / 2 + 0.5;
-    const withinZ = pos.z > BACK_AREA.minZ - 0.5 && pos.z < port.chute.bottomZ + 0.8;
-    const elevated = pos.y > BACK_AREA.floorY + 0.4;
+    const withinX = pos.x > port.chute.centerX - port.chute.width / 2 - 0.3 && pos.x < port.chute.centerX + port.chute.width / 2 + 0.3;
+    const withinZ = pos.z > port.chute.centerZ - port.chute.depth / 2 - 0.3 && pos.z < port.chute.centerZ + port.chute.depth / 2 + 0.3;
+    const elevated = pos.y > CARGO_CHUTE_ROOM.floorY + 0.4;
     return withinX && withinZ && elevated;
   }
 
   /** Safe-recovery relocation (spec四) — moves the item to an open landing
-   * spot well past the chute, keeps its Rigidbody/Collider intact (just
-   * re-enables + repositions them), and gives it a light inward nudge rather
-   * than dropping it dead-still. Never marks it shipped/organized/otherwise
-   * "already processed" (spec: "不得直接刪除或計算為已處理") — from the
-   * physics engine's perspective this is indistinguishable from the item
-   * having simply landed there on its own. */
+   * spot in the middle of the new room, keeps its Rigidbody/Collider intact
+   * (just re-enables + repositions them), and gives it a light downward
+   * nudge rather than dropping it dead-still. Never marks it shipped/
+   * organized/otherwise "already processed" (spec: "不得直接刪除或計算為已處
+   * 理") — from the physics engine's perspective this is indistinguishable
+   * from the item having simply landed there on its own. */
   private recoverStuckItem(id: string, port: UnloadPortConfig): void {
     const obj = this.cargoSystem.getInteractable(id);
     if (!obj) return;
-    const safeX = port.gate.centerX;
-    const safeZ = port.chute.bottomZ + 1.3;
-    const safeY = BACK_AREA.floorY + obj.height / 2 + 0.05;
+    const safeX = port.chute.centerX;
+    const safeZ = port.chute.centerZ;
+    const safeY = CARGO_CHUTE_ROOM.floorY + obj.height / 2 + 0.05;
     obj.mesh.position.set(safeX, safeY, safeZ);
     obj.mesh.rotation.set(0, 0, 0);
     if (obj.rigidBody) {
       this.physics.setBodyEnabled(obj.rigidBody, true);
       obj.rigidBody.setTranslation({ x: safeX, y: safeY, z: safeZ }, true);
       obj.rigidBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
-      obj.rigidBody.setLinvel({ x: 0, y: -0.2, z: 0.8 }, true);
+      obj.rigidBody.setLinvel({ x: 0, y: -0.2, z: 0 }, true);
       obj.rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
     }
   }

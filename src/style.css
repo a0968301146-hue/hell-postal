@@ -1348,6 +1348,23 @@ body.text-size-large #interaction-prompt { font-size: 17px; }
   background: rgba(255, 255, 255, 0.35);
 }
 
+/* "工具欄未解鎖道具規格重製" round — a skill not yet open today stays fully
+ * visible (spec五: "可以看到/可以知道技能存在") but reads as dark/locked as a
+ * whole row (name/desc/current-effect all dim together, not just the status
+ * line), matching the tool cart's own "visible but dark" convention for
+ * locked-but-knowable content. */
+.upgrade-row.locked {
+  opacity: 0.45;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.upgrade-row-locked {
+  margin: 6px 0 0;
+  font-size: 13px;
+  font-weight: bold;
+  color: #6a4e28;
+}
+
 .upgrade-row-header {
   display: flex;
   justify-content: space-between;
@@ -1797,6 +1814,21 @@ body.text-size-large #interaction-prompt { font-size: 17px; }
 
 .tool-loadout-pool-item:hover {
   background: rgba(255, 255, 255, 0.12);
+}
+
+/* "工具欄未解鎖道具規格重製" round — tool cart items stay VISIBLE but dark/
+ * locked for a not-yet-open tool (spec四: "顯示圖示，但是暗色，不可裝備，不
+ * 可使用"), the opposite of the player hotbar's own "genuinely blank" slot
+ * treatment (tool-system.ts). Dims icon/name/status text and swaps the
+ * pointer cursor so it visibly reads as unavailable without hiding it. */
+.tool-loadout-pool-item.locked {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.tool-loadout-pool-item.locked:hover {
+  background: rgba(0, 0, 0, 0.15);
 }
 
 .tool-loadout-pool-icon {

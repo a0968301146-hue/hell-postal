@@ -10,10 +10,13 @@ import { InteractableObject } from '../../shared/types/interactable';
 // exposes.
 import { PhysicsWorldPort } from '../../shared/types/physics-world-port';
 import {
-  WALL_THICKNESS, BACK_AREA, LAND_GATE, PIER, SEA_GATE, NORTH_GATES,
+  WALL_THICKNESS, BACK_AREA, LAND_GATE, PIER, SEA_GATE,
   WEST_WALL_SHELVES, SHELF_LEVEL_Y_OFFSETS, SHELF_BOARD_THICKNESS, SHELF_POST_THICKNESS, SHELF_FRAME_TOP_MARGIN,
   BULLETIN_BOARD, TV_TABLE, TELEVISION,
 } from './logistics-layout-data';
+// "重製出貨口" round — the new north cargo-chute room, replacing NORTH_GATES
+// entirely.
+import { CARGO_CHUTE_ROOM, CARGO_CHUTE_DOORWAY } from '../../data/world/cargo-chute-room-layout-data';
 import { createInteractableObject } from '../../shared/types/interactable';
 // Reads the room/gate coordinates from the neutral data layer (Phase 6:
 // "模組邊界修正" — moved out of systems/lost-found so world-layout and
@@ -66,6 +69,11 @@ export interface SceneData {
    * placement surface ("Reduce daily cargo and add lost found desk" round
    * 二), same pattern as pierFloor. */
   lostFoundFloor: THREE.Mesh;
+  /** North cargo-chute room's own floor ("重製出貨口" round) — same "separate
+   * mesh, needs its own placement-surface registration" reasoning as
+   * lostFoundFloor/pierFloor above; without this, dropping cargo onto this
+   * new room's floor would silently fail PickupSystem's placement raycast. */
+  cargoChuteFloor: THREE.Mesh;
   /** West-wall freezer cabinets' own level-top boards ("Add freezer shelves
    * and frozen cargo freshness system" round, redesign pass) — 3 boards per
    * cabinet group, 6 total (2 groups). Registered as additional PickupSystem
@@ -128,6 +136,7 @@ export function createLogisticsScene(scene: THREE.Scene, physics: PhysicsWorldPo
 
   const floor = buildBackArea(scene, physics);
   const pierFloor = buildPierAndWater(scene, physics);
+  const cargoChuteFloor = buildCargoChuteRoom(scene, physics);
   const lostFoundFloor = buildLostFoundRoom(scene, physics);
   const shelfSurfaces = buildWestWallShelves(scene, physics);
   buildFishingPier(scene, physics);
@@ -140,7 +149,7 @@ export function createLogisticsScene(scene: THREE.Scene, physics: PhysicsWorldPo
   const interactables = new Map<string, InteractableObject>();
   buildBulletinBoard(scene, physics, interactables);
   const television = buildTelevisionAndTable(scene, physics, interactables);
-  return { interactables, floor, pierFloor, lostFoundFloor, shelfSurfaces, television };
+  return { interactables, floor, pierFloor, lostFoundFloor, cargoChuteFloor, shelfSurfaces, television };
 }
 
 /** Wall-mounted bulletin board ("Add bulletin board upgrade system" round
@@ -322,30 +331,17 @@ function buildBackArea(scene: THREE.Scene, physics: PhysicsWorldPort): THREE.Mes
   const wallMat = stdMat(0x707070, { side: THREE.DoubleSide });
   const midY = floorY + ceilingHeight / 2;
 
-  // North wall — gaps for the daily-unload docks (spec "刪除北邊房間" round:
-  // the separate front-office room this used to sit in has been removed
-  // entirely; this back area is now the whole building, and its own north
-  // wall carries the unload docks directly — see NORTH_GATES/UnloadingSystem).
-  // Physical openings only — UnloadingSystem's own gate panels + chutes fill
-  // them visually, same pattern as every other gate opening in this file.
-  // Generalized to N gates ("Add dual elevated unloading ports and day-one
-  // special cargo" round 二): walk the gates left-to-right, building one
-  // solid wall segment before each gap and a final segment after the last
-  // one, so this collapses to the original single-gate behavior when
-  // NORTH_GATES has exactly one entry.
-  const sortedNorthGates = [...NORTH_GATES].sort((a, b) => a.centerX - b.centerX);
-  let northCursor = minX;
-  for (const gate of sortedNorthGates) {
-    const gapL = gate.centerX - gate.halfWidth;
-    const gapR = gate.centerX + gate.halfWidth;
-    if (gapL > northCursor) {
-      addWall(scene, physics, wallMat, (northCursor + gapL) / 2, midY, minZ, gapL - northCursor, ceilingHeight, WALL_THICKNESS);
-    }
-    northCursor = gapR;
-  }
-  if (maxX > northCursor) {
-    addWall(scene, physics, wallMat, (northCursor + maxX) / 2, midY, minZ, maxX - northCursor, ceilingHeight, WALL_THICKNESS);
-  }
+  // North wall — single doorway into the new north cargo-chute room
+  // ("重製出貨口" round spec一/二: replaces the old dual NORTH_GATES
+  // wall-mounted unload docks entirely — see cargo-chute-room-layout-data.ts
+  // and buildCargoChuteRoom below). Physical opening only — UnloadingSystem
+  // builds its own chute-housing/hatch geometry above/inside the new room,
+  // same "structural walls here, feature furniture in its own system" split
+  // every other gate opening in this file already follows.
+  const chuteGapL = CARGO_CHUTE_DOORWAY.centerX - CARGO_CHUTE_DOORWAY.halfWidth;
+  const chuteGapR = CARGO_CHUTE_DOORWAY.centerX + CARGO_CHUTE_DOORWAY.halfWidth;
+  addWall(scene, physics, wallMat, (minX + chuteGapL) / 2, midY, minZ, chuteGapL - minX, ceilingHeight, WALL_THICKNESS);
+  addWall(scene, physics, wallMat, (chuteGapR + maxX) / 2, midY, minZ, maxX - chuteGapR, ceilingHeight, WALL_THICKNESS);
 
   // West wall — gap for the lost-found room's door ("Reduce daily cargo and
   // add lost found desk" round 二: 西側新增小型前台房間). The new room's own
@@ -367,6 +363,46 @@ function buildBackArea(scene: THREE.Scene, physics: PhysicsWorldPort): THREE.Mes
   const landGapR = LAND_GATE.centerX + LAND_GATE.halfWidth;
   addWall(scene, physics, wallMat, (minX + landGapL) / 2, midY, maxZ, landGapL - minX, ceilingHeight, WALL_THICKNESS);
   addWall(scene, physics, wallMat, (landGapR + maxX) / 2, midY, maxZ, maxX - landGapR, ceilingHeight, WALL_THICKNESS);
+
+  return floor;
+}
+
+/** North cargo-chute room ("重製出貨口" round spec二) — a medium room
+ * (data/world/cargo-chute-room-layout-data.ts's own CARGO_CHUTE_ROOM,
+ * reusing the coffee room's documented 6m×6m precedent) sitting directly
+ * against BACK_AREA's own north wall, already gapped at CARGO_CHUTE_DOORWAY
+ * (see buildBackArea above). Only north/west/east walls are built here —
+ * the south side is intentionally left open, mirroring buildLostFoundRoom's
+ * own "shared wall, only one side actually builds it" convention for two
+ * adjoining rooms (BACK_AREA's own north wall already covers that
+ * boundary). The vertical chute/hatch/spawn-point geometry itself is NOT
+ * built here — that's UnloadingSystem's own furniture, same "structural
+ * walls here, feature geometry in its own system" split every other room in
+ * this file follows. */
+function buildCargoChuteRoom(scene: THREE.Scene, physics: PhysicsWorldPort): THREE.Mesh {
+  const { minX, maxX, minZ, maxZ, floorY, ceilingHeight } = CARGO_CHUTE_ROOM;
+  const width = maxX - minX;
+  const depth = maxZ - minZ;
+  const cx = (minX + maxX) / 2;
+  const cz = (minZ + maxZ) / 2;
+
+  const floorGeo = new THREE.PlaneGeometry(width, depth);
+  const floor = new THREE.Mesh(floorGeo, stdMat(0x55554e));
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(cx, floorY, cz);
+  scene.add(floor);
+  physics.createStaticCuboid(cx, floorY - WALL_THICKNESS / 2, cz, width / 2, WALL_THICKNESS / 2, depth / 2);
+
+  const wallMat = stdMat(0x707070, { side: THREE.DoubleSide });
+  const midY = floorY + ceilingHeight / 2;
+
+  addWall(scene, physics, wallMat, cx, midY, minZ, width, ceilingHeight, WALL_THICKNESS); // north wall (solid)
+  addWall(scene, physics, wallMat, minX, midY, cz, WALL_THICKNESS, ceilingHeight, depth); // west wall
+  addWall(scene, physics, wallMat, maxX, midY, cz, WALL_THICKNESS, ceilingHeight, depth); // east wall
+
+  const roomLabel = createFloatingLabel('北側集中出貨區', { width: 1.0, bg: 'rgba(30,30,20,0.75)' });
+  roomLabel.position.set(cx, floorY + ceilingHeight - 0.6, cz);
+  scene.add(roomLabel);
 
   return floor;
 }

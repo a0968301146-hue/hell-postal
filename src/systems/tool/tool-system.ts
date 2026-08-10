@@ -116,12 +116,35 @@ export class ToolSystem {
     return el;
   }
 
+  /** "工具欄未解鎖道具規格重製" round — a slot whose tool isn't open yet today
+   * renders GENUINELY BLANK (spec三: "不是灰色圖示/鎖頭圖示/可以選但不能使
+   * 用，而是完全沒有圖示...空白欄位"), not merely dimmed — deliberately the
+   * OPPOSITE visual treatment from the tool cart's own locked pool items
+   * (which stay visible-but-dark, see tool-loadout-menu-ui.ts). 'empty' is
+   * never gated (isToolUnlockedOnDay's own contract), so slot 1 always
+   * renders normally. */
   private renderSlotContent(index: number): void {
     const el = this.slotEls[index];
     const tool = this.slotTools[index];
+    const iconEl = el.querySelector('.hotbar-icon')!;
+    const nameEl = el.querySelector('.hotbar-name')!;
+    if (!isToolUnlockedOnDay(tool, this.getCurrentDay())) {
+      iconEl.textContent = '';
+      nameEl.textContent = '';
+      return;
+    }
     const def = TOOL_DEFINITIONS[tool];
-    el.querySelector('.hotbar-icon')!.textContent = def.icon;
-    el.querySelector('.hotbar-name')!.textContent = def.displayName;
+    iconEl.textContent = def.icon;
+    nameEl.textContent = def.displayName;
+  }
+
+  /** Re-renders every slot's lock-aware content against whatever day it is
+   * RIGHT NOW — called once from setLoadout (construction/cart-close) and
+   * again from create-game-systems.ts on every day transition (a newly
+   * unlocked tool must appear in its slot immediately, not just next time
+   * the loadout happens to change). */
+  refreshLoadoutDisplay(): void {
+    for (let i = 0; i < 4; i++) this.renderSlotContent(i);
   }
 
   /** Applies a NEW slots-2-4 loadout ("Add ladder tool station and envelope
@@ -136,7 +159,7 @@ export class ToolSystem {
     if (current !== 'empty' && !(this.slotTools as ActiveTool[]).includes(current)) {
       this.trySelect('empty');
     }
-    for (let i = 0; i < 4; i++) this.renderSlotContent(i);
+    this.refreshLoadoutDisplay();
 
     // Re-attach the cooldown mask to whichever slot (if any) currently
     // equips cargoHook — detaches it entirely if cargoHook isn't equipped

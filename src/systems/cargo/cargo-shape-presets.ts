@@ -325,10 +325,10 @@ export function pickWeightedCargoShapePreset(category: CargoCategory): CargoShap
  * impulse every other 'large' item gets (pickup-system.ts's own
  * shapeType==='large' check) once spawned. Dimensions are a deliberately
  * scaled-down "giant" (not literally 5x player height — a truly ~9m object
- * would not fit through NORTH_GATES' 4m-wide unload opening, see
- * logistics-layout-data.ts's own NORTH_GATES) — still roughly 1.5x the
- * largest confirmed preset's own longest dimension (statue-rack, 1.6m), the
- * biggest item this game has ever spawned. */
+ * would not fit through the north cargo chute's own ~4.2m interior, see
+ * data/world/cargo-chute-room-layout-data.ts's own CARGO_CHUTE_PIPE) — still
+ * roughly 1.5x the largest confirmed preset's own longest dimension
+ * (statue-rack, 1.6m), the biggest item this game has ever spawned. */
 export const GIANT_CAKE_BOX_PRESET: CargoShapePreset = {
   id: 'giant-cake-box', displayName: '巨型蛋糕盒', category: 'large', sizeClass: 'large',
   dimensions: { width: 2.4, height: 2.0, depth: 2.4 }, mass: 80, stackable: false, throwable: false,

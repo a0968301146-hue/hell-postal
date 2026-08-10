@@ -9,6 +9,7 @@
 // for why (Phase 6: world-layout and lost-found both read this file rather
 // than importing each other).
 import { LOST_FOUND_ROOM, LOST_FOUND_DOOR } from '../../data/world/lost-found-layout-data';
+import { CARGO_CHUTE_ROOM } from '../../data/world/cargo-chute-room-layout-data';
 import { CARGO_SHAPE_PRESETS } from '../cargo/cargo-shape-presets';
 
 export const WALL_THICKNESS = 0.2;
@@ -37,21 +38,13 @@ export const BACK_AREA = {
   ceilingHeight: 6,
 };
 
-/** Gaps in the back area's own NORTH wall (minZ) for the daily unloading
- * docks (spec "刪除北邊房間" round: the front-office room this used to sit
- * in was removed entirely — the back area is now the whole building, and
- * its own north wall carries the unload docks directly). Two independent
- * ports side by side ("Add dual elevated unloading ports and day-one
- * special cargo" round 二: 東方新增第二個到貨口) — scene-manager.ts's
- * buildBackArea() iterates this array to punch one gap per entry, with
- * solid wall segments before/between/after them. See daily-flow-data.ts
- * (UNLOAD_PORTS) for the gate/chute/spawn geometry built around each
- * opening. Port B (east, centerX 5, span [3,7]) sits 1m clear of Port A's
- * own span ([-2,2]) and 3m clear of BACK_AREA's east wall (maxX 10). */
-export const NORTH_GATES = [
-  { id: 'north-a', centerX: 0, halfWidth: 2.0 },
-  { id: 'north-b', centerX: 5, halfWidth: 2.0 },
-];
+// NORTH_GATES (the old dual wall-mounted unload docks) removed entirely
+// ("重製出貨口" round spec一) — replaced by CARGO_CHUTE_ROOM/
+// CARGO_CHUTE_DOORWAY (data/world/cargo-chute-room-layout-data.ts), a single
+// room+doorway north of BACK_AREA's own wall. See world-layout-system.ts's
+// buildBackArea() for the new single-gap wall logic, and
+// daily-flow-data.ts/unloading-system.ts for the new vertical-chute spawn
+// geometry.
 
 /** Player spawn point — inside the back area, a short distance south of
  * the north unload dock's drop zone (spec "刪除北邊房間" round: previously
@@ -399,10 +392,13 @@ export const SEA_GATE = {
 // LOST_FOUND_ROOM's own footprint (lost-found-layout-data.ts) so item
 // placement (PickupSystem.validatePlacement) isn't rejected just for being
 // west of BACK_AREA's own wall, inside the new room.
+// "重製出貨口" round: folds in CARGO_CHUTE_ROOM's own footprint too (same
+// reasoning as LOST_FOUND_ROOM above — item placement inside the new north
+// room must not be rejected just for sitting north of BACK_AREA's own wall).
 export const WORLD_BOUNDS = {
   minX: Math.min(BACK_AREA.minX, LOST_FOUND_ROOM.minX) - 1,
   maxX: Math.max(BACK_AREA.maxX, PIER.maxX) + 40, // generous — land/sea vehicles travel well beyond the walls
-  minZ: BACK_AREA.minZ - 1,
+  minZ: Math.min(BACK_AREA.minZ, CARGO_CHUTE_ROOM.minZ) - 1,
   maxZ: BACK_AREA.maxZ + 40,
 };
 

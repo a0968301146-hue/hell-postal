@@ -111,7 +111,7 @@ export class UpgradeMenuUI {
       const locked = !this.upgradeSystem.isUnlockedToday(def.id);
 
       return `
-        <div class="upgrade-row">
+        <div class="upgrade-row ${locked ? 'locked' : ''}">
           <div class="upgrade-row-header">
             <span class="upgrade-row-name">${def.displayName}</span>
             <span class="upgrade-row-level">Lv.${level} / ${def.maxLevel}</span>

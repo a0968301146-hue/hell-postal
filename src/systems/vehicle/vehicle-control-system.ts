@@ -169,11 +169,14 @@ export class VehicleControlSystem {
    * and departure teardown (finishSlotDeparture). */
   private packedMailBagSystem: PackedMailBagSystem;
 
-  /** Fixed six slots, built once in the constructor from
-   * [...LAND_VEHICLE_CONFIGS, ...SEA_VEHICLE_CONFIGS] — the SAME slot
-   * objects are reused/reset every day (spec: "下一天重置後，六台都能再次
-   * 呼叫"), never recreated, so nothing needs to re-derive "which configs
-   * exist" per day. */
+  /** "船運載具規格重製" round — no longer a fixed six-slot array reused
+   * forever. `this.slots` now holds EXACTLY today's unlocked vehicle
+   * roster, fully torn down and rebuilt from daily-unlock-data.ts every day
+   * transition (see resetForNewDay() below) — spec二: "換日 → 全部刪除 → 按
+   * 當日資料重新生成", explicitly NOT "just hide locked vehicles". Every
+   * entry in this array is therefore always eligible to be called; nothing
+   * downstream needs to separately filter by unlock state anymore (compare
+   * the old isSlotUnlockedToday-based filtering this replaced). */
   private slots: VehicleSlot[];
 
   private dayCompleteShown = false;
@@ -229,9 +232,12 @@ export class VehicleControlSystem {
     this.onVehicleDeparted = onVehicleDeparted;
     this.onShippingStarted = onShippingStarted;
 
-    this.slots = [...LAND_VEHICLE_CONFIGS, ...SEA_VEHICLE_CONFIGS].map((config) => ({
-      config, vehicle: null, state: 'absent' as SingleVehicleState, pinnedCargo: [], waypointIndex: 0,
-    }));
+    // Initial roster — Day 1's own unlocked vehicles (same derivation
+    // resetForNewDay() below reuses on every later day transition). Reads
+    // dailyFlowSystem.currentDay directly rather than hardcoding day 1, so
+    // a page load that resumes mid-run (currentDay already >1) still starts
+    // with the CORRECT day's roster rather than always Day 1's.
+    this.slots = this.buildSlotsForDay(this.dailyFlowSystem.currentDay);
 
     // `enabled` gates the call/depart buttons (and everything behind them)
     // out of the scene this round (see feature-flags.ts
@@ -295,14 +301,40 @@ export class VehicleControlSystem {
     return this.dayCompleteShown;
   }
 
-  /** "Day 1～7 每日內容與解鎖規格" round — whether `config`'s vehicle is open
-   * yet today (daily-unlock-data.ts, the single source of truth). A locked
-   * slot is simply never spawned/expected to dock — it stays 'absent' for
-   * the whole day, exactly like every OTHER slot naturally does before
-   * being called, so canDepart/checkAllDeparted below only ever wait on the
-   * slots that were actually eligible to be called in the first place. */
-  private isSlotUnlockedToday(config: VehicleConfig): boolean {
-    return isVehicleUnlockedOnDay(config.id, this.dailyFlowSystem.currentDay);
+  /** Fresh slot RECORDS (never VehicleSystem instances — those are only
+   * ever created on demand by spawnSlot(), when the player actually presses
+   * 呼叫載具) for whichever vehicles daily-unlock-data.ts opens on `day`.
+   * The single place "which configs exist today" is derived — both the
+   * constructor and resetForNewDay() below call this rather than
+   * duplicating the filter. */
+  private buildSlotsForDay(day: number): VehicleSlot[] {
+    return [...LAND_VEHICLE_CONFIGS, ...SEA_VEHICLE_CONFIGS]
+      .filter((config) => isVehicleUnlockedOnDay(config.id, day))
+      .map((config) => ({ config, vehicle: null, state: 'absent' as SingleVehicleState, pinnedCargo: [], waypointIndex: 0 }));
+  }
+
+  /** "船運載具規格重製" round — the ONE place a day transition tears down
+   * and rebuilds the vehicle roster (spec二/七: called from the SAME
+   * resetTools sequence create-game-systems.ts already runs cargo/mail/
+   * lost-found resets through, AFTER DailyFlowSystem.currentDay has already
+   * advanced — see DailyFlowSystem.pressEndDayButton's own ordering:
+   * `currentDay++` happens before `resetTools()` fires, so reading
+   * `this.dailyFlowSystem.currentDay` here already yields the NEW day).
+   * Every slot's own VehicleSystem is expected to already be disposed via
+   * the normal per-slot departure flow (finishSlotDeparture) by the time
+   * this runs — canEndDay requires dailyFlowSystem.state==='dayComplete',
+   * itself only reachable once every slot has independently finished
+   * departing — but this defensively disposes any leftover vehicle anyway
+   * rather than assuming that invariant always holds. */
+  resetForNewDay(): void {
+    for (const slot of this.slots) {
+      if (slot.vehicle) {
+        this.pickupSystem.removePlacementSurface(slot.vehicle.cargoBedTopMesh);
+        slot.vehicle.dispose();
+      }
+    }
+    this.slots = this.buildSlotsForDay(this.dailyFlowSystem.currentDay);
+    this.dayCompleteShown = false;
   }
 
   /** Allowed only once today's cargo has actually been unloaded (spec:
@@ -315,19 +347,17 @@ export class VehicleControlSystem {
     return flowAllows && this.slots.every((s) => s.state === 'absent');
   }
 
-  /** Allowed as soon as every UNLOCKED slot is docked — "Add six cargo
-   * vehicles and unrestricted departure scoring" round explicitly removed
-   * every cargo-completion requirement (loaded count, organized, shipped ===
-   * total): the player can send every called vehicle off at any time once
-   * they've all arrived, with whatever is (or isn't) correctly loaded at
-   * that moment settled via pressDepartButton's score snapshot instead of
-   * gating the button itself. "Day 1～7 每日內容與解鎖規格" round: a slot
-   * whose vehicle isn't unlocked yet was never spawned by pressCallButton
-   * (see that method below) and stays 'absent' all day — excluded here so
-   * it can never block departure on a day fewer than six vehicles are open. */
+  /** Allowed as soon as every one of TODAY's slots is docked — "Add six
+   * cargo vehicles and unrestricted departure scoring" round explicitly
+   * removed every cargo-completion requirement (loaded count, organized,
+   * shipped === total): the player can send every called vehicle off at any
+   * time once they've all arrived, with whatever is (or isn't) correctly
+   * loaded at that moment settled via pressDepartButton's score snapshot
+   * instead of gating the button itself. "船運載具規格重製" round: `this.
+   * slots` IS already today's exact roster (see buildSlotsForDay/
+   * resetForNewDay above) — no separate unlock filter needed here anymore. */
   get canDepart(): boolean {
-    const relevant = this.slots.filter((s) => this.isSlotUnlockedToday(s.config));
-    return relevant.length > 0 && relevant.every((s) => s.state === 'docked');
+    return this.slots.length > 0 && this.slots.every((s) => s.state === 'docked');
   }
 
   callBlockedMessage(): string {
@@ -351,25 +381,21 @@ export class VehicleControlSystem {
     setTimeout(() => updateFloatingLabel(label, revertTo), 1500);
   }
 
-  /** 呼叫載具 — spawns every UNLOCKED slot at once ("Add six fixed vehicle
-   * docking slots" round's own "不再依解鎖貨物種類減少載具數量" applied to
-   * cargo TYPE, not to whether the vehicle itself is open yet — "Day 1～7
-   * 每日內容與解鎖規格" round adds that day-based layer back on top: a slot
-   * whose vehicle isn't open today (daily-unlock-data.ts) is simply skipped,
-   * never spawned, and stays 'absent' — canDepart/canCall above already
-   * account for that). Gated on every slot being 'absent', so a fast double-
-   * press can't spawn a second batch: the very first press already flips
-   * every ELIGIBLE slot away from 'absent' before a second press could be
-   * handled. */
+  /** 呼叫載具 — spawns every one of TODAY's slots at once ("Add six fixed
+   * vehicle docking slots" round's own "不再依解鎖貨物種類減少載具數量"
+   * applied to cargo TYPE, not to whether the vehicle itself is open yet).
+   * "船運載具規格重製" round: `this.slots` already IS exactly today's
+   * unlocked roster (see buildSlotsForDay/resetForNewDay above), so every
+   * entry gets spawned unconditionally — no per-slot unlock check needed
+   * anymore. Gated on every slot being 'absent', so a fast double-press
+   * can't spawn a second batch: the very first press already flips every
+   * slot away from 'absent' before a second press could be handled. */
   pressCallButton(): void {
     if (!this.canCall) {
       this.flash(this.callLabel, this.callBlockedMessage(), CALL_IDLE_TEXT);
       return;
     }
-    for (const slot of this.slots) {
-      if (!this.isSlotUnlockedToday(slot.config)) continue;
-      this.spawnSlot(slot);
-    }
+    for (const slot of this.slots) this.spawnSlot(slot);
     this.onVehicleCalled?.();
   }
 
@@ -751,17 +777,15 @@ export class VehicleControlSystem {
     this.checkAllDeparted();
   }
 
-  /** Only fires once every slot that was actually called today has
-   * independently finished departing — `dayCompleteShown` guards against any
-   * slot's transition re-firing this after the panel is already up (every
-   * slot stays 'departed' the whole time the panel is open, since they only
-   * reset to 'absent' on 繼續). "Day 1～7 每日內容與解鎖規格" round: a locked
-   * slot never leaves 'absent' all day (see pressCallButton), so it's
-   * excluded here the same way canDepart already excludes it — otherwise a
-   * day with fewer than six vehicles open could never reach day-complete. */
+  /** Only fires once every one of TODAY's slots has independently finished
+   * departing — `dayCompleteShown` guards against any slot's transition
+   * re-firing this after the panel is already up (every slot stays
+   * 'departed' the whole time the panel is open). "船運載具規格重製" round:
+   * `this.slots` already IS exactly today's roster, so no separate unlock
+   * filter is needed here anymore (compare the old isSlotUnlockedToday-based
+   * filtering this replaced). */
   private checkAllDeparted(): void {
-    const relevant = this.slots.filter((s) => this.isSlotUnlockedToday(s.config));
-    if (relevant.every((s) => s.state === 'departed') && !this.dayCompleteShown) {
+    if (this.slots.every((s) => s.state === 'departed') && !this.dayCompleteShown) {
       this.dayCompleteShown = true;
       this.showDayCompleteSummary();
     }
@@ -801,9 +825,14 @@ export class VehicleControlSystem {
     this.hud.showDayCompleteSummary({
       ...settlement,
       onContinue: () => {
-        // Same slot objects, reset in place — every one of the six can be
-        // called again next day (spec: "下一天重置後，六台都能再次呼叫").
-        for (const slot of this.slots) slot.state = 'absent';
+        // "船運載具規格重製" round — no longer resets slot.state here. The
+        // REAL teardown+rebuild now happens later, at resetForNewDay() (see
+        // its own doc comment), fired from the SAME resetTools sequence
+        // cargo/mail/lost-found already reset through once the player
+        // actually presses 結束今天 — a genuinely separate, later moment
+        // than this 繼續 click (dailyFlowSystem.state stays 'dayComplete'
+        // in between, so canCall/canDepart already can't fire regardless of
+        // this class's own slot.state in that window).
         this.dayCompleteShown = false;
         this.onPauseChange(false);
         onSummaryClosed?.();

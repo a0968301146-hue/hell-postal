@@ -268,6 +268,10 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // dropped/placed while standing in it ("Reduce daily cargo and add
   // lost found desk" round 二).
   pickupSystem.addPlacementSurface(sceneData.lostFoundFloor);
+  // Same reasoning for the new north cargo-chute room's own floor
+  // ("重製出貨口" round) — without this, dropping cargo there would
+  // silently fail PickupSystem's placement raycast.
+  pickupSystem.addPlacementSurface(sceneData.cargoChuteFloor);
 
   // Register each west-wall storage shelf's own level-top boards as
   // placement surfaces ("Add storage shelves along west wall" round spec
@@ -367,6 +371,16 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
       // above.
       envelopeStackSystem.resetDaily();
       mailSystem.resetDaily();
+      // "船運載具規格重製" round spec二/七 — full teardown+rebuild of the
+      // vehicle roster from daily-unlock-data.ts, reading
+      // dailyFlowSystem.currentDay which has ALREADY advanced to the new
+      // day by the time this whole callback fires (see
+      // DailyFlowSystem.pressEndDayButton's own ordering).
+      vehicleControlSystem.resetForNewDay();
+      // Same round, spec三/七 — the hotbar/tool cart/skill panel all need to
+      // re-render against the new day's unlock list the instant it changes,
+      // not just wait for their own next unrelated open/close.
+      toolSystem.refreshLoadoutDisplay();
     },
     (finishedDay) => {
       settingsManager.fireTutorialEvent('dayCompleted');
@@ -624,7 +638,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // of its own (see spray-paint-system.ts's own doc comment).
   const spraySystem = new SpraySystem(
     camera, scene, playerData, hud, pauseManager,
-    [sceneData.floor, sceneData.pierFloor, sceneData.lostFoundFloor],
+    [sceneData.floor, sceneData.pierFloor, sceneData.lostFoundFloor, sceneData.cargoChuteFloor],
     () => playerController.isLocked
   );
 

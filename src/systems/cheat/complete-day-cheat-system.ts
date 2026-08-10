@@ -391,6 +391,13 @@ export class CompleteDayCheatSystem {
       this.dailyFlowSystem.totalCargoCount = 0;
       this.dailyFlowSystem.hasUnloadedToday = false;
       this.completedCheatDayId = null;
+      // "船運載具規格重製" round — this cheat bypasses the normal
+      // DailyFlowSystem.pressEndDayButton()/resetTools sequence entirely
+      // (it sets currentDay directly instead), so it must also explicitly
+      // rebuild the vehicle roster here the same way that sequence would
+      // have — otherwise whatever day's roster happened to be active before
+      // the jump would incorrectly persist onto Day 8.
+      this.vehicleControlSystem.resetForNewDay();
 
       // Bug fix (see this method's own doc comment above): clear whatever
       // stale persisted/in-session story-completion state might otherwise
