@@ -30,6 +30,7 @@ function mergeProgress(saved: Partial<ProgressState> | null): ProgressState {
     discoveredVehicles: Array.isArray(saved.discoveredVehicles) ? saved.discoveredVehicles : base.discoveredVehicles,
     unlockedTutorials: Array.isArray(saved.unlockedTutorials) ? saved.unlockedTutorials : base.unlockedTutorials,
     discoveredSpecies: Array.isArray(saved.discoveredSpecies) ? saved.discoveredSpecies : base.discoveredSpecies,
+    collectedStamps: Array.isArray(saved.collectedStamps) ? saved.collectedStamps : base.collectedStamps,
   };
 }
 
@@ -252,6 +253,23 @@ export class SettingsManager {
 
   isVehicleDiscovered(id: string): boolean {
     return this.progress.discoveredVehicles.includes(id);
+  }
+
+  /** "國家／地區圖鑑＋郵票收集系統" round — mirrors markVehicleDiscovered's
+   * own idempotent "add once, persist forever" shape exactly. `stampId` is
+   * a stamp-collection-data.ts StampDefinition.stampId, but this class
+   * deliberately doesn't import that module (settings-manager.ts stays a
+   * neutral persistence layer, same reasoning as it never importing
+   * vehicle-data.ts for discoveredVehicles either) — the caller passes the
+   * id string directly. */
+  markStampCollected(stampId: string): void {
+    if (this.progress.collectedStamps.includes(stampId)) return;
+    this.progress.collectedStamps.push(stampId);
+    this.maybeAutoSave();
+  }
+
+  isStampCollected(stampId: string): boolean {
+    return this.progress.collectedStamps.includes(stampId);
   }
 
   fireTutorialEvent(key: TutorialEventKey): void {

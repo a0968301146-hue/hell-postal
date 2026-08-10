@@ -82,6 +82,15 @@ export class MailSystem {
    * bag-only region check, unchanged. */
   private bagPatternLookup: ((bagId: string) => MailDestination | null) | null = null;
 
+  /** "國家／地區圖鑑＋郵票收集系統" round — fired on every SUCCESSFUL
+   * applyStamp() (see that method's own doc comment). Optional, constructor-
+   * injected callback rather than a hard SettingsManager dependency —
+   * MailSystem stays unaware of the stamp-collection/persistence concept
+   * itself, matching the "narrow callback, not a cross-system import" wiring
+   * convention every other achievement-like trigger in this codebase already
+   * uses (e.g. VehicleControlSystem's own onVehicleDiscovered). */
+  private onStampApplied?: (stamp: MailDestination) => void;
+
   /** "Day 1～7 每日內容與解鎖規格" round — optional day-number source, wired
    * from create-game-systems.ts once DailyFlowSystem exists (this class is
    * constructed BEFORE it, same "avoid a constructor-time circular
@@ -115,12 +124,14 @@ export class MailSystem {
   private completedEnvelopeIds: string[] = [];
 
   constructor(
-    scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>, pickupSystem: PickupPort
+    scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>, pickupSystem: PickupPort,
+    onStampApplied?: (stamp: MailDestination) => void
   ) {
     this.scene = scene;
     this.physics = physics;
     this.interactables = interactables;
     this.pickupSystem = pickupSystem;
+    this.onStampApplied = onStampApplied;
     this.buildStampTable();
   }
 
@@ -559,6 +570,11 @@ export class MailSystem {
       obj.mesh.material = buildEnvelopeMaterials(getMailDestination(rec.destination), stamp, preset);
       for (const m of oldMats) m.dispose();
     }
+    // "國家／地區圖鑑＋郵票收集系統" round — fires on every successful stamp
+    // application, not just the first (idempotent on the caller's own side,
+    // settings-manager.ts's markStampCollected), so this class never needs
+    // to track "have we already collected this one" itself.
+    this.onStampApplied?.(stamp);
     return true;
   }
 

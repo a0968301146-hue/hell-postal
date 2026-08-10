@@ -9,9 +9,14 @@ import { buildVehicleCodexEntries, SPECIES_CODEX_ENTRIES, buildCargoCodexGroups,
 import {
   ACTION_ORDER, ACTION_LABELS, InputAction, UNWIRED_ACTIONS,
 } from '../../adapters/browser-input/input-binding-manager';
+// "國家／地區圖鑑＋郵票收集系統" round — read directly, no separate builder
+// needed in game/codex-data.ts (unlike vehicle/cargo codex, this data is
+// already in its final display shape).
+import { REGION_CODEX_ENTRIES, RegionCodexId, isRegionCodexUnlockedOnDay } from '../../data/world/region-codex-data';
+import { getStampForRegion } from '../../data/world/stamp-collection-data';
 
 type Bookmark = 'tutorial' | 'controls' | 'display' | 'audio' | 'text' | 'data' | 'codex';
-type CodexTab = 'vehicle' | 'species' | 'cargo';
+type CodexTab = 'vehicle' | 'species' | 'cargo' | 'region';
 
 const BOOKMARKS: { id: Bookmark; label: string }[] = [
   { id: 'tutorial', label: '教學' },
@@ -37,6 +42,11 @@ export class ManualUI {
    * in callback (e.g. interruptPlayerActions above). */
   private onRestartDayOne: () => void;
   private restartConfirmArmed = false;
+  /** "國家／地區圖鑑＋郵票收集系統" round — read by renderRegionCodex() to
+   * decide which regions are unlocked yet (region-codex-data.ts's own
+   * isRegionCodexUnlockedOnDay). Defaults to "always day 1" if never wired,
+   * matching every other getCurrentDay fallback in this codebase. */
+  private getCurrentDay: () => number = () => 1;
 
   /** "Add main menu and return player after dock story" round 五: set only
    * by openForMainMenu() below — when present, close() hands control back to
@@ -57,14 +67,16 @@ export class ManualUI {
   private selectedVehicleId: string | null = null;
   private selectedSpeciesId: string | null = null;
   private selectedCargoId: string | null = null;
+  private selectedRegionId: RegionCodexId | null = null;
   private capturingFor: InputAction | null = null;
   private captureConflictMsg: string | null = null;
   private noticeMsg: string | null = null;
 
   constructor(
     pauseManager: PauseManager, settingsManager: SettingsManager, hud: HUD, interruptPlayerActions: () => void,
-    onRestartDayOne: () => void
+    onRestartDayOne: () => void, getCurrentDay?: () => number
   ) {
+    if (getCurrentDay) this.getCurrentDay = getCurrentDay;
     this.pauseManager = pauseManager;
     this.settingsManager = settingsManager;
     this.hud = hud;
@@ -82,6 +94,7 @@ export class ManualUI {
           <button data-codex-tab="vehicle">載具</button>
           <button data-codex-tab="species">種族</button>
           <button data-codex-tab="cargo">貨物</button>
+          <button data-codex-tab="region">地區</button>
         </div>
         <div class="manual-pages">
           <div class="manual-page manual-page-left"></div>
@@ -287,6 +300,13 @@ export class ManualUI {
     const cargoRow = target.closest<HTMLElement>('[data-cargo-id]');
     if (cargoRow) {
       this.selectedCargoId = cargoRow.dataset.cargoId!;
+      this.render();
+      return;
+    }
+
+    const regionRow = target.closest<HTMLElement>('[data-region-id]');
+    if (regionRow) {
+      this.selectedRegionId = regionRow.dataset.regionId as RegionCodexId;
       this.render();
       return;
     }
@@ -598,6 +618,7 @@ export class ManualUI {
   private renderCodex(): void {
     if (this.codexTab === 'vehicle') { this.renderVehicleCodex(); return; }
     if (this.codexTab === 'cargo') { this.renderCargoCodex(); return; }
+    if (this.codexTab === 'region') { this.renderRegionCodex(); return; }
     this.renderSpeciesCodex();
   }
 
@@ -714,6 +735,66 @@ export class ManualUI {
       <div class="manual-data-row"><span>尺寸</span><span>${selected.sizeLabel}</span></div>
       <div class="manual-data-row"><span>搬運特性</span><span>${selected.carryTraits}</span></div>
       <div class="manual-data-row"><span>是否可放托盤</span><span>${selected.palletLabel}</span></div>
+    `;
+  }
+
+  /** 國家／地區圖鑑 ("國家／地區圖鑑＋郵票收集系統" round). Rebuilt fresh on
+   * every render, same reasoning as renderVehicleCodex/renderCargoCodex —
+   * REGION_CODEX_ENTRIES is immutable static data, this.getCurrentDay() is
+   * the only thing that changes. An unlocked region's own detail pane also
+   * shows its stamp-collection status (spec四: "開放該地區郵票收集內容") —
+   * deliberately nested here rather than a separate top-level tab, matching
+   * the spec's own information architecture (stamps live UNDER their
+   * region, not alongside it). A locked region shows only its name/silhouette
+   * (spec四: "未解鎖地區：顯示地區名稱／基本輪廓／鎖定狀態，詳細資料保持鎖
+   * 定") — same "list is always fully visible, detail pane is what's gated"
+   * convention as the vehicle codex's own isVehicleDiscovered check. */
+  private renderRegionCodex(): void {
+    const day = this.getCurrentDay();
+    const rows = REGION_CODEX_ENTRIES.map((r) => {
+      const unlocked = isRegionCodexUnlockedOnDay(r.id, day);
+      const active = r.id === this.selectedRegionId ? 'active' : '';
+      return `
+        <div class="manual-list-row ${unlocked ? '' : 'locked'} ${active}" data-region-id="${r.id}">
+          <span class="manual-list-icon">${unlocked ? '🗺️' : '❔'}</span>
+          <span>${unlocked ? r.name : '尚未解鎖'}</span>
+        </div>`;
+    }).join('');
+    this.leftPageEl.innerHTML = `<h2 class="manual-page-title">地區圖鑑</h2><div class="manual-list">${rows}</div>`;
+
+    const selected = REGION_CODEX_ENTRIES.find((r) => r.id === this.selectedRegionId && isRegionCodexUnlockedOnDay(r.id, day))
+      ?? REGION_CODEX_ENTRIES.find((r) => isRegionCodexUnlockedOnDay(r.id, day));
+    if (!selected) {
+      this.rightPageEl.innerHTML = `<div class="manual-placeholder"><div class="manual-placeholder-icon">❔</div><p>尚未解鎖任何地區</p></div>`;
+      return;
+    }
+
+    const stamp = getStampForRegion(selected.id);
+    const stampCollected = !!stamp && (stamp.mailDestinationId === null || this.settingsManager.isStampCollected(stamp.stampId));
+    const stampHtml = stamp ? `
+      <h3 class="manual-subheading">地區郵票</h3>
+      <div class="manual-stamp-row ${stampCollected ? '' : 'locked'}">
+        <span class="manual-stamp-icon" style="color:#${stamp.color.toString(16).padStart(6, '0')}">${stampCollected ? stamp.icon : '❔'}</span>
+        <div class="manual-stamp-info">
+          <span class="manual-stamp-name">${stampCollected ? stamp.displayName : '尚未取得'}</span>
+          ${stampCollected
+            ? `<span class="manual-stamp-desc">${stamp.description}</span>`
+            : `<span class="manual-stamp-desc">在信封貼上這個地區的郵票即可取得</span>`}
+        </div>
+      </div>
+    ` : '';
+
+    this.rightPageEl.innerHTML = `
+      <h2 class="manual-page-title">${selected.name}｜${selected.subtitle}</h2>
+      <div class="manual-data-row"><span>地區類型</span><span>${selected.regionType}</span></div>
+      <div class="manual-data-row"><span>土地面積</span><span>${selected.landArea}</span></div>
+      <div class="manual-data-row"><span>建立時間</span><span>${selected.founded}</span></div>
+      <div class="manual-data-row"><span>主要居民</span><span>${selected.mainResidents.join('、')}</span></div>
+      <p class="manual-body-text">${selected.history.replace(/\n/g, '<br>')}</p>
+      <div class="manual-data-row"><span>地區特色</span><span>${selected.regionFeatures}</span></div>
+      ${selected.mainExports.length > 0 ? `<div class="manual-data-row"><span>主要產出</span><span>${selected.mainExports.join('、')}</span></div>` : ''}
+      ${selected.logisticsFeatures ? `<div class="manual-data-row"><span>物流特色</span><span>${selected.logisticsFeatures}</span></div>` : ''}
+      ${stampHtml}
     `;
   }
 }

@@ -1,24 +1,37 @@
-// 國家／地區圖鑑資料 ("世界觀地區命名修正＋國家圖鑑＋Day 1～8 解鎖架構" round)
+// 國家／地區圖鑑資料 ("世界觀地區命名修正＋國家圖鑑＋Day 1～8 解鎖架構" round,
+// wired for real by "國家／地區圖鑑＋郵票收集系統" round)
 //
-// Pure data structure only this round (spec三: "圖鑑目前先建立資料架構，不
-// 需要過度複雜") — deliberately NOT wired into pause-menu-ui.ts's existing
-// codex tabs (game/codex-data.ts) yet; that's a separate follow-up once a
-// UI layout is actually wanted. Kept in data/world/ alongside every other
-// static lore/layout data file (campfire-area-data.ts, mail-layout-data.ts,
-// ...), not systems/, since this is pure world-building content with zero
-// gameplay logic of its own.
+import { getMailRegionUnlockDay } from '../daily-unlock-data';
+//
+// Kept in data/world/ alongside every other static lore/layout data file
+// (campfire-area-data.ts, mail-layout-data.ts, ...), not systems/, since
+// this is pure world-building content with zero gameplay logic of its own
+// — pause-menu-ui.ts's own codex tab (game/codex-data.ts) is what actually
+// renders it, this file only ever exports plain data + read-only helpers.
 //
 // mail-data.ts's own MAIL_DESTINATIONS remains the single source of truth
 // for a region's PLAYER-FACING short name/icon/color used in stamps/
 // envelopes/mail bags (spec: "不要讓不同系統各自硬編碼地點名稱") — this file
 // is a SEPARATE, richer lore/reference dataset (full name+subtitle, land
-// area, founding era, residents, history, ...) for the future codex UI, not
+// area, founding era, residents, history, ...) for the codex UI, not
 // a second copy of that same short-form display data. `id` here intentionally
 // mirrors mail-data.ts's own MailDestination id scheme (with Ithaca added,
 // which mail-data.ts has no entry for at all — it is the player's own home
 // town, never a shippable destination, confirmed with the requester in an
-// earlier round) so a future UI can cross-reference the two by id if wanted,
-// without this file importing/depending on mail-data.ts.
+// earlier round) so the stamp-collection system (stamp-collection-data.ts)
+// can cross-reference the two by id, without this file importing/depending
+// on mail-data.ts itself.
+//
+// "國家／地區圖鑑＋郵票收集系統" round — wired into pause-menu-ui.ts's codex
+// tabs for real (previously pure, unwired data). `unlockDay` is now always a
+// real number (never null) — every region's own value is DERIVED from
+// daily-unlock-data.ts's existing mail-region unlock rule (spec: "其他地區
+// 的實際解鎖天數，沿用目前每日信件地區解鎖規則，不要自行修改"), computed once
+// at module load via getMailRegionUnlockDay() rather than a second
+// hand-picked day number. The old static `isUnlocked: boolean` field was
+// removed — a fixed boolean can't reflect a day-based unlock that changes
+// as the run progresses; use isRegionCodexUnlockedOnDay(id, currentDay)
+// below instead, the ONE live judgment every caller reads.
 export type RegionCodexId = 'argos' | 'hephaestia' | 'evergreen-isles' | 'artemisia' | 'ithaca';
 
 export interface RegionCodexEntry {
@@ -52,15 +65,14 @@ export interface RegionCodexEntry {
    * mining->export pipeline, Ithaca's own crossroads-port role); empty
    * string everywhere else, same "don't invent" reasoning as mainExports. */
   logisticsFeatures: string;
-  /** 目前是否已解鎖 — Day 1～8 unlock specifics beyond Ithaca (the confirmed
-   * Day 1 starting town) have NOT been provided yet (spec六: "不要自行決定
-   * 解鎖天數"), so every other region stays `false`/`unlockDay: null` here
-   * until that data arrives — this is a placeholder, not a real gameplay
-   * gate (nothing in the live game currently reads this field). */
-  isUnlocked: boolean;
-  /** 解鎖天數 — null until the requester provides it (see isUnlocked's own
-   * doc comment). */
-  unlockDay: number | null;
+  /** 解鎖天數 — the day this region's own codex entry (and stamp) becomes
+   * accessible. Derived from daily-unlock-data.ts's existing mail-region
+   * rule via getMailRegionUnlockDay() for every region except Ithaca, whose
+   * Day 1 availability was explicitly given rather than derived (it's the
+   * player's own home town, never a mail destination at all). Live unlock
+   * state is always `currentDay >= unlockDay` — see
+   * isRegionCodexUnlockedOnDay() below. */
+  unlockDay: number;
   /** 圖鑑圖片／插圖預留欄位 — no illustration/image asset pipeline exists
    * anywhere in this codebase yet (mirrors game/codex-data.ts's own
    * VehicleCodexEntry.description/traits "尚未收錄" placeholder convention
@@ -83,8 +95,7 @@ export const REGION_CODEX_ENTRIES: RegionCodexEntry[] = [
     regionFeatures: '繁華、多種族、商業中心、王國中心',
     mainExports: [],
     logisticsFeatures: '',
-    isUnlocked: false,
-    unlockDay: null,
+    unlockDay: getMailRegionUnlockDay('domestic'),
     illustration: null,
   },
   {
@@ -99,9 +110,8 @@ export const REGION_CODEX_ENTRIES: RegionCodexEntry[] = [
       '矮人最早在山脈中建立的城市之一。並非單一巨大國家，而是由山城、礦區、工坊組成的聯邦。',
     regionFeatures: '工業、鍛造、礦山、重型貨物',
     mainExports: [],
-    logisticsFeatures: '主要產業：採礦 → 冶煉 → 鍛造 → 製造 → 出口',
-    isUnlocked: false,
-    unlockDay: null,
+    logisticsFeatures: '主要產業：採礦 → 冶煉 → 鍛造 → 製造 → 出口。大型貨物與重型貨物的重要來源。',
+    unlockDay: getMailRegionUnlockDay('domestic'),
     illustration: null,
   },
   {
@@ -118,8 +128,7 @@ export const REGION_CODEX_ENTRIES: RegionCodexEntry[] = [
     regionFeatures: '群島、海洋、妖怪、多種族共存',
     mainExports: [],
     logisticsFeatures: '',
-    isUnlocked: false,
-    unlockDay: null,
+    unlockDay: getMailRegionUnlockDay('international'),
     illustration: null,
   },
   {
@@ -135,8 +144,7 @@ export const REGION_CODEX_ENTRIES: RegionCodexEntry[] = [
     regionFeatures: '森林、自然、魔法、精靈文明',
     mainExports: ['藥草', '植物', '魔法材料', '稀有種子', '活體生物'],
     logisticsFeatures: '',
-    isUnlocked: false,
-    unlockDay: null,
+    unlockDay: getMailRegionUnlockDay('international'),
     illustration: null,
   },
   {
@@ -155,11 +163,21 @@ export const REGION_CODEX_ENTRIES: RegionCodexEntry[] = [
     regionFeatures: '普通、生活化、多種族混居的小型港鎮',
     mainExports: [],
     logisticsFeatures: '王都／矮人領地／東方群島／精靈之島交通路線交會處，重要轉運港',
-    isUnlocked: true,
+    // Explicitly given (spec四: "伊塔卡港鎮｜主角故鄉 Day 1 即可使用") rather
+    // than derived from getMailRegionUnlockDay — Ithaca is the player's own
+    // home town, never a MailDestination/MailRegion at all.
     unlockDay: 1,
     illustration: null,
   },
 ];
+
+/** THE live judgment every caller reads (never a stored boolean) — a
+ * region's own codex entry (and its stamp, see stamp-collection-data.ts) is
+ * accessible once the current day has reached its `unlockDay`. */
+export function isRegionCodexUnlockedOnDay(id: RegionCodexId, day: number): boolean {
+  const entry = getRegionCodexEntry(id);
+  return !!entry && day >= entry.unlockDay;
+}
 
 export function getRegionCodexEntry(id: RegionCodexId): RegionCodexEntry | undefined {
   return REGION_CODEX_ENTRIES.find((r) => r.id === id);

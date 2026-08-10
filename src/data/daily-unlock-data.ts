@@ -257,6 +257,19 @@ export function isMailRegionUnlockedOnDay(region: MailRegion, day: number): bool
   return getEffectiveDayUnlockConfig(day).mailRegions.includes(region);
 }
 
+/** "國家／地區圖鑑＋郵票收集系統" round — the FIRST day `region` opens
+ * (spec: "其他地區的實際解鎖天數，沿用目前每日信件地區解鎖規則，不要自行修
+ * 改"). Used once, at module-load time, by region-codex-data.ts to derive
+ * each region's own static `unlockDay` from whichever MailRegion its real
+ * mail destination belongs to (mail-data.ts's own MAIL_DESTINATIONS) —
+ * never a second hand-picked day number. */
+export function getMailRegionUnlockDay(region: MailRegion): number {
+  for (let day = 1; day <= 7; day++) {
+    if (isMailRegionUnlockedOnDay(region, day)) return day;
+  }
+  return 7; // defensive — every MailRegion value is open by Day 3 at the latest today
+}
+
 export function getDailyMailTotal(day: number): number {
   return getEffectiveDayUnlockConfig(day).dailyTotals.mailTotal;
 }

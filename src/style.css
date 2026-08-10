@@ -902,6 +902,51 @@ canvas {
   opacity: 0.6;
 }
 
+/* "國家／地區圖鑑＋郵票收集系統" round — a region's own stamp status, shown
+ * inside its unlocked codex detail pane. Collected: full color icon + real
+ * name/description. Not yet collected: dimmed silhouette + "尚未取得" (spec
+ * 七: "不要讓未取得郵票消失...讓玩家知道這裡還有東西可以收集") — same
+ * "stays visible, just dark" convention as the tool-cart/skill-panel locked
+ * states elsewhere in this game. */
+.manual-stamp-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #cbb98c;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.manual-stamp-row.locked {
+  opacity: 0.5;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.manual-stamp-icon {
+  font-size: 30px;
+  width: 40px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.manual-stamp-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.manual-stamp-name {
+  font-size: 14px;
+  font-weight: bold;
+  color: #3a2e22;
+}
+
+.manual-stamp-desc {
+  font-size: 12px;
+  color: #6a5a44;
+}
+
 .manual-vehicle-preview {
   font-size: 48px;
   text-align: center;

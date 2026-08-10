@@ -79,6 +79,12 @@ export interface ProgressState {
   discoveredVehicles: string[];
   unlockedTutorials: string[];
   discoveredSpecies: string[];
+  /** "國家／地區圖鑑＋郵票收集系統" round — stampId values (stamp-collection-
+   * data.ts) the player has ever successfully applied to an envelope at
+   * least once (spec七: collected stamps stay collected permanently, never
+   * removed). Mirrors discoveredVehicles' own "grows from gameplay events,
+   * persists forever" shape exactly. */
+  collectedStamps: string[];
 }
 
 export function createDefaultProgress(): ProgressState {
@@ -87,5 +93,6 @@ export function createDefaultProgress(): ProgressState {
     discoveredVehicles: [],
     unlockedTutorials: [],
     discoveredSpecies: [],
+    collectedStamps: [],
   };
 }

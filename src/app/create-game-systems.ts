@@ -1,4 +1,5 @@
 import { GameContext } from './game-context';
+import { getStampForMailDestination } from '../data/world/stamp-collection-data';
 import { PlayerController } from '../systems/player';
 import { InteractionSystem, PickupSystem } from '../systems/interaction';
 import { EnvelopeSystem } from '../game/envelope-system';
@@ -204,7 +205,16 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // specifically so it exists in time for EnvelopeStackSystem/UpgradeSystem
   // just below, both of which need a live reference at their own
   // construction time. Only needs pickupSystem, already built just above.
-  const mailSystem = new MailSystem(scene, physics, interactables, pickupSystem);
+  const mailSystem = new MailSystem(
+    scene, physics, interactables, pickupSystem,
+    // "國家／地區圖鑑＋郵票收集系統" round — every successful stamp
+    // application marks that region's own stamp collected (permanently,
+    // via SettingsManager's own idempotent markStampCollected).
+    (stamp) => {
+      const def = getStampForMailDestination(stamp);
+      if (def) settingsManager.markStampCollected(def.stampId);
+    }
+  );
 
   // Envelope stack carry ("Add envelope stacks and expand pallet inventory"
   // round一-四) — dedicated world-space carry for multiple loose Envelope
@@ -713,7 +723,9 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // as MainMenuSystem's own reference target so its 設定 button can open the
   // exact same instance rather than a second one (spec五: "直接重用現有設定
   // 系統").
-  const manualUI = new ManualUI(pauseManager, settingsManager, hud, hooks.onInterruptPlayerActions, resetForNewRun);
+  const manualUI = new ManualUI(
+    pauseManager, settingsManager, hud, hooks.onInterruptPlayerActions, resetForNewRun, () => dailyFlowSystem.currentDay
+  );
 
   // "Add main menu and return player after dock story" round 二 — built
   // LAST, once every system it might reach into (dailyFlowSystem for 繼續遊
