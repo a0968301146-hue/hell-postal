@@ -251,14 +251,12 @@ export const LAND_VEHICLE_CONFIGS: VehicleConfig[] = LAND_VEHICLE_BASE_CONFIGS.m
  *
  * Cargo compatibility: every sea vehicle accepts ONLY
  * acceptedRegions:['international'] cargo. 魟魚 takes 易碎+一般, 海龜 takes
- * 大型+一般 (so 海外一般 is correct under EITHER ray or turtle —
- * vehicleAcceptsCargo doesn't special-case this, it falls out naturally
- * from both configs independently listing 'normal'), 克拉肯 takes 冷凍
- * only. 海外活體 has no accepting vehicle this round — cargo-data.ts's
- * createDailyCargoData forces region:'domestic' whenever category:'live'
- * is picked, so that combination is never generated in the first place
- * rather than being an unshippable dead end. All comfortably within
- * VEHICLE_SIZE_LIMITS. */
+ * 大型+活物 ("Day 1～7 每日系統完整實作" round follow-up — 海外活物之前完全
+ * 沒有載具承接，cargo-manifest-planner.ts 因此排除該組合不生成；requester
+ * 明確指定改由海龜承接活物，取代海龜原本共享的一般貨物，見該檔案自身
+ * unlockedCargoCombos 的更新後doc comment), 克拉肯 取冷凍 only. 海外一般
+ * 目前僅由魟魚承接（海龜讓出這個類別），仍然完整涵蓋，沒有孤兒類別。All
+ * comfortably within VEHICLE_SIZE_LIMITS. */
 const SEA_VEHICLE_BASE_CONFIGS: VehicleConfig[] = [
   {
     id: 'sea-ray-01',
@@ -287,10 +285,10 @@ const SEA_VEHICLE_BASE_CONFIGS: VehicleConfig[] = [
     displayName: '海龜',
     width: 2.2,
     length: 3.8,
-    // height/cargoAreaHeight ×1.4 — same capacity fix as 青蛙 above (海龜
-    // shares the international-normal quota with 魟魚, on top of its own
-    // unaffected large quota — the shared normal portion alone was already
-    // enough to push it over budget).
+    // height/cargoAreaHeight ×1.4 — same capacity fix as 青蛙 above (海龜's
+    // own unaffected large quota alone was already enough to push it over
+    // budget; kept unchanged when 'normal' was swapped for 'live' below —
+    // live presets are entirely small/medium, no bigger than normal was).
     height: 1.5 * 1.4,
     cargoAreaWidth: 1.85,
     cargoAreaLength: 3.2,
@@ -301,7 +299,11 @@ const SEA_VEHICLE_BASE_CONFIGS: VehicleConfig[] = [
     movementSpeed: 2.6,
     axis: 'x',
     acceptedRegions: ['international'],
-    acceptedCargoTypes: ['large', 'normal'],
+    // "Day 1～7 每日系統完整實作" round follow-up — requester explicitly
+    // resolved the previously-flagged "海外活體無載具承接" conflict by
+    // reassigning 海龜 from 大型+一般 to 大型+活物 (海外一般 now solely
+    // covered by 魟魚, see this array's own doc comment above).
+    acceptedCargoTypes: ['large', 'live'],
     acceptedMailRegions: ['international'],
   },
   {

@@ -92,11 +92,10 @@ export interface DayUnlockConfig {
   /** 開放貨物種類 — per region (spec: 國內／國外 differ starting Day 3). Wired
    * for real into cargo-manifest-planner.ts (see dailyTotals.cargoTotal's own
    * doc comment) — every draw is uniform across whatever this list allows
-   * that day. NOTE: cargo-manifest-planner.ts's unlockedCargoCombos()
-   * deliberately excludes 'live'+international even though Day 5-7 list it
-   * here (spec verbatim) — see that function's own doc comment for the
-   * existing-system conflict this resolves (no vehicle accepts international
-   * live cargo). */
+   * that day, including 'live'+international (Day 5-7) — 海龜 (sea-turtle-01)
+   * was reassigned from 大型+一般 to 大型+活物 specifically to make this
+   * combination shippable (vehicle-data.ts's own SEA_VEHICLE_BASE_CONFIGS
+   * doc comment). */
   cargoCategoriesByRegion: { domestic: CargoCategory[]; international: CargoCategory[] };
   /** 開放信封種類 — wired for real into mail-system.ts (see mailTotal's own
    * doc comment). */

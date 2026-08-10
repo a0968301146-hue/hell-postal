@@ -93,23 +93,15 @@ interface CargoCombo {
  * 解鎖貨物種類中隨機生成", no per-combo ratio was ever specified, so an even
  * draw across whatever's unlocked is the actual implementation).
  *
- * Deliberately excludes 'live'+'international' even on a day whose own
- * spec text lists 活物 under both 國內 and 國外 (Day 5-7) — a genuine
- * conflict with the EXISTING, already-established, three-times-documented
- * system rule that no vehicle accepts international live cargo (see
- * vehicle-data.ts's own SEA_VEHICLE_BASE_CONFIGS doc comment: "海外活體 has no
- * accepting vehicle this round"). Generating it anyway would create cargo
- * that can NEVER be shipped by any vehicle, no matter how the player plays —
- * silently worse for the player, not a neutral omission. Reported in this
- * round's completion notes rather than silently invented either way. */
+ * 'live'+'international' WAS excluded here (no vehicle accepted it) — "Day
+ * 1～7 每日系統完整實作" round follow-up resolved that by reassigning 海龜
+ * (sea-turtle-01) from 大型+一般 to 大型+活物 (vehicle-data.ts), so this
+ * combination is now a real, shippable draw like any other. */
 function unlockedCargoCombos(day: number): CargoCombo[] {
   const cfg = getEffectiveDayUnlockConfig(day);
   const combos: CargoCombo[] = [];
   for (const category of cfg.cargoCategoriesByRegion.domestic) combos.push({ category, region: 'domestic' });
-  for (const category of cfg.cargoCategoriesByRegion.international) {
-    if (category === 'live') continue; // see this function's own doc comment
-    combos.push({ category, region: 'international' });
-  }
+  for (const category of cfg.cargoCategoriesByRegion.international) combos.push({ category, region: 'international' });
   return combos;
 }
 
@@ -183,10 +175,13 @@ function eligibleVehiclesFor(category: CargoCategory, region: CargoRegion, allVe
  * assignment is discarded after the report is built (never stored as
  * `plannedVehicleId` anywhere a real system reads, never influences
  * vehicle-control-system.ts's own independent, player-facing loading check).
- * When a category shares more than one eligible vehicle for a region (only
- * normal+international: 魟魚/海龜 both accept it, see vehicle-data.ts's own
- * doc comment), each item goes to whichever of the two currently has the
- * lower utilization ratio (spec四: "分配到目前容量使用率最低者").
+ * When a category shares more than one eligible vehicle for a region, each
+ * item goes to whichever of the two currently has the lower utilization
+ * ratio (spec四: "分配到目前容量使用率最低者") — no category currently shares
+ * more than one accepting sea vehicle (魟魚/海龜/克拉肯 each own a disjoint
+ * international category set, see vehicle-data.ts's own doc comment), so
+ * this branch is dormant in practice today but stays correct if a future
+ * roster change reintroduces overlap.
  *
  * Fallback chain when an assignment would push a vehicle over its safe
  * capacity (spec四 steps1-4): (1) swap the item's preset for the smallest
@@ -208,7 +203,7 @@ function planVehicleCapacity(manifest: CargoManifestItem[]): VehicleCapacityRepo
 
   for (const item of manifest) {
     const eligible = eligibleVehiclesFor(item.category, item.region, allVehicles);
-    if (eligible.length === 0) continue; // e.g. international+live — quota is fixed at 0, never actually reached
+    if (eligible.length === 0) continue; // defensive — every currently-unlockable combo has a real accepting vehicle
 
     let target = eligible.reduce((best, v) => (utilizationRatio(v) < utilizationRatio(best) ? v : best));
     let cost = itemCapacityCost(item.preset);

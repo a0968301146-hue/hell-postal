@@ -243,12 +243,12 @@ export const CARGO_BOX_PRESETS = {
  * carries its own fixed category, see cargo-shape-presets.ts). */
 /** `region` is now decided by the caller (cargo-manifest-planner.ts's
  * buildDailyCargoManifest(), fed through spawnDailyBox/spawnDailyRoller —
- * see cargo-system.ts) as part of the day's fixed per-category region quota
- * (spec三), not rolled independently per item here anymore. 'live' cargo
- * still never receives 'international' — DAILY_CARGO_REGION_QUOTA.live.
- * international is fixed at 0 (no accepting vehicle, see vehicle-data.ts's
- * own doc comment on SEA_VEHICLE_BASE_CONFIGS), so callers naturally never
- * pass that combination; nothing here needs to re-guard it. */
+ * see cargo-system.ts) as part of that day's own unlocked-combo draw ("Day
+ * 1～7 每日系統完整實作" round), not rolled independently per item here
+ * anymore. 'live'+'international' IS a real, shippable combination as of
+ * that round's own follow-up (海龜 now accepts 大型+活物, see vehicle-data.ts's
+ * SEA_VEHICLE_BASE_CONFIGS doc comment) — nothing here needs to guard
+ * against it. */
 export function createDailyCargoData(id: string, preset: CargoShapePreset, region: CargoRegion): CargoData {
   // Shape/collider family for the fields every OTHER system (pallet-system.ts,
   // vehicle-control-system.ts, physics collider choice in cargo-system.ts)
