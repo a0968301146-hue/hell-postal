@@ -93,11 +93,12 @@ export const CARGO_CHUTE_HATCH = {
   openDuration: 0.8, // matches the old gate's own timing (spec's own 0.6-1s window)
 };
 
-/** 開始卸貨／結束今天 button posts — relocated from their old position
- * (west of the west-most NORTH_GATES gate) to just west of this room's own
- * single doorway, still inside BACK_AREA itself (same "buttons live in the
- * hall, not inside the drop room" convention as before). z values duplicate
- * BACK_AREA.minZ (12) + fixed offsets — same "avoid a circular import"
- * reasoning as this file's own header comment. */
+/** 開始卸貨 button post — relocated from its old position (west of the
+ * west-most NORTH_GATES gate) to just west of this room's own single
+ * doorway, still inside BACK_AREA itself (same "buttons live in the hall,
+ * not inside the drop room" convention as before). z value duplicates
+ * BACK_AREA.minZ (12) + a fixed offset — same "avoid a circular import"
+ * reasoning as this file's own header comment. "每日結算流程修改" round
+ * removed the old 結束今天 button (and its own CARGO_CHUTE_END_DAY_BUTTON_POS)
+ * entirely — this is the only button in the cluster now. */
 export const CARGO_CHUTE_BUTTON_POS = { x: -(CARGO_CHUTE_DOORWAY.halfWidth + 1.5), z: 12 + 1.2 };
-export const CARGO_CHUTE_END_DAY_BUTTON_POS = { x: -(CARGO_CHUTE_DOORWAY.halfWidth + 1.5), z: 12 + 2.8 };

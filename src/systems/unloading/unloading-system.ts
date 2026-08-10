@@ -230,11 +230,11 @@ export class UnloadingSystem {
     this.scene.add(this.buttonLabel);
   }
 
-  /** Straight-line distance to this button — used by InteractionSystem to
-   * resolve the nearest-wins tie-break against DailyFlowSystem's 結束今天
-   * button, which sits close by in the same north unload-dock cluster (spec
-   * section 十九: "四個按鈕不要互相重疊" — same pattern as
-   * VehicleControlSystem's own call/depart nearest-button resolution). */
+  /** Straight-line distance to this button — read directly by
+   * InteractionSystem's own proximity check ("每日結算流程修改" round removed
+   * the co-located 結束今天 button this used to nearest-wins-resolve against —
+   * see daily-flow-system.ts's own advanceToNextDay doc comment — so this is
+   * now the only button in the north unload-dock cluster). */
   buttonDistance(pos: THREE.Vector3): number {
     const dx = pos.x - UNLOAD_BUTTON_POS.x;
     const dz = pos.z - UNLOAD_BUTTON_POS.z;

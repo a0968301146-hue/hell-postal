@@ -317,13 +317,14 @@ export class VehicleControlSystem {
    * and rebuilds the vehicle roster (spec二/七: called from the SAME
    * resetTools sequence create-game-systems.ts already runs cargo/mail/
    * lost-found resets through, AFTER DailyFlowSystem.currentDay has already
-   * advanced — see DailyFlowSystem.pressEndDayButton's own ordering:
+   * advanced — see DailyFlowSystem.advanceToNextDay's own ordering:
    * `currentDay++` happens before `resetTools()` fires, so reading
    * `this.dailyFlowSystem.currentDay` here already yields the NEW day).
    * Every slot's own VehicleSystem is expected to already be disposed via
    * the normal per-slot departure flow (finishSlotDeparture) by the time
-   * this runs — canEndDay requires dailyFlowSystem.state==='dayComplete',
-   * itself only reachable once every slot has independently finished
+   * this runs — advanceToNextDay only ever runs once dailyFlowSystem.
+   * state==='dayComplete', itself only reachable once every slot has
+   * independently finished
    * departing — but this defensively disposes any leftover vehicle anyway
    * rather than assuming that invariant always holds. */
   resetForNewDay(): void {
@@ -783,11 +784,17 @@ export class VehicleControlSystem {
    * 'departed' the whole time the panel is open). "船運載具規格重製" round:
    * `this.slots` already IS exactly today's roster, so no separate unlock
    * filter is needed here anymore (compare the old isSlotUnlockedToday-based
-   * filtering this replaced). */
+   * filtering this replaced).
+   *
+   * "每日結算流程修改" round spec一: this is now the ONLY place a normal day
+   * actually settles — there is no more player-facing 結束今天 button, so the
+   * moment the player dismisses this summary panel the day must advance on
+   * its own (see the showDayCompleteSummary(onSummaryClosed) call below,
+   * same wiring the test cheat's forceSettleDayForTesting already used). */
   private checkAllDeparted(): void {
     if (this.slots.every((s) => s.state === 'departed') && !this.dayCompleteShown) {
       this.dayCompleteShown = true;
-      this.showDayCompleteSummary();
+      this.showDayCompleteSummary(() => this.dailyFlowSystem.advanceToNextDay());
     }
   }
 
@@ -796,18 +803,20 @@ export class VehicleControlSystem {
    * finalScore), rather than re-deriving anything from CargoData (which is
    * no longer meaningful here — every daily cargo item, shipped or not, has
    * been destroyed by now: shipped ones via finishSlotDeparture above,
-   * never-shipped ones will be swept up by DailyFlowSystem's next-day
-   * cleanup once the player presses 結束今天). Falls back to an all-zero
-   * snapshot only defensively (pendingSettlement is always set by
-   * pressDepartButton before departure can even begin).
+   * never-shipped ones will be swept up by DailyFlowSystem.advanceToNextDay's
+   * own next-day cleanup, fired automatically once this panel closes — see
+   * `onSummaryClosed` below). Falls back to an all-zero snapshot only
+   * defensively (pendingSettlement is always set by pressDepartButton before
+   * departure can even begin).
    *
-   * `onSummaryClosed` (TEMPORARY TEST CHEAT plumbing — remove alongside
-   * forceSettleDayForTesting below) fires AFTER the normal 繼續 handling,
-   * i.e. once the summary panel is actually gone and the game is unpaused
-   * again — never before, so anything it triggers (the day-1 dock-story NPC)
-   * can't spawn hidden behind the still-open panel/pause lock. The real
-   * six-vehicle departure path (checkAllDeparted) never passes this, so its
-   * own 繼續 behavior is completely unchanged. */
+   * `onSummaryClosed` fires AFTER the normal 繼續 handling, i.e. once the
+   * summary panel is actually gone and the game is unpaused again — never
+   * before, so anything it triggers (the day-1 dock-story NPC, the next
+   * day's own cargo/vehicle/tool regeneration) can't fire hidden behind the
+   * still-open panel/pause lock. Both real callers (checkAllDeparted above
+   * for normal play, forceSettleDayForTesting below for the test cheat) pass
+   * the SAME dailyFlowSystem.advanceToNextDay callback — there is no
+   * cheat-only day-advance path to keep in sync. */
   private showDayCompleteSummary(onSummaryClosed?: () => void): void {
     const settlement = this.pendingSettlement ?? {
       total: this.dailyFlowSystem.totalCargoCount, shipped: 0, unshipped: 0, penalty: 0,
@@ -828,11 +837,12 @@ export class VehicleControlSystem {
         // "船運載具規格重製" round — no longer resets slot.state here. The
         // REAL teardown+rebuild now happens later, at resetForNewDay() (see
         // its own doc comment), fired from the SAME resetTools sequence
-        // cargo/mail/lost-found already reset through once the player
-        // actually presses 結束今天 — a genuinely separate, later moment
-        // than this 繼續 click (dailyFlowSystem.state stays 'dayComplete'
-        // in between, so canCall/canDepart already can't fire regardless of
-        // this class's own slot.state in that window).
+        // cargo/mail/lost-found already reset through once
+        // onSummaryClosed's advanceToNextDay() call below actually runs —
+        // a genuinely separate, later moment than this 繼續 click
+        // (dailyFlowSystem.state stays 'dayComplete' in between, so
+        // canCall/canDepart already can't fire regardless of this class's
+        // own slot.state in that window).
         this.dayCompleteShown = false;
         this.onPauseChange(false);
         onSummaryClosed?.();
@@ -853,8 +863,8 @@ export class VehicleControlSystem {
    * `mail` are those already-computed real tallies, not fabricated here.
    *
    * "Trigger day one story after cheat completion" round: once the player
-   * dismisses this summary panel, also presses the SAME real 結束今天 entry
-   * point (DailyFlowSystem.pressEndDayButton) normal play uses — never a
+   * dismisses this summary panel, also calls the SAME real day-advance entry
+   * point (DailyFlowSystem.advanceToNextDay) normal play uses — never a
    * second/parallel day-completion path, never a direct currentDay mutation.
    * That real function itself captures `finishedDay` BEFORE incrementing
    * currentDay and fires the pre-existing onDayCompleted(finishedDay) hook
@@ -867,6 +877,6 @@ export class VehicleControlSystem {
     live: LiveSettlementInput
   ): void {
     this.pendingSettlement = this.scoringSystem.settleDeparture(cargoTotal, cargoTotal, 0, lostFound, mail, frozen, live);
-    this.showDayCompleteSummary(() => this.dailyFlowSystem.pressEndDayButton());
+    this.showDayCompleteSummary(() => this.dailyFlowSystem.advanceToNextDay());
   }
 }

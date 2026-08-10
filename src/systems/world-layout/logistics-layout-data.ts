@@ -438,8 +438,8 @@ export const LARGE_CARGO_SPAWN_POSITIONS = [
  * (both near x≈9.6-10), north of every LAND_DOCK_SLOTS footprint (closest
  * edge z≈24.55, this spawn sits at z=21), well clear of PACKAGE_WORK_ZONE
  * (maxZ=19), the west-wall furniture cluster (bulletin board/TV/vehicle
- * buttons, all near x≈-9.7), and END_DAY_BUTTON_POS/UNLOAD_PORTS (both far
- * north, z≈10-13). Open, flat, unobstructed floor on every axis.
+ * buttons, all near x≈-9.7), and the north unload-dock cluster/UNLOAD_PORTS
+ * (both far north, z≈10-13). Open, flat, unobstructed floor on every axis.
  *
  * `y` is FLOOR-space (mirrors fishingSeatAnchorA/B's own convention in
  * fishing-pier-data.ts, not PLAYER_SPAWN's baked-in eye-height convention) —

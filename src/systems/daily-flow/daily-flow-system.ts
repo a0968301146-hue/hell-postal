@@ -1,24 +1,17 @@
-import * as THREE from 'three';
-import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { HUD } from '../hud';
 import { CargoSystem } from '../cargo';
-import { END_DAY_BUTTON_POS } from './daily-flow-data';
-import { SCENE_CONFIG } from '../world-layout';
-import { BACK_AREA } from '../world-layout';
-import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/world-label-system';
 
 export type DailyState =
   | 'ready' | 'unloading' | 'sorting' | 'loading' | 'completed'
   | 'departing' | 'dayComplete' | 'resetting';
 
-const IDLE_TEXT = '結束今天\n按 E 結束';
-const BLOCKED_TEXT = '結束今天\n請先完成今日出貨';
-
 /**
  * Owns the abstract "one day" state machine for the daily unload->sort->
- * ship-via-vehicle loop — currentDay/state/dailyCargoIds — plus the 結束
- * 今天 button, since pressing it is exactly what drives the state
- * transition this class is responsible for.
+ * ship-via-vehicle loop — currentDay/state/dailyCargoIds. "每日結算流程修改"
+ * round: there is no longer a player-facing 結束今天 button — the day
+ * advances automatically once VehicleControlSystem's day-complete summary
+ * panel is dismissed (see advanceToNextDay's own doc comment below), so this
+ * class no longer builds any scene geometry/collider/label at all.
  *
  * remaining/organized/shipped counts are all DERIVED getters that re-scan
  * dailyCargoIds against CargoSystem's live CargoData each time they're
@@ -54,14 +47,15 @@ export class DailyFlowSystem {
    * JUST finished ("Add bulletin board upgrade system" round spec四 — the
    * one hook UpgradeSystem needs to convert that day's settlement into
    * points exactly once). currentDay has already been incremented by the
-   * time this fires (see pressEndDayButton below), so this parameter is the
+   * time this fires (see advanceToNextDay below), so this parameter is the
    * ONLY reliable way to know which day just completed — reading
    * `this.currentDay` from inside the callback would be off by one. */
   private onDayCompleted?: (finishedDay: number) => void;
   /** Fires the MOMENT the day-complete settlement UI appears (spec follow-up
    * "每日結算UI彈出時，立即清除地圖上的所有包裹/信封/失物招領物品") — BEFORE
-   * the player has even clicked "continue", let alone walked to press 結束
-   * 今天. Formerly named onAllVehiclesDeparted and unused (see this class's
+   * the player has even clicked "continue", let alone reached the automatic
+   * next-day advance (see advanceToNextDay below). Formerly named
+   * onAllVehiclesDeparted and unused (see this class's
    * own git history: removed for lost-found-NPC-spawn purposes in an earlier
    * round) — repurposed here for a genuinely different job (clearing
    * logistics objects early), not the old one it was removed for. Fires for
@@ -70,10 +64,9 @@ export class DailyFlowSystem {
    * forceSettleDayForTesting — same single call site either way, so there is
    * no cheat-only branch to keep in sync. */
   private onSettlementShown?: () => void;
-  private buttonLabel!: THREE.Sprite;
 
   constructor(
-    scene: THREE.Scene, physics: PhysicsSystem, cargoSystem: CargoSystem, hud: HUD,
+    cargoSystem: CargoSystem, hud: HUD,
     resetTools: () => void, onDayCompleted?: (finishedDay: number) => void, onSettlementShown?: () => void
   ) {
     this.cargoSystem = cargoSystem;
@@ -81,42 +74,6 @@ export class DailyFlowSystem {
     this.resetTools = resetTools;
     this.onDayCompleted = onDayCompleted;
     this.onSettlementShown = onSettlementShown;
-    this.buildButton(scene, physics);
-  }
-
-  private buildButton(scene: THREE.Scene, physics: PhysicsSystem): void {
-    const floorY = BACK_AREA.floorY;
-    const postHeight = 0.9;
-    const postGeo = new THREE.BoxGeometry(0.22, postHeight, 0.22);
-    const postMat = new THREE.MeshStandardMaterial({ color: 0x444444 });
-    const post = new THREE.Mesh(postGeo, postMat);
-    post.position.set(END_DAY_BUTTON_POS.x, floorY + postHeight / 2, END_DAY_BUTTON_POS.z);
-    scene.add(post);
-
-    const capGeo = new THREE.CylinderGeometry(0.11, 0.11, 0.07, 12);
-    const capMat = new THREE.MeshStandardMaterial({ color: 0xd83a3a });
-    const cap = new THREE.Mesh(capGeo, capMat);
-    cap.position.set(END_DAY_BUTTON_POS.x, floorY + postHeight + 0.02, END_DAY_BUTTON_POS.z);
-    scene.add(cap);
-
-    physics.createStaticCuboid(END_DAY_BUTTON_POS.x, floorY + postHeight / 2, END_DAY_BUTTON_POS.z, 0.11, postHeight / 2, 0.11);
-
-    this.buttonLabel = createFloatingLabel(IDLE_TEXT, { width: 1.0, bg: 'rgba(45,20,20,0.75)' });
-    this.buttonLabel.position.set(END_DAY_BUTTON_POS.x, floorY + postHeight + 0.5, END_DAY_BUTTON_POS.z);
-    scene.add(this.buttonLabel);
-  }
-
-  /** Straight-line distance to this button — see UnloadingSystem's
-   * buttonDistance doc comment for why (nearest-wins tie-break with the
-   * nearby 開始卸貨 button). */
-  buttonDistance(pos: THREE.Vector3): number {
-    const dx = pos.x - END_DAY_BUTTON_POS.x;
-    const dz = pos.z - END_DAY_BUTTON_POS.z;
-    return Math.sqrt(dx * dx + dz * dz);
-  }
-
-  isPlayerNearButton(pos: THREE.Vector3): boolean {
-    return this.buttonDistance(pos) < SCENE_CONFIG.interactionDistance + 1;
   }
 
   /** How many of today's cargo have organized === true. */
@@ -148,14 +105,6 @@ export class DailyFlowSystem {
   }
   get completedCargoCount(): number {
     return this.shippedCount;
-  }
-
-  get canEndDay(): boolean {
-    return this.state === 'dayComplete';
-  }
-
-  endDayBlockedMessage(): string {
-    return '請先完成今日出貨';
   }
 
   /** Called once by UnloadingSystem right as its spawn sequence begins. */
@@ -217,15 +166,18 @@ export class DailyFlowSystem {
     this.onSettlementShown?.();
   }
 
-  pressEndDayButton(): void {
-    if (!this.canEndDay) {
-      updateFloatingLabel(this.buttonLabel, BLOCKED_TEXT);
-      this.hud.showToast(this.endDayBlockedMessage());
-      window.setTimeout(() => {
-        if (this.state !== 'resetting') updateFloatingLabel(this.buttonLabel, IDLE_TEXT);
-      }, 1500);
-      return;
-    }
+  /** "每日結算流程修改" round — the ONE place a day actually advances, now
+   * fully automatic (spec一: no more player-facing 結束今天 button). Called
+   * as the `onSummaryClosed` callback VehicleControlSystem.
+   * showDayCompleteSummary() fires once the player dismisses the
+   * day-complete panel — both the real six-vehicle departure path
+   * (checkAllDeparted) and the test cheat's own forceSettleDayForTesting
+   * wire through that SAME callback, so there is no cheat-only path to keep
+   * in sync. The `state !== 'dayComplete'` guard is purely defensive: this
+   * is only ever invoked immediately after notifyDayComplete() has already
+   * set that state, so it should never actually trip in practice. */
+  advanceToNextDay(): void {
+    if (this.state !== 'dayComplete') return;
 
     this.state = 'resetting';
     const finishedDay = this.currentDay;

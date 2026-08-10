@@ -27,11 +27,15 @@ import { LostFoundSystem } from '../lost-found/lost-found-system';
 import { VehicleControlSystem } from '../vehicle/vehicle-control-system';
 import { AfterWorkStorySystem } from '../story/after-work-story-system';
 import { UnloadingSystem } from '../unloading/unloading-system';
+import { UpgradeSystem } from '../upgrade/upgrade-system';
 
 /** TEMPORARY TEST CHEAT — remove before public demo. */
 export const COMPLETE_DAY_CHEAT_BUTTON_ID = 'complete-day-cheat-button';
 /** TEMPORARY TEST CHEAT (spec follow-up: "新增測試按鈕：直接跳至Day8"). */
 export const JUMP_TO_DAY8_BUTTON_ID = 'jump-to-day8-button';
+/** TEMPORARY TEST CHEAT ("每日結算流程修改" round spec三: "新增『獲得1000分』
+ * 作弊按鈕"). */
+export const SCORE_CHEAT_BUTTON_ID = 'score-cheat-button';
 
 const BUTTON_WIDTH = 0.55;
 const BUTTON_HEIGHT = 0.30;
@@ -50,6 +54,11 @@ const BUTTON_CENTER_Z = northWallInnerFaceZ + BUTTON_WALL_CLEARANCE + BUTTON_DEP
  * east along the same wall, well within LOST_FOUND_ROOM's own 5m width
  * (minX -15..maxX -10) with room to spare on both sides. */
 const JUMP_BUTTON_CENTER_X = BUTTON_CENTER_X + BUTTON_WIDTH + 0.25;
+/** "每日結算流程修改" round spec三: "[作弊完成今日] [跳至第八天] [+1000分]"
+ * — one more button east of the jump button, same wall/spacing convention.
+ * Right edge sits at -10.9+0.275 = -10.625, still 0.625m clear of
+ * LOST_FOUND_ROOM's own maxX (-10). */
+const SCORE_BUTTON_CENTER_X = JUMP_BUTTON_CENTER_X + BUTTON_WIDTH + 0.25;
 
 const CHEAT_BUTTON_INTERACT_DISTANCE = 2.5;
 
@@ -63,6 +72,15 @@ const JUMP_PROMPT_TEXT = 'E 清除今日物件並跳至第八天';
 const JUMP_BLOCKED_STORY_ACTIVE_TEXT = '請先完成目前的劇情';
 const JUMP_BLOCKED_RESETTING_TEXT = '請稍候，今日流程正在處理中';
 
+const SCORE_IDLE_TEXT = '測試用\n+1000 分';
+const SCORE_PROMPT_TEXT = 'E 獲得 1000 分';
+const SCORE_GRANTED_TOAST = '已增加 1000 結算分數';
+/** The one non-configurable magnitude this cheat button grants per press
+ * (spec三: "每按一次：目前結算分數 +1000") — kept here rather than inline so
+ * the button's own idle/prompt text and the actual grant amount can never
+ * drift apart. */
+const SCORE_GRANT_AMOUNT = 1000;
+
 /**
  * "Add complete day testing cheat button" round — a single wall-mounted
  * test button in the lost-found room's own north wall (position/orientation
@@ -72,10 +90,10 @@ const JUMP_BLOCKED_RESETTING_TEXT = '請稍候，今日流程正在處理中';
  * API (never fabricates a score or fakes CargoData.correctlyShipped
  * directly), then opens the SAME real day-complete settlement screen
  * (VehicleControlSystem.forceSettleDayForTesting, added this round)
- * normal 載具出發 would — the player still has to walk to the existing
- * 結束今天 button themselves afterward, which runs the SAME unmodified
- * end-of-day reset/day-advance/dock-story-trigger flow every normal day
- * already goes through.
+ * normal 載具出發 would — dismissing that panel then automatically runs the
+ * SAME unmodified end-of-day reset/day-advance/dock-story-trigger flow every
+ * normal day already goes through ("每日結算流程修改" round: this no longer
+ * requires a separate player button press at all).
  *
  * North-wall confirmation (spec一: "依Compass確認真正北牆，不要猜座標正
  * 負") — compass-ui.ts's own heading math is `atan2(forward.x, -forward.z)`,
@@ -111,9 +129,11 @@ export class CompleteDayCheatSystem {
   private vehicleControlSystem: VehicleControlSystem;
   private afterWorkStorySystem: AfterWorkStorySystem;
   private unloadingSystem: UnloadingSystem;
+  private upgradeSystem: UpgradeSystem;
 
   private buttonMesh: THREE.Mesh | null = null;
   private jumpButtonMesh: THREE.Mesh | null = null;
+  private scoreButtonMesh: THREE.Mesh | null = null;
 
   /** Re-entrancy lock (spec五: "按鈕處理期間再次按E無效") — pressCheatButton
    * itself is fully synchronous today, but this guard stays cheap insurance
@@ -134,7 +154,7 @@ export class CompleteDayCheatSystem {
     mailSystem: MailSystem, mailBagSystem: MailBagSystem, packedMailBagSystem: PackedMailBagSystem,
     envelopeDispatchMachineSystem: EnvelopeDispatchMachineSystem, lostFoundSystem: LostFoundSystem,
     vehicleControlSystem: VehicleControlSystem, afterWorkStorySystem: AfterWorkStorySystem,
-    unloadingSystem: UnloadingSystem
+    unloadingSystem: UnloadingSystem, upgradeSystem: UpgradeSystem
   ) {
     this.scene = scene;
     this.interactables = interactables;
@@ -154,6 +174,7 @@ export class CompleteDayCheatSystem {
     this.vehicleControlSystem = vehicleControlSystem;
     this.afterWorkStorySystem = afterWorkStorySystem;
     this.unloadingSystem = unloadingSystem;
+    this.upgradeSystem = upgradeSystem;
 
     // spec: "優先選擇完全不生成，而非生成但禁用" (same convention this
     // codebase already established for the pallet-inventory-expansion
@@ -162,6 +183,7 @@ export class CompleteDayCheatSystem {
     if (ENABLE_COMPLETE_DAY_CHEAT) {
       this.buildButton();
       this.buildJumpButton();
+      this.buildScoreButton();
     }
   }
 
@@ -209,12 +231,41 @@ export class CompleteDayCheatSystem {
     this.interactables.set(JUMP_TO_DAY8_BUTTON_ID, obj);
   }
 
+  /** "每日結算流程修改" round spec三: same wall/mount/style as the other two
+   * cheat buttons, positioned BUTTON_WIDTH + 0.25m east of the jump button
+   * (see SCORE_BUTTON_CENTER_X's own doc comment) so all three render side
+   * by side in the "[作弊完成今日] [跳至第八天] [+1000分]" order the spec
+   * shows. Unlike the other two, this button has no "blocked" state at
+   * all — it's always available regardless of dailyFlowSystem.state, since
+   * granting spendable score has no day-progress precondition to satisfy. */
+  private buildScoreButton(): void {
+    const geo = new THREE.BoxGeometry(BUTTON_WIDTH, BUTTON_HEIGHT, BUTTON_DEPTH);
+    const mat = new THREE.MeshStandardMaterial({ color: 0xdd1111, emissive: 0x330000 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(SCORE_BUTTON_CENTER_X, BUTTON_CENTER_Y, BUTTON_CENTER_Z);
+    this.scene.add(mesh);
+    this.scoreButtonMesh = mesh;
+
+    const label = createFloatingLabel(SCORE_IDLE_TEXT, { width: 0.7, bg: 'rgba(120,10,10,0.85)', fg: '#ffe14d' });
+    label.position.set(SCORE_BUTTON_CENTER_X, BUTTON_CENTER_Y + BUTTON_HEIGHT / 2 + 0.28, BUTTON_CENTER_Z);
+    this.scene.add(label);
+
+    const obj = createInteractableObject(
+      SCORE_CHEAT_BUTTON_ID, '測試用+1000分按鈕', mesh, BUTTON_WIDTH, BUTTON_HEIGHT, BUTTON_DEPTH
+    );
+    this.interactables.set(SCORE_CHEAT_BUTTON_ID, obj);
+  }
+
   isCheatButtonTarget(id: string): boolean {
     return ENABLE_COMPLETE_DAY_CHEAT && id === COMPLETE_DAY_CHEAT_BUTTON_ID;
   }
 
   isJumpButtonTarget(id: string): boolean {
     return ENABLE_COMPLETE_DAY_CHEAT && id === JUMP_TO_DAY8_BUTTON_ID;
+  }
+
+  isScoreButtonTarget(id: string): boolean {
+    return ENABLE_COMPLETE_DAY_CHEAT && id === SCORE_CHEAT_BUTTON_ID;
   }
 
   /** ONE canonical judgment shared by the prompt display and the actual
@@ -238,6 +289,13 @@ export class CompleteDayCheatSystem {
     return cameraPosition.distanceTo(this.jumpButtonMesh.position) <= CHEAT_BUTTON_INTERACT_DISTANCE;
   }
 
+  /** Same raycast-precise distance judgment as canPressCheatButton above,
+   * for the new +1000分 button. */
+  canPressScoreButton(cameraPosition: THREE.Vector3): boolean {
+    if (!this.scoreButtonMesh) return false;
+    return cameraPosition.distanceTo(this.scoreButtonMesh.position) <= CHEAT_BUTTON_INTERACT_DISTANCE;
+  }
+
   /** Prompt text for whatever the current press WOULD do — read by
    * InteractionSystem so the on-screen hint always matches pressCheatButton
    * below's own actual outcome. */
@@ -256,6 +314,11 @@ export class CompleteDayCheatSystem {
     if (this.isExecuting || this.dailyFlowSystem.state === 'resetting') return JUMP_BLOCKED_RESETTING_TEXT;
     if (this.afterWorkStorySystem.isActive) return JUMP_BLOCKED_STORY_ACTIVE_TEXT;
     return JUMP_PROMPT_TEXT;
+  }
+
+  /** No blocked state — see buildScoreButton's own doc comment. */
+  getScorePromptText(): string {
+    return SCORE_PROMPT_TEXT;
   }
 
   /** Whether today's content has even been generated yet (spec五: "尚未生成
@@ -337,7 +400,7 @@ export class CompleteDayCheatSystem {
    * (the single giant cake item, E-only), THEN directly enters the Day8
    * finale itself so the tester can test the F-interactable cake/party/
    * campfire chain with no extra steps (spec follow-up's own "測試者必須能
-   * 夠直接測試" requirement — pressCheatButton + pressEndDayButton are no
+   * 夠直接測試" requirement — pressCheatButton + advanceToNextDay are no
    * longer required first). resetForDayJumpTesting() clears BOTH guards
    * trigger() itself checks before it will fire a second time in the same
    * session: the persisted completedDays flag (real players are correctly
@@ -392,7 +455,7 @@ export class CompleteDayCheatSystem {
       this.dailyFlowSystem.hasUnloadedToday = false;
       this.completedCheatDayId = null;
       // "船運載具規格重製" round — this cheat bypasses the normal
-      // DailyFlowSystem.pressEndDayButton()/resetTools sequence entirely
+      // DailyFlowSystem.advanceToNextDay()/resetTools sequence entirely
       // (it sets currentDay directly instead), so it must also explicitly
       // rebuild the vehicle roster here the same way that sequence would
       // have — otherwise whatever day's roster happened to be active before
@@ -423,6 +486,18 @@ export class CompleteDayCheatSystem {
     } finally {
       this.isExecuting = false;
     }
+  }
+
+  /** "每日結算流程修改" round spec三: the new "+1000分" button's own E-action
+   * — adds straight onto UpgradeSystem's own availableSettlementScore (the
+   * SAME currency purchaseUpgrade() spends), never a second/parallel score
+   * value. No re-entrancy lock or day-state gate needed — this is a pure
+   * additive grant with no precondition and no interaction with
+   * dailyFlowSystem/vehicleControlSystem state at all, unlike the other two
+   * cheat buttons. */
+  pressScoreButton(): void {
+    this.upgradeSystem.grantTestScore(SCORE_GRANT_AMOUNT);
+    this.hud.showToast(SCORE_GRANTED_TOAST);
   }
 
   /** spec二 items 1/6: every daily Cargo — credited via the exact `total`

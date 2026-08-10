@@ -351,15 +351,17 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   ));
 
   // Daily unload -> sort -> ship-via-vehicle loop (this round's core).
-  // DailyFlowSystem owns the day/state/count bookkeeping and the 結束今天
-  // button; UnloadingSystem owns the north gate/chute/spawn sequence and
+  // DailyFlowSystem owns the day/state/count bookkeeping and the automatic
+  // next-day advance ("每日結算流程修改" round removed the old 結束今天
+  // button — see daily-flow-system.ts's own advanceToNextDay doc comment);
+  // UnloadingSystem owns the north gate/chute/spawn sequence and
   // the 開始卸貨 button; VehicleControlSystem (re-enabled this round —
   // spec "北側卸貨口/重新啟用呼叫載具" section 六) now also owns the
   // organized-cargo-into-cargoBounds shipment judgment. All three report
   // into DailyFlowSystem rather than it reaching into them. Constructed
   // BEFORE VehicleControlSystem/UnloadingSystem since both need it.
   const dailyFlowSystem = new DailyFlowSystem(
-    scene, physics, cargoSystem, hud,
+    cargoSystem, hud,
     () => {
       dollySystem.resetToStart(); unloadingSystem.resetGate(); palletSystem.resetToStart();
       lostFoundSystem.resetDaily();
@@ -385,7 +387,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
       // vehicle roster from daily-unlock-data.ts, reading
       // dailyFlowSystem.currentDay which has ALREADY advanced to the new
       // day by the time this whole callback fires (see
-      // DailyFlowSystem.pressEndDayButton's own ordering).
+      // DailyFlowSystem.advanceToNextDay's own ordering).
       vehicleControlSystem.resetForNewDay();
       // Same round, spec三/七 — the hotbar/tool cart/skill panel all need to
       // re-render against the new day's unlock list the instant it changes,
@@ -402,7 +404,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
       // "Add day one dock story event" round — the ONE trigger point. By
       // the time this fires, DailyFlowSystem has ALREADY synchronously
       // advanced currentDay/state to day 2 internally (see
-      // daily-flow-system.ts's own pressEndDayButton) — this only gates the
+      // daily-flow-system.ts's own advanceToNextDay) — this only gates the
       // PLAYER's own experience of that already-completed transition until
       // the story finishes; trigger() itself is a no-op for any day without
       // a story entry, or one already played (this session or a past one).
@@ -428,11 +430,12 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
       // (notifyDayComplete, called from VehicleControlSystem's own
       // showDayCompleteSummary — both the real six-vehicle departure path
       // and the test cheat funnel through that one method), well before the
-      // player clicks "continue" or walks to press 結束今天. Deliberately
-      // narrower than resetTools() above: only touches cargo/mail/lost-found
-      // OBJECTS (spec's own explicit "可以清" list) — never dolly/gate/
-      // pallet fixture positions (those still reset later, unchanged, at the
-      // normal pressEndDayButton() time) and never anything
+      // player clicks "continue" and the automatic advanceToNextDay() call
+      // that follows. Deliberately narrower than resetTools() above: only
+      // touches cargo/mail/lost-found OBJECTS (spec's own explicit "可以清"
+      // list) — never dolly/gate/pallet fixture positions (those still
+      // reset later, unchanged, at the normal advanceToNextDay() time) and
+      // never anything
       // AfterWorkStorySystem owns (story NPCs/props are untouched — this
       // callback has no reference to that system at all, so Day7's letter
       // and Day8's cake can never be caught by it).
@@ -662,7 +665,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     scene, interactables, playerData, hud,
     pickupSystem, palletSystem, ladderSystem, envelopeStackSystem, cargoSystem, dailyFlowSystem,
     mailSystem, mailBagSystem, packedMailBagSystem, envelopeDispatchMachineSystem, lostFoundSystem,
-    vehicleControlSystem, afterWorkStorySystem, unloadingSystem
+    vehicleControlSystem, afterWorkStorySystem, unloadingSystem, upgradeSystem
   );
 
   // Interaction system
@@ -679,7 +682,6 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     pauseManager,
     settingsManager,
     unloadingSystem,
-    dailyFlowSystem,
     palletSystem,
     lostFoundSystem,
     mailSystem,

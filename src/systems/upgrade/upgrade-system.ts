@@ -66,31 +66,18 @@ export interface UpgradeLevelPushTarget {
  * versioned storage key already IS a one-time migration by construction. */
 const UPGRADE_STORAGE_KEY = 'hp_manual_upgrades_v2';
 
-// TEMPORARY TEST GRANT — remove before public demo.
-// A brand-new save (or an explicit "重新開始第1天" reset, see
-// resetUpgradesForNewRun below) starts with this much spendable score
-// (skills all still Lv.0, purchases still deduct normally) instead of 0, so
-// testers have something to actually spend without needing to play a full
-// day first. This is the ONLY two ways a save's score is ever set to this
-// value — an EXISTING save loading back in (mergeUpgradeSaveState below)
-// never tops itself up to this amount, no matter how low its own score has
-// dropped from spending, so a plain refresh never surprises a tester with
-// free score they didn't earn (spec: "舊周目載入時不再因testGrantVersion反
-// 覆補到1000"). testGrantVersion is carried over as a plain save-shape
-// field (still stamped fresh on every brand-new/reset save) but no longer
-// read as a load-time migration trigger.
-const TEMPORARY_TEST_STARTING_SCORE = 1000;
-const TEMPORARY_TEST_GRANT_VERSION = 1;
-
+/** "每日結算流程修改" round spec二: removed the old TEMPORARY_TEST_GRANT
+ * (a one-time 1000-score starting balance) — a brand-new save now starts
+ * with genuinely 0 spendable score, matching a normal playthrough where
+ * every point is actually earned via a day's own departure settlement. */
 function createDefaultUpgradeSaveState(): UpgradeSaveState {
   return {
-    availableSettlementScore: TEMPORARY_TEST_STARTING_SCORE, // TEMPORARY TEST GRANT — remove before public demo
+    availableSettlementScore: 0,
     levels: {
       multiCarry: 0, heavyHandling: 0, moveSpeed: 0, similarCargoSense: 0, ropeStrap: 0, powerGlovesUpgrade: 0,
       envelopeCarryLevel: 0, palletInventoryLevel: 0, cargoHookLevel: 0, envelopeVacuumLevel: 0,
     },
     settledDayId: null,
-    testGrantVersion: TEMPORARY_TEST_GRANT_VERSION, // TEMPORARY TEST GRANT — remove before public demo
   };
 }
 
@@ -128,20 +115,10 @@ function mergeUpgradeSaveState(saved: (Partial<UpgradeSaveState> & { upgradePoin
     availableSettlementScore = saved.upgradePoints;
   }
 
-  // TEMPORARY TEST GRANT — remove before public demo. Loading an EXISTING
-  // save never tops its score back up to TEMPORARY_TEST_STARTING_SCORE —
-  // only a genuinely brand-new save (the `!saved` early return above) or an
-  // explicit resetUpgradesForNewRun() call gets that starting amount (spec:
-  // "舊周目載入時不再因testGrantVersion反覆補到1000"). testGrantVersion is
-  // just carried through as-is (or defaulted) — a plain save-shape field,
-  // not a migration trigger.
-  const testGrantVersion = typeof saved.testGrantVersion === 'number' ? saved.testGrantVersion : base.testGrantVersion;
-
   return {
     availableSettlementScore,
     levels,
     settledDayId: typeof saved.settledDayId === 'number' ? saved.settledDayId : base.settledDayId,
-    testGrantVersion,
   };
 }
 
@@ -240,8 +217,8 @@ export class UpgradeSystem {
    * — never called from the constructor, page load, or loadSave() (spec:
    * "不要在UpgradeSystem建構、頁面載入或loadSave()時自動執行重置"), only from
    * the explicit "重新開始第1天" new-run trigger (see pause-menu-ui.ts's
-   * Data tab). Every skill level back to 0, spendable score back to
-   * TEMPORARY_TEST_STARTING_SCORE, settledDayId cleared so a stale dayId
+   * Data tab). Every skill level back to 0, spendable score back to 0
+   * (see createDefaultUpgradeSaveState), settledDayId cleared so a stale dayId
    * left over from the PREVIOUS playthrough can never suppress this new
    * run's own first day-settlement (spec五), persisted immediately (spec
    *六) so even a refresh a moment later reads the clean state back, and
@@ -304,6 +281,16 @@ export class UpgradeSystem {
     this.applyEffect(id);
     this.save();
     return true;
+  }
+
+  /** TEMPORARY TEST CHEAT — remove before public demo. The settlement half
+   * of the new "+1000 分" cheat button (complete-day-cheat-system.ts) — adds
+   * straight onto availableSettlementScore, the SAME currency
+   * purchaseUpgrade() spends and UpgradeMenuUI displays, so a press is
+   * immediately visible/spendable with no separate test currency invented. */
+  grantTestScore(amount: number): void {
+    this.state.availableSettlementScore += amount;
+    this.save();
   }
 
   /** Wired (via ScoringSystem's own onSettlement callback, see

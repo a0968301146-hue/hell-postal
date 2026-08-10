@@ -15,8 +15,8 @@ export const MAIL_WORK_AREA_Z = 17.0;
  * open mail bags" round 一: "工作桌貼齊北牆"). Sits in the solid wall segment
  * WEST of the north cargo-chute room's own doorway ("重製出貨口" round —
  * data/world/cargo-chute-room-layout-data.ts's CARGO_CHUTE_DOORWAY, span
- * x -1.8..1.8) — clear of both the doorway itself and the 開始卸貨/結束今天
- * button posts (relocated the same round, x≈-3.3), and positioned between
+ * x -1.8..1.8) — clear of both the doorway itself and the 開始卸貨 button
+ * post (relocated the same round, x≈-3.3), and positioned between
  * the lost-found cabinet (x -9.85..-9.16, z 10.48..13.52) and those buttons
  * with clear standing gaps on both sides (spec: "與左右其他設施保留明顯間
  * 距，不要連成一整排") — table spans x -7.8..-6.2, leaving ~1.36m to the

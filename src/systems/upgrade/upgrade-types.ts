@@ -52,10 +52,4 @@ export interface UpgradeSaveState {
    * twice (spec一: "每個dayId只能加入一次"). `null` before any day has ever
    * completed. */
   settledDayId: number | null;
-  /** TEMPORARY TEST GRANT — remove before public demo. Version stamp for
-   * the one-time 1000-score test grant (upgrade-system.ts's
-   * TEMPORARY_TEST_GRANT_VERSION) — guards against re-granting on every
-   * reload of an already-progressed save. `0`/missing means "never
-   * granted". */
-  testGrantVersion: number;
 }

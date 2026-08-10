@@ -97,7 +97,7 @@ export const TUTORIAL_ENTRIES: TutorialEntry[] = [
     id: 'end-day',
     title: '結束今天',
     unlockEvent: 'dayCompleted',
-    body: '兩台載具都離場後，走到「結束今天」按鈕旁按下互動鍵，場地與工具（托盤、拖板車、卸貨閘門）就會重置，進入下一天。',
+    body: '今日所有載具離場、完全消失於地圖後，系統會自動結算並顯示今日總結，按下「繼續」後場地與工具（托盤、拖板車、卸貨閘門）就會自動重置，直接進入下一天，不需要額外按鈕。',
   },
   {
     id: 'organize-box',

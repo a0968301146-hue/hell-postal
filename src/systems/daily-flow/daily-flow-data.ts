@@ -20,7 +20,7 @@
 // from the new chute geometry instead of two built from NORTH_GATES — so
 // those two files needed zero changes despite this rewrite.
 import {
-  CARGO_CHUTE_PIPE, CARGO_CHUTE_HATCH, HIGH_CARGO_SPAWN_POINT, CARGO_CHUTE_BUTTON_POS, CARGO_CHUTE_END_DAY_BUTTON_POS,
+  CARGO_CHUTE_PIPE, CARGO_CHUTE_HATCH, HIGH_CARGO_SPAWN_POINT, CARGO_CHUTE_BUTTON_POS,
 } from '../../data/world/cargo-chute-room-layout-data';
 
 /** How many cargo items spawn each day — "Day 1～7 每日系統完整實作" round:
@@ -183,11 +183,13 @@ export const UNLOAD_BURST_CONFIG = {
   settleAfterLastItem: 0.8,
 };
 
-/** Wall-side pos for the two unloading-control buttons — "重製出貨口" round:
- * relocated to just west of the new chute room's own single doorway (see
- * cargo-chute-room-layout-data.ts), still inside BACK_AREA itself. */
+/** Wall-side pos for the 開始卸貨 button — "重製出貨口" round: relocated to
+ * just west of the new chute room's own single doorway (see
+ * cargo-chute-room-layout-data.ts), still inside BACK_AREA itself. "每日結算
+ * 流程修改" round removed the old 結束今天 button entirely (see
+ * daily-flow-system.ts's own doc comment) — this is the only button left in
+ * that cluster now. */
 export const UNLOAD_BUTTON_POS = CARGO_CHUTE_BUTTON_POS;
-export const END_DAY_BUTTON_POS = CARGO_CHUTE_END_DAY_BUTTON_POS;
 
 /** Central sorting platform — a wooden pallet, sized within spec's 1.0-1.2m
  * range. Untouched by this round — still in the back area, well clear of

@@ -13,7 +13,6 @@ import { HUD } from '../hud';
 import { PauseManager } from '../../core/pause-manager';
 import { SettingsManager } from '../settings';
 import { UnloadingSystem } from '../unloading';
-import { DailyFlowSystem } from '../daily-flow';
 import { PalletSystem } from '../pallet';
 import { LostFoundSystem, LOST_FOUND_NPC_INTERACTABLE_ID } from '../lost-found';
 import { MailSystem } from '../mail/mail-system';
@@ -68,7 +67,6 @@ export class InteractionSystem {
   private pauseManager: PauseManager;
   private settingsManager: SettingsManager;
   private unloadingSystem: UnloadingSystem;
-  private dailyFlowSystem: DailyFlowSystem;
   private palletSystem: PalletSystem;
   private lostFoundSystem: LostFoundSystem;
   private mailSystem: MailSystem;
@@ -114,7 +112,6 @@ export class InteractionSystem {
     pauseManager: PauseManager,
     settingsManager: SettingsManager,
     unloadingSystem: UnloadingSystem,
-    dailyFlowSystem: DailyFlowSystem,
     palletSystem: PalletSystem,
     lostFoundSystem: LostFoundSystem,
     mailSystem: MailSystem,
@@ -148,7 +145,6 @@ export class InteractionSystem {
     this.pauseManager = pauseManager;
     this.settingsManager = settingsManager;
     this.unloadingSystem = unloadingSystem;
-    this.dailyFlowSystem = dailyFlowSystem;
     this.palletSystem = palletSystem;
     this.lostFoundSystem = lostFoundSystem;
     this.mailSystem = mailSystem;
@@ -417,6 +413,7 @@ export class InteractionSystem {
         this.currentTarget.id !== VEHICLE_CALL_BUTTON_ID && this.currentTarget.id !== VEHICLE_DEPART_BUTTON_ID &&
         !this.completeDayCheatSystem.isCheatButtonTarget(this.currentTarget.id) &&
         !this.completeDayCheatSystem.isJumpButtonTarget(this.currentTarget.id) &&
+        !this.completeDayCheatSystem.isScoreButtonTarget(this.currentTarget.id) &&
         !this.isLostFoundNpcTarget(this.currentTarget) &&
         !(this.mailBagSystem.isBag(this.currentTarget.id) && isHoldingEnvelope) &&
         this.pickupSystem.canAddToHeld(this.currentTarget)
@@ -683,6 +680,17 @@ export class InteractionSystem {
       return;
     }
 
+    // Priority 0.87: "+1000分" test button — same shape as the two cheat
+    // buttons just above ("每日結算流程修改" round spec三).
+    if (this.currentTarget && this.completeDayCheatSystem.isScoreButtonTarget(this.currentTarget.id)) {
+      if (this.completeDayCheatSystem.canPressScoreButton(this.camera.position)) {
+        this.completeDayCheatSystem.pressScoreButton();
+      }
+      this.clearHighlight(this.currentTarget);
+      this.currentTarget = null;
+      return;
+    }
+
     // Priority 0.9: wall pallet racks, aimed at while empty-handed (nothing
     // to hang up) — canPickUp is only true to satisfy the raycast filter,
     // same reasoning as the mail rack/vehicle buttons above; intercepted
@@ -790,15 +798,13 @@ export class InteractionSystem {
       return;
     }
 
-    // Priority 3: 開始卸貨 / 結束今天 — co-located near the north unload
-    // dock close enough together that a naive per-button proximity check
-    // would overlap; resolve to whichever one the player is actually
-    // nearer to. (The vehicle call/depart buttons used to share this same
-    // proximity pattern — see Priority 0.8 above for their current
-    // crosshair-raycast replacement.)
-    switch (this.nearestUnloadClusterButton()) {
-      case 'unload': this.unloadingSystem.pressButton(); return;
-      case 'endDay': this.dailyFlowSystem.pressEndDayButton(); return;
+    // Priority 3: 開始卸貨 — "每日結算流程修改" round removed the co-located
+    // 結束今天 button entirely (the day now advances automatically once the
+    // day-complete summary is dismissed — see daily-flow-system.ts's own
+    // advanceToNextDay doc comment), so this is a plain proximity check now.
+    if (this.unloadingSystem.isPlayerNearButton(this.camera.position)) {
+      this.unloadingSystem.pressButton();
+      return;
     }
 
     // Priority 5: counter open-for-business button
@@ -818,22 +824,6 @@ export class InteractionSystem {
     if (this.checkFarTarget()) {
       this.hud.showTooFar();
     }
-  }
-
-  /** Nearest-wins resolution between the co-located 開始卸貨/結束今天
-   * buttons (spec section 十九: "四個按鈕不要互相重疊") — these two stay
-   * proximity-based (unlike the vehicle call/depart buttons, now crosshair
-   * raycast targets — see VEHICLE_CALL_BUTTON_ID/VEHICLE_DEPART_BUTTON_ID
-   * above), out of scope for "Fix cargo throwing and rebalance daily
-   * manifest" round二. */
-  private nearestUnloadClusterButton(): 'unload' | 'endDay' | null {
-    const pos = this.camera.position;
-    const unloadNear = this.unloadingSystem.isPlayerNearButton(pos);
-    const endDayNear = this.dailyFlowSystem.isPlayerNearButton(pos);
-    if (!unloadNear && !endDayNear) return null;
-    if (unloadNear && !endDayNear) return 'unload';
-    if (!unloadNear && endDayNear) return 'endDay';
-    return this.unloadingSystem.buttonDistance(pos) <= this.dailyFlowSystem.buttonDistance(pos) ? 'unload' : 'endDay';
   }
 
   /** Single shared raycast-and-resolve helper — the ONE raycaster instance
@@ -972,6 +962,7 @@ export class InteractionSystem {
         hit.id !== VEHICLE_CALL_BUTTON_ID && hit.id !== VEHICLE_DEPART_BUTTON_ID && !this.isLostFoundNpcTarget(hit) &&
         !this.completeDayCheatSystem.isCheatButtonTarget(hit.id) &&
         !this.completeDayCheatSystem.isJumpButtonTarget(hit.id) &&
+        !this.completeDayCheatSystem.isScoreButtonTarget(hit.id) &&
         this.pickupSystem.canAddToHeld(hit)
       ) {
         if (this.currentTarget !== hit) {
@@ -1195,6 +1186,10 @@ export class InteractionSystem {
           // TEMPORARY TEST CHEAT — mirrors the branch just above, for the
           // new "跳至第八天" button (spec follow-up).
           this.hud.showInteractionPrompt(newTarget.displayName, this.completeDayCheatSystem.getJumpPromptText());
+        } else if (this.completeDayCheatSystem.isScoreButtonTarget(newTarget.id)) {
+          // TEMPORARY TEST CHEAT — mirrors the branches above, for the new
+          // "+1000分" button ("每日結算流程修改" round spec三).
+          this.hud.showInteractionPrompt(newTarget.displayName, this.completeDayCheatSystem.getScorePromptText());
         } else if (newTarget && this.isLostFoundNpcTarget(newTarget)) {
           // "Fix NPC direct interaction and pallet stack handling" round二:
           // crosshair directly on the NPC's own hitbox, empty-handed. Not-
@@ -1268,24 +1263,15 @@ export class InteractionSystem {
       return;
     }
 
-    // 開始卸貨 / 結束今天 buttons — same nearest-button resolution as onKeyDown
-    const nearestUnloadCluster = this.nearestUnloadClusterButton();
-    if (nearestUnloadCluster === 'unload') {
+    // 開始卸貨 button — "每日結算流程修改" round removed the co-located
+    // 結束今天 button entirely (see daily-flow-system.ts's own doc comment),
+    // so no nearest-button disambiguation is needed here anymore.
+    if (this.unloadingSystem.isPlayerNearButton(this.camera.position)) {
       if (this.unloadingSystem.canStartUnloading) {
         this.hud.showInteractionPrompt('開始卸貨', '按 E 開始卸貨');
         this.hud.setCrosshairActive(true);
       } else {
         this.hud.showInteractionPrompt('開始卸貨', this.unloadingSystem.startBlockedMessage());
-        this.hud.setCrosshairActive(false);
-      }
-      return;
-    }
-    if (nearestUnloadCluster === 'endDay') {
-      if (this.dailyFlowSystem.canEndDay) {
-        this.hud.showInteractionPrompt('結束今天', '按 E 結束今天');
-        this.hud.setCrosshairActive(true);
-      } else {
-        this.hud.showInteractionPrompt('結束今天', this.dailyFlowSystem.endDayBlockedMessage());
         this.hud.setCrosshairActive(false);
       }
       return;
