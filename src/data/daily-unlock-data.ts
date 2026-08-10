@@ -1,70 +1,268 @@
-// Day 1～8 逐日解鎖資料架構 ("世界觀地區命名修正＋國家圖鑑＋Day 1～8 解鎖架構"
-// round, spec四～六).
+// Day 1～7 逐日內容與解鎖資料架構 ("Day 1～7 每日內容與解鎖規格" round) — THE
+// single source of truth every daily-content system reads from (spec十一:
+// "優先讓每日設定集中在單一資料來源，避免不同系統各自硬編碼Day1～7數值").
 //
-// Pure data structure only this round — NOT wired into DailyFlowSystem,
-// ToolSystem, UpgradeSystem, or any spawn/manifest logic anywhere (spec七:
-// "目前不要修改每日貨物生成數量／技能價格／技能數值／貨物比例／載具生成比
-// 例／道具數值／每日詳細解鎖內容"). Every field beyond Day 1 is a genuinely
-// empty placeholder ("待填") — the requester was explicit that specific
-// content for Days 2～8 must NEVER be guessed, balanced, or invented here
-// (spec六): no new skill/cargo/vehicle/tool may be invented to fill a slot,
-// and Day 1's own skill specifics (which exact skills, their levels/costs/
-// unlock method) are ALSO deliberately left as a free-text note rather than
-// a concrete list, since the requester withheld those specifics too (spec
-// 五: "技能種類/技能等級/費用/解鎖方式 暫時不要自行決定，等待後續資料").
+// Every number/list below is copied verbatim from the requester's own
+// spec — never guessed, balanced, or invented (spec一/二/三). Day 8 is
+// deliberately left untouched (spec八/九: "Day 8 暫時不要自行新增或猜測每日
+// 數據，等待後續規格") — getEffectiveDayUnlockConfig() below falls back to
+// Day 7's own (already fully-unlocked-by-Day5) config for day>=8 purely so
+// the EXISTING, already-working Day 8 giant-cake flow never regresses
+// (spec十.7: "不要改變目前已經正常運作的物流...流程") — this is not new Day 8
+// content, just "don't apply a Day1-7 restriction to a day this round was
+// told not to touch".
 //
-// CargoCategory/ActiveTool/FROG_VEHICLE_CONFIG_ID are the SAME real,
-// already-existing identifiers the live game itself uses (never a second
-// hand-invented id scheme) — Day 1's own confirmed content (一般貨物/易碎貨
-// 物/青蛙載具/空手) is expressed by referencing them directly, so this data
-// can never silently drift from what those systems actually call the same
-// things.
-import { CargoCategory } from '../systems/cargo';
+// Cumulative-unlock rule (spec八): once something opens on day N it stays
+// open every subsequent day, even if a LATER day's own bullet list happens
+// to omit it (the requester's own spec text does this twice — 貨物托盤 is
+// listed Day 2 only, omitted from Day 3/4's own lists; 固定繩索 is listed
+// Day 4 only, omitted from Day 5/6/7's own lists). Every list below is
+// therefore already the CUMULATIVE set for that day (i.e. what the day
+// actually has open), not a transcription of that day's own literal bullet
+// list — so nothing downstream needs to re-derive the union itself.
+//
+// Real, already-existing ids are used throughout (never a second hand-
+// invented id scheme, spec九): CargoCategory/MailRegion/ActiveTool/UpgradeId/
+// VehicleConfig ids are the SAME ones cargo/mail/tool/upgrade/vehicle
+// systems already use — 石頭人=land-rockgiant-01 (石頭巨人), 托盤強化=
+// palletInventoryLevel (托盤庫存擴充), 勾貨勾=cargoHookLevel, confirmed with
+// the requester.
+// Deliberately importing from each system's own narrow data file (never the
+// barrel index.ts, and never a system CLASS file) — daily-unlock-data.ts is
+// read by mail-system.ts/vehicle-control-system.ts/pallet-system.ts/
+// upgrade-system.ts themselves, so pulling in a barrel that re-exports those
+// same classes would create a real import cycle (confirmed via
+// `npx madge --circular` during this round — fixed by switching every import
+// below to its most specific source file).
+import { CargoCategory } from '../systems/cargo/cargo-category-data';
 import { ActiveTool } from '../core/game-state';
-import { FROG_VEHICLE_CONFIG_ID } from '../systems/vehicle';
+import { MailRegion } from '../systems/mail/mail-types';
+import { UpgradeId } from '../systems/upgrade/upgrade-types';
+import { FROG_VEHICLE_CONFIG_ID } from '../systems/vehicle/vehicle-data';
+
+/** The other five VehicleConfig ids, spelled out here the same way
+ * FROG_VEHICLE_CONFIG_ID already is (vehicle-data.ts's own literal-id
+ * convention) — avoids importing the full VehicleConfig arrays just to read
+ * five id strings. */
+const ROCKGIANT_VEHICLE_CONFIG_ID = 'land-rockgiant-01';
+const SNAIL_VEHICLE_CONFIG_ID = 'land-snail-01';
+const RAY_VEHICLE_CONFIG_ID = 'sea-ray-01';
+const TURTLE_VEHICLE_CONFIG_ID = 'sea-turtle-01';
+const KRAKEN_VEHICLE_CONFIG_ID = 'sea-kraken-01';
+
+export interface DailyTotals {
+  /** 包裹總量 — today's full daily cargo count (spec六: "每日總量是當天完整
+   * 物流流程的總數"). Recorded here for reference only this round — NOT yet
+   * wired into cargo-manifest-planner.ts's actual spawn quantities (the
+   * per-category ratio within this total was withheld, spec九: "每種貨物的
+   * 生成比例／每種貨物的實際數量" — see this file's header doc / the
+   * implementation report for why). */
+  cargoTotal: number;
+  /** 信件總量 — wired for real into mail-system.ts's spawnTodaysEnvelopes
+   * (safe to parameterize: that method already does a pure even-split
+   * across whichever destinations are open, no ratio to invent). */
+  mailTotal: number;
+  /** 失物招領（總量／裝飾失物數） — recorded for reference only this round;
+   * NOT wired into lost-found-data.ts (see this file's header — the
+   * existing LOST_FOUND_CASES pool only has 5 entries, fewer than several
+   * days' own NPC targets below, a genuine conflict reported rather than
+   * silently resolved). */
+  lostFoundTotal: number;
+  /** 失物招領人數 — same "recorded, not wired, pool-size conflict reported"
+   * status as lostFoundTotal above. */
+  lostFoundNpcCount: number;
+}
 
 export interface DayUnlockConfig {
   day: number;
-  /** 貨物 — CargoCategory values that become available this day. */
-  cargoTypes: CargoCategory[];
-  /** 道具 — ActiveTool ids that become available ('empty' = 空手/no tool). */
-  tools: ActiveTool[];
-  /** 技能 — free-text note only (see file header doc comment for why this
-   * is deliberately NOT a concrete UpgradeId list yet). */
-  skillsNote: string;
-  /** 載具 — VehicleConfig ids that become available. */
+  dailyTotals: DailyTotals;
+  /** 開放貨物種類 — per region (spec: 國內／國外 differ starting Day 3).
+   * Recorded for reference only this round (see dailyTotals.cargoTotal's own
+   * doc comment for why generation itself isn't wired yet). */
+  cargoCategoriesByRegion: { domestic: CargoCategory[]; international: CargoCategory[] };
+  /** 開放信封種類 — wired for real into mail-system.ts (see mailTotal's own
+   * doc comment). */
+  mailRegions: MailRegion[];
+  /** 開放載具 — VehicleConfig ids, wired for real into
+   * VehicleControlSystem.pressCallButton() (only spawns slots whose config
+   * id appears here). */
   vehicles: string[];
-  /** 其他 — any other system unlocked this day, free text. */
-  other: string[];
+  /** 開放道具 — ActiveTool ids (hotbar-configurable tools only; 'empty' is
+   * always implicitly available and never gated). Wired for real into
+   * ToolSystem.trySelect()/ToolLoadoutMenuUI (blocks equipping/selecting a
+   * tool not yet in this list). */
+  tools: ActiveTool[];
+  /** 貨物托盤 — NOT part of ActiveTool (a separate, always-on-until-now
+   * system, PalletSystem) — its own cumulative flag, wired for real into
+   * PalletSystem.pickUp(). */
+  palletUnlocked: boolean;
+  /** 梯子 — same "separate system, own flag" treatment as palletUnlocked
+   * above, wired for real into LadderSystem.pickUp()/canPickUp(). */
+  ladderUnlocked: boolean;
+  /** 開放技能 — UpgradeId list, wired for real into
+   * UpgradeSystem.purchaseUpgrade() (blocks purchasing a skill not yet in
+   * this list; existing costs/levelEffects are completely untouched,
+   * spec十.8). */
+  skills: UpgradeId[];
 }
 
-function emptyDay(day: number): DayUnlockConfig {
-  return { day, cargoTypes: [], tools: [], skillsNote: '待填', vehicles: [], other: ['待填'] };
-}
+/** Day 1 — spec: 包裹20／信件10／失物招領5／人數3. */
+const DAY1: DayUnlockConfig = {
+  day: 1,
+  dailyTotals: { cargoTotal: 20, mailTotal: 10, lostFoundTotal: 5, lostFoundNpcCount: 3 },
+  cargoCategoriesByRegion: { domestic: ['normal', 'fragile'], international: [] },
+  mailRegions: ['domestic'],
+  vehicles: [FROG_VEHICLE_CONFIG_ID],
+  tools: ['empty'],
+  palletUnlocked: false,
+  ladderUnlocked: false,
+  skills: ['moveSpeed', 'similarCargoSense', 'multiCarry'],
+};
+
+/** Day 2 — spec: 包裹40／信件20／失物招領8／人數5. 新增：大型貨物、石頭人載
+ * 具、貨物托盤／力量手套道具、信封搬運技能. */
+const DAY2: DayUnlockConfig = {
+  day: 2,
+  dailyTotals: { cargoTotal: 40, mailTotal: 20, lostFoundTotal: 8, lostFoundNpcCount: 5 },
+  cargoCategoriesByRegion: { domestic: ['normal', 'fragile', 'large'], international: [] },
+  mailRegions: ['domestic'],
+  vehicles: [FROG_VEHICLE_CONFIG_ID, ROCKGIANT_VEHICLE_CONFIG_ID],
+  tools: ['empty', 'powerGloves'],
+  palletUnlocked: true,
+  ladderUnlocked: false,
+  skills: ['moveSpeed', 'similarCargoSense', 'multiCarry', 'envelopeCarryLevel'],
+};
+
+/** Day 3 — spec: 包裹50／信件30／失物招領10／人數7. 新增：國外貨物／信封目
+ * 的地、魟魚／海龜載具、梯子道具、重物適應／力量手套強化技能. 貨物托盤（Day
+ * 2開放）在本日spec自身列表中被省略，依累積規則(spec八)持續保持開放。 */
+const DAY3: DayUnlockConfig = {
+  day: 3,
+  dailyTotals: { cargoTotal: 50, mailTotal: 30, lostFoundTotal: 10, lostFoundNpcCount: 7 },
+  cargoCategoriesByRegion: {
+    domestic: ['normal', 'fragile', 'large'],
+    international: ['normal', 'fragile', 'large'],
+  },
+  mailRegions: ['domestic', 'international'],
+  vehicles: [FROG_VEHICLE_CONFIG_ID, ROCKGIANT_VEHICLE_CONFIG_ID, RAY_VEHICLE_CONFIG_ID, TURTLE_VEHICLE_CONFIG_ID],
+  tools: ['empty', 'powerGloves'],
+  palletUnlocked: true,
+  ladderUnlocked: true,
+  skills: ['moveSpeed', 'similarCargoSense', 'multiCarry', 'envelopeCarryLevel', 'heavyHandling', 'powerGlovesUpgrade'],
+};
+
+/** Day 4 — spec: 包裹60／信件30／失物招領13／人數9. 新增：冷凍貨物、蝸牛／克
+ * 拉肯載具（六台載具集滿）、噴漆／信封吸塵器道具、托盤強化／固定繩索／信封吸
+ * 塵器強化技能. */
+const DAY4: DayUnlockConfig = {
+  day: 4,
+  dailyTotals: { cargoTotal: 60, mailTotal: 30, lostFoundTotal: 13, lostFoundNpcCount: 9 },
+  cargoCategoriesByRegion: {
+    domestic: ['normal', 'fragile', 'large', 'frozen'],
+    international: ['normal', 'fragile', 'large', 'frozen'],
+  },
+  mailRegions: ['domestic', 'international'],
+  vehicles: [
+    FROG_VEHICLE_CONFIG_ID, ROCKGIANT_VEHICLE_CONFIG_ID, RAY_VEHICLE_CONFIG_ID, TURTLE_VEHICLE_CONFIG_ID,
+    SNAIL_VEHICLE_CONFIG_ID, KRAKEN_VEHICLE_CONFIG_ID,
+  ],
+  tools: ['empty', 'powerGloves', 'sprayCan', 'envelopeVacuum'],
+  palletUnlocked: true,
+  ladderUnlocked: true,
+  skills: [
+    'moveSpeed', 'similarCargoSense', 'multiCarry', 'envelopeCarryLevel', 'heavyHandling', 'powerGlovesUpgrade',
+    'palletInventoryLevel', 'ropeStrap', 'envelopeVacuumLevel',
+  ],
+};
+
+/** Day 5 — spec: 包裹70／信件30／失物招領15／人數10. 新增：活物貨物、勾貨勾
+ * 道具／技能（技能與道具集滿）. 固定繩索（Day 4開放）在本日spec自身列表中被
+ * 省略，依累積規則(spec八)持續保持開放 — 累積技能集合在本日恰好等於現有全部
+ * 10項UpgradeDefinition，驗證spec本身內部一致。 */
+const DAY5: DayUnlockConfig = {
+  day: 5,
+  dailyTotals: { cargoTotal: 70, mailTotal: 30, lostFoundTotal: 15, lostFoundNpcCount: 10 },
+  cargoCategoriesByRegion: {
+    domestic: ['normal', 'fragile', 'large', 'frozen', 'live'],
+    international: ['normal', 'fragile', 'large', 'frozen', 'live'],
+  },
+  mailRegions: ['domestic', 'international'],
+  vehicles: [
+    FROG_VEHICLE_CONFIG_ID, ROCKGIANT_VEHICLE_CONFIG_ID, RAY_VEHICLE_CONFIG_ID, TURTLE_VEHICLE_CONFIG_ID,
+    SNAIL_VEHICLE_CONFIG_ID, KRAKEN_VEHICLE_CONFIG_ID,
+  ],
+  tools: ['empty', 'powerGloves', 'sprayCan', 'envelopeVacuum', 'cargoHook'],
+  palletUnlocked: true,
+  ladderUnlocked: true,
+  skills: [
+    'moveSpeed', 'similarCargoSense', 'multiCarry', 'envelopeCarryLevel', 'heavyHandling', 'powerGlovesUpgrade',
+    'palletInventoryLevel', 'ropeStrap', 'envelopeVacuumLevel', 'cargoHookLevel',
+  ],
+};
+
+/** Day 6 — spec: 包裹80／信件40／失物招領18／人數13；貨物／信封／載具／道具／
+ * 技能皆與Day5相同列表. */
+const DAY6: DayUnlockConfig = {
+  ...DAY5,
+  day: 6,
+  dailyTotals: { cargoTotal: 80, mailTotal: 40, lostFoundTotal: 18, lostFoundNpcCount: 13 },
+};
+
+/** Day 7 — spec: 包裹90／信件50／失物招領20／人數15；貨物／信封／載具／道具／
+ * 技能皆與Day5/6相同列表. */
+const DAY7: DayUnlockConfig = {
+  ...DAY5,
+  day: 7,
+  dailyTotals: { cargoTotal: 90, mailTotal: 50, lostFoundTotal: 20, lostFoundNpcCount: 15 },
+};
 
 export const DAILY_UNLOCKS: Record<number, DayUnlockConfig> = {
-  // Day 1 — the player's very first day of real logistics work (spec五).
-  // Only ordinary/fragile cargo and the frog vehicle are unloadable at all
-  // yet (matches vehicle-data.ts's own FROG_VEHICLE_CONFIG_ID acceptedCargo
-  // Types, which already only accepts 'normal'+'fragile' — this Day 1 entry
-  // is consistent with that existing configuration, not a new rule).
-  1: {
-    day: 1,
-    cargoTypes: ['normal', 'fragile'],
-    tools: ['empty'],
-    skillsNote: '普通技能可以升級（因其他道具尚未解鎖，Day 1 可先讓玩家升級基本能力；不預先解鎖後期道具）。詳細技能種類／等級／費用／解鎖方式待補。',
-    vehicles: [FROG_VEHICLE_CONFIG_ID],
-    other: [],
-  },
-  2: emptyDay(2),
-  3: emptyDay(3),
-  4: emptyDay(4),
-  5: emptyDay(5),
-  6: emptyDay(6),
-  7: emptyDay(7),
-  8: emptyDay(8),
+  1: DAY1, 2: DAY2, 3: DAY3, 4: DAY4, 5: DAY5, 6: DAY6, 7: DAY7,
 };
 
 export function getDayUnlockConfig(day: number): DayUnlockConfig | undefined {
   return DAILY_UNLOCKS[day];
+}
+
+/** THE lookup every gating system actually calls (never DAILY_UNLOCKS[day]
+ * directly) — clamps day 8+ down to Day 7's own config (see this file's
+ * header doc comment for why: Day 8 is out of this round's scope, spec八/
+ * 九, and falling back to Day 7's already-fully-unlocked state is what keeps
+ * the existing, already-working Day 8 giant-cake flow from regressing,
+ * spec十.7). Also clamps a hypothetical day<1 down to Day 1, purely
+ * defensive. */
+export function getEffectiveDayUnlockConfig(day: number): DayUnlockConfig {
+  const clamped = Math.max(1, Math.min(day, 7));
+  return DAILY_UNLOCKS[clamped];
+}
+
+export function isMailRegionUnlockedOnDay(region: MailRegion, day: number): boolean {
+  return getEffectiveDayUnlockConfig(day).mailRegions.includes(region);
+}
+
+export function getDailyMailTotal(day: number): number {
+  return getEffectiveDayUnlockConfig(day).dailyTotals.mailTotal;
+}
+
+export function isVehicleUnlockedOnDay(vehicleId: string, day: number): boolean {
+  return getEffectiveDayUnlockConfig(day).vehicles.includes(vehicleId);
+}
+
+/** 'empty' (bare hands) is never gated — only the four ConfigurableTool ids
+ * are ever checked against the day's own list. */
+export function isToolUnlockedOnDay(tool: ActiveTool, day: number): boolean {
+  if (tool === 'empty') return true;
+  return getEffectiveDayUnlockConfig(day).tools.includes(tool);
+}
+
+export function isPalletUnlockedOnDay(day: number): boolean {
+  return getEffectiveDayUnlockConfig(day).palletUnlocked;
+}
+
+export function isLadderUnlockedOnDay(day: number): boolean {
+  return getEffectiveDayUnlockConfig(day).ladderUnlocked;
+}
+
+export function isSkillUnlockedOnDay(id: UpgradeId, day: number): boolean {
+  return getEffectiveDayUnlockConfig(day).skills.includes(id);
 }

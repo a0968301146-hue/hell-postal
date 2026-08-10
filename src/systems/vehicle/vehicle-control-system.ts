@@ -26,6 +26,7 @@ import { HUD } from '../hud';
 import { DailyFlowSystem } from '../daily-flow';
 import { ALL_PALLET_IDS, isPalletId } from '../pallet';
 import { SettingsManager } from '../settings';
+import { isVehicleUnlockedOnDay } from '../../data/daily-unlock-data';
 
 /** A daily cargo item's EFFECTIVE cargo kind for vehicle-compatibility
  * purposes ("Add six cargo vehicles" round) — derived from the fields
@@ -294,6 +295,16 @@ export class VehicleControlSystem {
     return this.dayCompleteShown;
   }
 
+  /** "Day 1～7 每日內容與解鎖規格" round — whether `config`'s vehicle is open
+   * yet today (daily-unlock-data.ts, the single source of truth). A locked
+   * slot is simply never spawned/expected to dock — it stays 'absent' for
+   * the whole day, exactly like every OTHER slot naturally does before
+   * being called, so canDepart/checkAllDeparted below only ever wait on the
+   * slots that were actually eligible to be called in the first place. */
+  private isSlotUnlockedToday(config: VehicleConfig): boolean {
+    return isVehicleUnlockedOnDay(config.id, this.dailyFlowSystem.currentDay);
+  }
+
   /** Allowed only once today's cargo has actually been unloaded (spec:
    * sorting/loading), and only while EVERY slot is still 'absent' — a
    * partial call (some slots already occupied) can't happen since
@@ -304,15 +315,19 @@ export class VehicleControlSystem {
     return flowAllows && this.slots.every((s) => s.state === 'absent');
   }
 
-  /** Allowed as soon as ALL SIX slots are docked — "Add six cargo vehicles
-   * and unrestricted departure scoring" round explicitly removed every
-   * cargo-completion requirement (loaded count, organized, shipped ===
-   * total): the player can send every vehicle off at any time once they've
-   * all arrived, with whatever is (or isn't) correctly loaded at that
-   * moment settled via pressDepartButton's score snapshot instead of
-   * gating the button itself. */
+  /** Allowed as soon as every UNLOCKED slot is docked — "Add six cargo
+   * vehicles and unrestricted departure scoring" round explicitly removed
+   * every cargo-completion requirement (loaded count, organized, shipped ===
+   * total): the player can send every called vehicle off at any time once
+   * they've all arrived, with whatever is (or isn't) correctly loaded at
+   * that moment settled via pressDepartButton's score snapshot instead of
+   * gating the button itself. "Day 1～7 每日內容與解鎖規格" round: a slot
+   * whose vehicle isn't unlocked yet was never spawned by pressCallButton
+   * (see that method below) and stays 'absent' all day — excluded here so
+   * it can never block departure on a day fewer than six vehicles are open. */
   get canDepart(): boolean {
-    return this.slots.every((s) => s.state === 'docked');
+    const relevant = this.slots.filter((s) => this.isSlotUnlockedToday(s.config));
+    return relevant.length > 0 && relevant.every((s) => s.state === 'docked');
   }
 
   callBlockedMessage(): string {
@@ -336,17 +351,25 @@ export class VehicleControlSystem {
     setTimeout(() => updateFloatingLabel(label, revertTo), 1500);
   }
 
-  /** 呼叫載具 — spawns all six fixed slots at once (spec: "按下現有「呼叫
-   * 載具」按鈕時，同時呼叫六台" / "不再依解鎖貨物種類減少載具數量"). Gated on
-   * every slot being 'absent', so a fast double-press can't spawn a second
-   * batch: the very first press already flips every slot away from
-   * 'absent' before a second press could be handled. */
+  /** 呼叫載具 — spawns every UNLOCKED slot at once ("Add six fixed vehicle
+   * docking slots" round's own "不再依解鎖貨物種類減少載具數量" applied to
+   * cargo TYPE, not to whether the vehicle itself is open yet — "Day 1～7
+   * 每日內容與解鎖規格" round adds that day-based layer back on top: a slot
+   * whose vehicle isn't open today (daily-unlock-data.ts) is simply skipped,
+   * never spawned, and stays 'absent' — canDepart/canCall above already
+   * account for that). Gated on every slot being 'absent', so a fast double-
+   * press can't spawn a second batch: the very first press already flips
+   * every ELIGIBLE slot away from 'absent' before a second press could be
+   * handled. */
   pressCallButton(): void {
     if (!this.canCall) {
       this.flash(this.callLabel, this.callBlockedMessage(), CALL_IDLE_TEXT);
       return;
     }
-    for (const slot of this.slots) this.spawnSlot(slot);
+    for (const slot of this.slots) {
+      if (!this.isSlotUnlockedToday(slot.config)) continue;
+      this.spawnSlot(slot);
+    }
     this.onVehicleCalled?.();
   }
 
@@ -507,6 +530,13 @@ export class VehicleControlSystem {
     const mail = this.mailSystem.settleAtDeparture(correctlyShippedBagIds);
 
     for (const slot of this.slots) {
+      // "Day 1～7 每日內容與解鎖規格" round: a slot whose vehicle was never
+      // called today (locked, still 'absent') has no vehicle/pinnedCargo of
+      // its own to send off — skip it, rather than incorrectly flipping an
+      // 'absent' slot to 'departing' (which would leave it permanently
+      // stuck, since updateSlot() below only ever advances a slot that has
+      // a real `vehicle`).
+      if (slot.state !== 'docked') continue;
       this.pinCargoPhysics(slot.pinnedCargo);
       // A no-op for every vehicle except the frog ("Resize cargo and
       // improve frog mouth access" round spec三: "若玩家仍在青蛙嘴腔內，出
@@ -721,12 +751,17 @@ export class VehicleControlSystem {
     this.checkAllDeparted();
   }
 
-  /** Only fires once ALL SIX slots have independently finished departing —
-   * `dayCompleteShown` guards against any slot's transition re-firing this
-   * after the panel is already up (every slot stays 'departed' the whole
-   * time the panel is open, since they only reset to 'absent' on 繼續). */
+  /** Only fires once every slot that was actually called today has
+   * independently finished departing — `dayCompleteShown` guards against any
+   * slot's transition re-firing this after the panel is already up (every
+   * slot stays 'departed' the whole time the panel is open, since they only
+   * reset to 'absent' on 繼續). "Day 1～7 每日內容與解鎖規格" round: a locked
+   * slot never leaves 'absent' all day (see pressCallButton), so it's
+   * excluded here the same way canDepart already excludes it — otherwise a
+   * day with fewer than six vehicles open could never reach day-complete. */
   private checkAllDeparted(): void {
-    if (this.slots.every((s) => s.state === 'departed') && !this.dayCompleteShown) {
+    const relevant = this.slots.filter((s) => this.isSlotUnlockedToday(s.config));
+    if (relevant.every((s) => s.state === 'departed') && !this.dayCompleteShown) {
       this.dayCompleteShown = true;
       this.showDayCompleteSummary();
     }

@@ -8,9 +8,10 @@ import { UNLOAD_PORTS, UNLOAD_SPAWN_JITTER_X, UNLOAD_SPAWN_JITTER_Z, UNLOAD_BURS
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
 import { MailDestination, EnvelopeRecord } from './mail-types';
 import {
-  MAIL_DESTINATIONS, DAILY_ENVELOPE_COUNT, getMailDestination, buildEnvelopeGeometry, buildEnvelopeMaterials,
+  MAIL_DESTINATIONS, getMailDestination, buildEnvelopeGeometry, buildEnvelopeMaterials,
   MailEnvelopeVisualPreset, pickWeightedMailEnvelopeVisualPreset, getMailEnvelopeVisualPreset,
 } from './mail-data';
+import { getDailyMailTotal, isMailRegionUnlockedOnDay } from '../../data/daily-unlock-data';
 
 const ENVELOPE_ID_PREFIX = 'envelope-';
 const STABLE_THRESHOLD = 0.3;
@@ -80,6 +81,15 @@ export class MailSystem {
    * (e.g. in isolated tests), settleAtDeparture falls back to its own prior
    * bag-only region check, unchanged. */
   private bagPatternLookup: ((bagId: string) => MailDestination | null) | null = null;
+
+  /** "Day 1～7 每日內容與解鎖規格" round — optional day-number source, wired
+   * from create-game-systems.ts once DailyFlowSystem exists (this class is
+   * constructed BEFORE it, same "avoid a constructor-time circular
+   * dependency" reasoning as bagPatternLookup above). Defaults to "always
+   * day 1" if never wired (e.g. isolated tests) — the safest fallback,
+   * matching this round's own Day 1 baseline (10 domestic-only envelopes)
+   * rather than silently assuming every region/total is already open. */
+  private getCurrentDay: () => number = () => 1;
 
   private sensorBox!: THREE.Box3;
   private stableTimer = 0;
@@ -180,11 +190,28 @@ export class MailSystem {
     this.envelopeSpawnTimer = UNLOAD_PORTS[0].gate.openDuration + UNLOAD_BURST_CONFIG.chargeUpDuration;
   }
 
+  /** See getCurrentDay's own doc comment — called once from
+   * create-game-systems.ts right after DailyFlowSystem is constructed. */
+  setDayUnlockProvider(fn: () => number): void {
+    this.getCurrentDay = fn;
+  }
+
   private spawnTodaysEnvelopes(): void {
-    const perDestination = Math.floor(DAILY_ENVELOPE_COUNT / MAIL_DESTINATIONS.length);
-    const remainder = DAILY_ENVELOPE_COUNT - perDestination * MAIL_DESTINATIONS.length;
+    const day = this.getCurrentDay();
+    const dailyTotal = getDailyMailTotal(day);
+    // "Day 1～7 每日內容與解鎖規格" round: only destinations whose region is
+    // open today take part in the split — the split itself is UNCHANGED
+    // (still the same even perDestination/remainder distribution as before
+    // this round), just applied to a day-filtered pool/total instead of the
+    // old fixed MAIL_DESTINATIONS/DAILY_ENVELOPE_COUNT (spec: mail region
+    // gating is mechanically safe to wire since no per-destination RATIO is
+    // being invented here, only reusing the existing even-split algorithm).
+    const openDestinations = MAIL_DESTINATIONS.filter((d) => isMailRegionUnlockedOnDay(d.region, day));
+    if (openDestinations.length === 0) return;
+    const perDestination = Math.floor(dailyTotal / openDestinations.length);
+    const remainder = dailyTotal - perDestination * openDestinations.length;
     const destPool: MailDestination[] = [];
-    MAIL_DESTINATIONS.forEach((d, i) => {
+    openDestinations.forEach((d, i) => {
       for (let n = 0; n < perDestination + (i < remainder ? 1 : 0); n++) destPool.push(d.id);
     });
     const shuffled = shuffle(destPool);

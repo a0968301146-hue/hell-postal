@@ -12,6 +12,7 @@ import {
   LADDER_BACK_LEG_LENGTH, LADDER_BACK_LEG_ANGLE,
   LADDER_WALL_SLOT, LADDER_PLACEMENT_YAW_STEP,
 } from './ladder-data';
+import { isLadderUnlockedOnDay } from '../../data/daily-unlock-data';
 
 /** Same carry-distance shape as pallet-system.ts's own CARRY_* constants —
  * the ladder is a comparably large carried object needing the same "stand
@@ -89,16 +90,22 @@ export class LadderSystem {
    * the next pickUp()) — see buildWalkableColliders()'s own doc comment for
    * why these can't just ride along on the carry body. */
   private walkableColliderBodies: RAPIER.RigidBody[] = [];
+  /** "Day 1～7 每日內容與解鎖規格" round — the requester explicitly asked for
+   * a GENUINE lock (not just documentation): before this round, the ladder
+   * was pickupable from Day 1. Read by canPickUp() below; defaults to
+   * "always day 1" if never wired. */
+  private getCurrentDay: () => number = () => 1;
 
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>,
-    playerData: PlayerInteractionData, hud: HUD
+    playerData: PlayerInteractionData, hud: HUD, getCurrentDay?: () => number
   ) {
     this.scene = scene;
     this.physics = physics;
     this.interactables = interactables;
     this.playerData = playerData;
     this.hud = hud;
+    if (getCurrentDay) this.getCurrentDay = getCurrentDay;
 
     this.buildLadder();
     this.buildRackVisual();
@@ -360,6 +367,10 @@ export class LadderSystem {
    * judgment shared by prompt and action" pattern. */
   canPickUp(): boolean {
     if (this.state === 'preview') return false;
+    // "Day 1～7 每日內容與解鎖規格" round — a genuine lock (not just
+    // documentation): the ladder isn't pickupable at all before its unlock
+    // day (daily-unlock-data.ts, the single source of truth).
+    if (!isLadderUnlockedOnDay(this.getCurrentDay())) return false;
     if (this.playerData.state !== 'empty-handed') return false;
     return !this.isOccupied();
   }
@@ -367,6 +378,10 @@ export class LadderSystem {
   // --- Pick up (from the floor OR straight off the wall rack) ---
 
   pickUp(cameraPosition: THREE.Vector3, cameraForward: THREE.Vector3): void {
+    if (this.state !== 'preview' && !isLadderUnlockedOnDay(this.getCurrentDay())) {
+      this.hud.showToast('梯子尚未解鎖');
+      return;
+    }
     if (!this.canPickUp()) return;
     const wasStored = this.state === 'stored';
     // Leaving 'placed' — the walkable staircase's own separate Fixed

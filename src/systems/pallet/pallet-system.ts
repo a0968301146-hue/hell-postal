@@ -19,6 +19,7 @@ import {
   PALLET_DETECT_HEIGHT, PALLET_SAFETY_DROP_POS, PALLET_SIZE_DISPLAY_NAME, PALLET_SET_DEFINITIONS,
   RACK_BRACKET_THICKNESS, isPalletId, isRackId,
 } from './pallet-data';
+import { isPalletUnlockedOnDay } from '../../data/daily-unlock-data';
 
 const STABLE_THRESHOLD = 0.5; // seconds, organize judgment
 const VELOCITY_THRESHOLD = 0.4;
@@ -165,6 +166,11 @@ export class PalletSystem implements PalletThrowHooks {
   private onFirstOrganized?: () => void;
   private onPalletBuilt?: (mesh: THREE.Mesh) => void;
   private onPalletDestroyed?: (mesh: THREE.Mesh) => void;
+  /** "Day 1～7 每日內容與解鎖規格" round — the requester explicitly asked for
+   * a GENUINE lock (not just documentation): before this round, every pallet
+   * was pickupable from Day 1. Read by pickUp() below; defaults to "always
+   * day 1" if never wired. */
+  private getCurrentDay: () => number = () => 1;
 
   private pallets: Map<string, PalletInstance> = new Map();
   private heldPalletId: string | null = null;
@@ -241,7 +247,10 @@ export class PalletSystem implements PalletThrowHooks {
     // destroyPalletInstance (lockSecondSet only), so create-game-systems.ts
     // can unregister the mesh via pickupSystem.removePlacementSurface before
     // it's disposed.
-    onPalletDestroyed?: (mesh: THREE.Mesh) => void
+    onPalletDestroyed?: (mesh: THREE.Mesh) => void,
+    // "Day 1～7 每日內容與解鎖規格" round — see this class's own
+    // getCurrentDay field doc comment above.
+    getCurrentDay?: () => number
   ) {
     this.scene = scene;
     this.physics = physics;
@@ -255,6 +264,7 @@ export class PalletSystem implements PalletThrowHooks {
     this.onFirstOrganized = onFirstOrganized;
     this.onPalletBuilt = onPalletBuilt;
     this.onPalletDestroyed = onPalletDestroyed;
+    if (getCurrentDay) this.getCurrentDay = getCurrentDay;
 
     // "Add envelope stacks and expand pallet inventory" round spec十二: the
     // first set always exists; the second set only gets built here if a
@@ -996,6 +1006,14 @@ export class PalletSystem implements PalletThrowHooks {
     const instance = this.pallets.get(targetId);
     if (!instance) return;
     if (instance.storageState === 'held') return;
+
+    // "Day 1～7 每日內容與解鎖規格" round — a genuine lock (not just
+    // documentation): pallets aren't pickupable at all before their unlock
+    // day (daily-unlock-data.ts, the single source of truth).
+    if (!isPalletUnlockedOnDay(this.getCurrentDay())) {
+      this.hud.showToast('貨物托盤尚未解鎖');
+      return;
+    }
 
     if (this.playerData.activeTool !== 'powerGloves') {
       this.hud.showToast('需要裝備力量手套');

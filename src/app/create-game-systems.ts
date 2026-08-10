@@ -424,6 +424,14 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     }
   );
 
+  // "Day 1～7 每日內容與解鎖規格" round — mailSystem/upgradeSystem are both
+  // constructed BEFORE dailyFlowSystem exists (see their own constructors'
+  // doc comments for why), so their own day-based gating is wired late here,
+  // the same "avoid a constructor-time circular dependency" pattern every
+  // other late setter in this file already uses.
+  mailSystem.setDayUnlockProvider(() => dailyFlowSystem.currentDay);
+  upgradeSystem.setDayUnlockProvider(() => dailyFlowSystem.currentDay);
+
   // Day-1 dock story cutscene ("Add day one dock story event" round),
   // generalized to all 8 days by "每日特殊劇情系統". Constructed here (moved
   // down from its old, much earlier spot) specifically so it can take
@@ -517,7 +525,8 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     // old one-time post-construction getAllTopMeshes() loop, which only
     // ever covered whatever existed at boot.
     (mesh) => pickupSystem.addPlacementSurface(mesh),
-    (mesh) => pickupSystem.removePlacementSurface(mesh)
+    (mesh) => pickupSystem.removePlacementSurface(mesh),
+    () => dailyFlowSystem.currentDay
   );
   // "Add placement rotation and pallet cargo straps" round spec三: lets
   // pickup-system.ts's own generic executeThrow() correctly throw the
@@ -549,7 +558,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // cluster (ladder-data.ts). Neither is registered into CargoSystem, so
   // CargoHookSystem's own target resolution naturally excludes both without
   // any extra exclusion code (see ladder-system.ts's own class doc comment).
-  const ladderSystem = new LadderSystem(scene, physics, interactables, playerData, hud);
+  const ladderSystem = new LadderSystem(scene, physics, interactables, playerData, hud, () => dailyFlowSystem.currentDay);
   const toolStationSystem = new ToolStationSystem(scene, physics, interactables);
 
   // RollerRackSystem removed entirely ("移除滾筒架" round) — roller-shaped
@@ -573,7 +582,9 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // deliberately has no reference to CargoHookSystem at all — see
   // tool-system.ts's own doc comment on why no callback wiring is needed in
   // either direction (CargoHookSystem watches playerData.activeTool itself).
-  const toolSystem = new ToolSystem(playerData, hud, pauseManager, () => playerController.isLocked, pickupSystem);
+  const toolSystem = new ToolSystem(
+    playerData, hud, pauseManager, () => playerController.isLocked, pickupSystem, () => dailyFlowSystem.currentDay
+  );
   // "貨物勾勾修改" round — widened to also hook lost-found items/envelopes,
   // needs envelopeStackSystem for the real E-key-equivalent pickup path.
   const cargoHookSystem = new CargoHookSystem(
@@ -591,7 +602,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // round三) — same PauseManager/pointer-lock convention as
   // UpgradeMenuUI/MediaPlayerUI, built once toolSystem exists since it
   // saves directly back into it on close.
-  const toolLoadoutMenuUI = new ToolLoadoutMenuUI(pauseManager, playerController, toolSystem);
+  const toolLoadoutMenuUI = new ToolLoadoutMenuUI(pauseManager, playerController, toolSystem, hud, () => dailyFlowSystem.currentDay);
 
   // Envelope vacuum tool (spec四-八) — same "self-contained tool watching
   // playerData.activeTool" pattern as CargoHookSystem/SpraySystem just

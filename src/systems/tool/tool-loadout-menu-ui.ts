@@ -5,13 +5,19 @@
 // bulletin board's UpgradeMenuUI / television's MediaPlayerUI).
 import { PauseManager } from '../../core/pause-manager';
 import { PlayerController } from '../player';
+import { HUD } from '../hud';
 import { ToolSystem } from './tool-system';
 import { ConfigurableTool, ALL_CONFIGURABLE_TOOLS, TOOL_DEFINITIONS, loadToolLoadout, saveToolLoadout } from './tool-loadout-data';
+import { isToolUnlockedOnDay } from '../../data/daily-unlock-data';
 
 export class ToolLoadoutMenuUI {
   private pauseManager: PauseManager;
   private playerController: PlayerController;
   private toolSystem: ToolSystem;
+  private hud: HUD;
+  /** "Day 1～7 每日內容與解鎖規格" round — see tool-system.ts's own
+   * getCurrentDay field doc comment for the same reasoning. */
+  private getCurrentDay: () => number;
 
   private overlayEl: HTMLElement;
   private slotsEl: HTMLElement;
@@ -29,10 +35,15 @@ export class ToolLoadoutMenuUI {
    * spec三: "先點第2～4格，再點工具即可替換". */
   private armedSlotIndex: 0 | 1 | 2 | null = null;
 
-  constructor(pauseManager: PauseManager, playerController: PlayerController, toolSystem: ToolSystem) {
+  constructor(
+    pauseManager: PauseManager, playerController: PlayerController, toolSystem: ToolSystem, hud: HUD,
+    getCurrentDay: () => number
+  ) {
     this.pauseManager = pauseManager;
     this.playerController = playerController;
     this.toolSystem = toolSystem;
+    this.hud = hud;
+    this.getCurrentDay = getCurrentDay;
 
     this.overlayEl = document.createElement('div');
     this.overlayEl.id = 'tool-loadout-overlay';
@@ -112,6 +123,13 @@ export class ToolLoadoutMenuUI {
     const toolEl = target.closest<HTMLElement>('[data-loadout-tool]');
     if (toolEl && this.armedSlotIndex !== null) {
       const chosen = toolEl.dataset.loadoutTool as ConfigurableTool;
+      // "Day 1～7 每日內容與解鎖規格" round — a tool not yet open today can't
+      // be swapped INTO an active slot (it can still sit unequipped at the
+      // cart, same as before this round).
+      if (!isToolUnlockedOnDay(chosen, this.getCurrentDay())) {
+        this.hud.showToast('此道具尚未解鎖');
+        return;
+      }
       const existingIndex = this.scratchLoadout.indexOf(chosen);
       if (existingIndex === this.armedSlotIndex) {
         // Clicked the tool already in the armed slot — nothing to do.
@@ -164,15 +182,20 @@ export class ToolLoadoutMenuUI {
     }).join('');
 
     const cartTool = ALL_CONFIGURABLE_TOOLS.find((t) => !this.scratchLoadout.includes(t)) ?? null;
+    const day = this.getCurrentDay();
     this.poolEl.innerHTML = ALL_CONFIGURABLE_TOOLS.map((tool) => {
       const def = TOOL_DEFINITIONS[tool];
       const equippedSlotIndex = this.scratchLoadout.indexOf(tool);
       const isAtCart = tool === cartTool;
+      // "Day 1～7 每日內容與解鎖規格" round — purely a visual hint (see
+      // onClick's own real block above for the actual enforcement).
+      const locked = !isToolUnlockedOnDay(tool, day);
+      const statusText = locked ? '🔒 尚未解鎖' : isAtCart ? '推車內' : `第 ${equippedSlotIndex + 2} 格`;
       return `
-        <div class="tool-loadout-pool-item ${isAtCart ? 'at-cart' : 'equipped'}" data-loadout-tool="${tool}">
+        <div class="tool-loadout-pool-item ${isAtCart ? 'at-cart' : 'equipped'} ${locked ? 'locked' : ''}" data-loadout-tool="${tool}">
           <span class="tool-loadout-pool-icon">${def.icon}</span>
           <span class="tool-loadout-pool-name">${def.displayName}</span>
-          <span class="tool-loadout-pool-status">${isAtCart ? '推車內' : `第 ${equippedSlotIndex + 2} 格`}</span>
+          <span class="tool-loadout-pool-status">${statusText}</span>
         </div>`;
     }).join('');
   }

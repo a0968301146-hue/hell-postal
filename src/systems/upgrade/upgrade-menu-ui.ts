@@ -105,6 +105,10 @@ export class UpgradeMenuUI {
       const nextCost = this.upgradeSystem.getNextCost(def.id);
       const affordable = nextCost !== null && this.upgradeSystem.availableSettlementScore >= nextCost;
       const nextEffect = !maxed ? def.levelEffects[level + 1].description : '';
+      // "Day 1～7 每日內容與解鎖規格" round — a skill not yet open today
+      // can't be purchased at all (purchaseUpgrade() itself also blocks
+      // this, so the two can never disagree).
+      const locked = !this.upgradeSystem.isUnlockedToday(def.id);
 
       return `
         <div class="upgrade-row">
@@ -114,7 +118,9 @@ export class UpgradeMenuUI {
           </div>
           <p class="upgrade-row-desc">${def.description}</p>
           <p class="upgrade-row-current">目前效果：${def.levelEffects[level].description}</p>
-          ${maxed
+          ${locked
+            ? '<p class="upgrade-row-locked">🔒 尚未解鎖</p>'
+            : maxed
             ? '<p class="upgrade-row-maxed">已滿級</p>'
             : `
               <p class="upgrade-row-next">下一級效果：${nextEffect}</p>

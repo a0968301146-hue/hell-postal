@@ -5,6 +5,7 @@ import { PlayerController } from '../player';
 import { UpgradeId, UpgradeSaveState, UpgradeDefinition } from './upgrade-types';
 import { UPGRADE_DEFINITIONS, getUpgradeDefinition, UPGRADE_POINT_REWARD_PER_SHIPPED_ITEM, ENVELOPE_CARRY_CAPACITY_BY_LEVEL } from './upgrade-data';
 import { PalletSize, PALLET_SIZE_ORDER } from '../pallet/pallet-data';
+import { isSkillUnlockedOnDay } from '../../data/daily-unlock-data';
 
 /** Narrow push-target for `envelopeCarryLevel` — the real class is
  * EnvelopeStackSystem (src/systems/mail/envelope-stack-system.ts), matched
@@ -177,6 +178,12 @@ export class UpgradeSystem {
    * however many departures settle before the day actually ends — consumed
    * exactly once by settleDay() and reset to 0 immediately after (spec四). */
   private pendingDayScore = 0;
+  /** "Day 1～7 每日內容與解鎖規格" round — optional day-number source, wired
+   * from create-game-systems.ts once DailyFlowSystem exists (this class is
+   * constructed BEFORE it — same "avoid a constructor-time circular
+   * dependency" reasoning as PalletInventoryExpansionTarget/setPalletSystem
+   * above). Defaults to "always day 1" if never wired. */
+  private getCurrentDay: () => number = () => 1;
 
   constructor(pickupSystem: PickupSystem, playerController: PlayerController, envelopeCarrySystem: EnvelopeCarryCapacityTarget) {
     this.pickupSystem = pickupSystem;
@@ -192,6 +199,21 @@ export class UpgradeSystem {
    * constructed. */
   setPalletSystem(palletSystem: PalletInventoryExpansionTarget): void {
     this.palletSystem = palletSystem;
+  }
+
+  /** See getCurrentDay's own doc comment above — called once from
+   * create-game-systems.ts right after DailyFlowSystem is constructed. */
+  setDayUnlockProvider(fn: () => number): void {
+    this.getCurrentDay = fn;
+  }
+
+  /** Read by UpgradeMenuUI to grey out / label a skill that isn't open yet
+   * today (daily-unlock-data.ts, the single source of truth) — purchase
+   * itself is ALSO blocked directly in purchaseUpgrade() below, so the two
+   * can never disagree (same "one judgment, two callers" pattern as
+   * isMaxed()/getNextCost()). */
+  isUnlockedToday(id: UpgradeId): boolean {
+    return isSkillUnlockedOnDay(id, this.getCurrentDay());
   }
 
   /** See UpgradeLevelPushTarget's own doc comment above — called once from
@@ -270,6 +292,7 @@ export class UpgradeSystem {
    * already-maxed upgrade, and never touches any historical settlement
    * record (spec一: "歷史每日結算紀錄保留，不因購買而被修改"). */
   purchaseUpgrade(id: UpgradeId): boolean {
+    if (!this.isUnlockedToday(id)) return false;
     const def = getUpgradeDefinition(id);
     const level = this.state.levels[id];
     if (level >= def.maxLevel) return false;

@@ -8,6 +8,7 @@ import { isPalletId } from '../pallet';
 // else the barrel re-exports).
 import { PickupSystem } from '../interaction/pickup-system';
 import { ConfigurableTool, TOOL_DEFINITIONS, loadToolLoadout } from './tool-loadout-data';
+import { isToolUnlockedOnDay } from '../../data/daily-unlock-data';
 
 /** Bottom-center 4-slot hotbar ("Add tool hotbar and cargo hook" round 一,
  * slot 2 unlocked by "Add power gloves and refine cargo hook cooldown"
@@ -36,6 +37,11 @@ export class ToolSystem {
   private pauseManager: PauseManager;
   private isLocked: () => boolean;
   private pickupSystem: PickupSystem;
+  /** "Day 1～7 每日內容與解鎖規格" round — read by trySelect() to block
+   * switching to a ConfigurableTool that isn't open yet (daily-unlock-
+   * data.ts, the single source of truth). Defaults to "always day 1" if
+   * never wired (matches DEFAULT_TOOL_LOADOUT's own conservative baseline). */
+  private getCurrentDay: () => number = () => 1;
 
   /** Index 0 is always 'empty' (locked slot 1); indices 1-3 mirror the
    * current loadout (slots 2-4). */
@@ -46,12 +52,16 @@ export class ToolSystem {
   private toolNamePopup: HTMLElement;
   private toolNameTimer: number | null = null;
 
-  constructor(playerData: PlayerInteractionData, hud: HUD, pauseManager: PauseManager, isLockedFn: () => boolean, pickupSystem: PickupSystem) {
+  constructor(
+    playerData: PlayerInteractionData, hud: HUD, pauseManager: PauseManager, isLockedFn: () => boolean,
+    pickupSystem: PickupSystem, getCurrentDay?: () => number
+  ) {
     this.playerData = playerData;
     this.hud = hud;
     this.pauseManager = pauseManager;
     this.isLocked = isLockedFn;
     this.pickupSystem = pickupSystem;
+    if (getCurrentDay) this.getCurrentDay = getCurrentDay;
 
     const container = hud.getContainer();
 
@@ -190,6 +200,14 @@ export class ToolSystem {
     if (this.playerData.activeTool === tool) return;
     if (isPalletId(this.playerData.heldObjectId)) {
       this.hud.showToast('請先放下托盤');
+      return;
+    }
+    // "Day 1～7 每日內容與解鎖規格" round — a tool not yet open today
+    // (daily-unlock-data.ts) can still sit in a hotbar slot (the loadout
+    // itself isn't day-gated, only actually USING a tool is), but selecting
+    // it is blocked here, the ONE place ActiveTool actually changes.
+    if (!isToolUnlockedOnDay(tool, this.getCurrentDay())) {
+      this.hud.showToast('此道具尚未解鎖');
       return;
     }
     if ((tool === 'cargoHook' || tool === 'sprayCan' || tool === 'envelopeVacuum') && this.playerData.state !== 'empty-handed') {
