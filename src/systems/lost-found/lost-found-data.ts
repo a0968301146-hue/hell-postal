@@ -69,10 +69,12 @@ export const LOST_ITEM_PRESETS: LostItemPreset[] = [
  * place this count is defined. */
 export const DECOY_LOST_ITEM_COUNT = 5;
 
-/** How many NPCs (and distinct target items) appear per day ("Add
- * sequential lost-found visitors and held cargo feedback" round一: "每天3
- * 位") — the ONE place this count is defined; LOST_FOUND_CASES above must
- * have at least this many entries for prepareDailyCases() to draw from. */
+/** Fallback default only — real daily NPC count comes from
+ * daily-unlock-data.ts's getDailyLostFoundNpcCount(currentDay) as of "Day
+ * 1～7 每日系統完整實作" round (spec八: "每天按照指定人數...隨機從至少20個案
+ * 例中抽取"). Kept here purely as lost-found-system.ts's own constructor-time
+ * default before a real day-provider is wired (mirrors every other system's
+ * "getCurrentDay: () => number = () => 1" fallback pattern this round). */
 export const DAILY_LOST_FOUND_NPC_COUNT = 3;
 
 export interface LostFoundCaseDef {
@@ -83,23 +85,47 @@ export interface LostFoundCaseDef {
   lostItemPresetId: string;
 }
 
-/** Case pool ("Add sequential lost-found visitors and held cargo feedback"
- * round一: 3位NPC每天各自要求1個不同的目標失物) — every entry maps to a
- * DIFFERENT LOST_ITEM_PRESETS id, so any 3 DISTINCT cases drawn from this
- * pool automatically request 3 distinct items with zero extra dedup logic
- * (see lost-found-system.ts's prepareDailyCases()). At least 3 entries are
- * required for that to even be possible — kept at 5 for daily variety. Each
- * case's own per-case thank-you line ("Add sequential lost-found visitors
- * and held cargo feedback" round) was replaced by a shared random pool
- * (LOST_FOUND_THANKS_TEXTS below, spec二: "準備至少5句隨機答謝") — the
- * thanking stage no longer reads anything case-specific, so `successText`
- * was dropped from this shape entirely rather than left unused. */
+/** Case pool — expanded from 5 to 20 entries ("Day 1～7 每日系統完整實作"
+ * round spec七: "請將 LOST_FOUND_CASES 擴充至：至少 20 個不同案例", resolving
+ * the previous round's own flagged pool-size conflict, now that the
+ * requester has authorized it). Only 8 distinct LOST_ITEM_PRESETS shapes
+ * exist (unchanged this round — only LOST_FOUND_CASES itself was asked to
+ * grow, never the preset pool), so with 20 cases every preset is
+ * necessarily reused by 2-3 different cases — each case is still a fully
+ * distinct id (`customerName`+`lostItemPresetId` combination read by
+ * lost-found-system.ts's spawnLostItem/tryConfirmWithNpc), so two NPCs on
+ * the same day CAN now legitimately want the same-shaped item (e.g. two
+ * different 魔法手杖 requests) — each still spawns as its own separate
+ * physical item with its own id, matched to its own NPC exactly like any
+ * other case. prepareDailyCases() draws N DISTINCT CASE ids per day (spec八
+ * rule2: "優先避免同一天重複相同案例") — case-id distinctness, not preset-
+ * shape distinctness, is the actual guarantee (the pool is large enough,
+ * >=20, that Day 7's own max draw of 20 uses every case exactly once, spec
+ * 八 rule3). Every case's own per-case thank-you line was replaced by a
+ * shared random pool (LOST_FOUND_THANKS_TEXTS below) — the thanking stage
+ * reads nothing case-specific, so `successText` was never part of this
+ * shape. */
 export const LOST_FOUND_CASES: LostFoundCaseDef[] = [
   { id: 'case-001', customerName: '委託人', lostItemPresetId: 'magic-staff' },
   { id: 'case-002', customerName: '委託人', lostItemPresetId: 'plush-doll' },
   { id: 'case-003', customerName: '委託人', lostItemPresetId: 'ceramic-pot' },
   { id: 'case-004', customerName: '委託人', lostItemPresetId: 'violin' },
   { id: 'case-005', customerName: '委託人', lostItemPresetId: 'magic-book' },
+  { id: 'case-006', customerName: '委託人', lostItemPresetId: 'magic-staff' },
+  { id: 'case-007', customerName: '委託人', lostItemPresetId: 'plush-doll' },
+  { id: 'case-008', customerName: '委託人', lostItemPresetId: 'ceramic-pot' },
+  { id: 'case-009', customerName: '委託人', lostItemPresetId: 'violin' },
+  { id: 'case-010', customerName: '委託人', lostItemPresetId: 'magic-book' },
+  { id: 'case-011', customerName: '委託人', lostItemPresetId: 'lantern' },
+  { id: 'case-012', customerName: '委託人', lostItemPresetId: 'mask' },
+  { id: 'case-013', customerName: '委託人', lostItemPresetId: 'magic-staff' },
+  { id: 'case-014', customerName: '委託人', lostItemPresetId: 'plush-doll' },
+  { id: 'case-015', customerName: '委託人', lostItemPresetId: 'violin' },
+  { id: 'case-016', customerName: '委託人', lostItemPresetId: 'lantern' },
+  { id: 'case-017', customerName: '委託人', lostItemPresetId: 'mask' },
+  { id: 'case-018', customerName: '委託人', lostItemPresetId: 'lantern' },
+  { id: 'case-019', customerName: '委託人', lostItemPresetId: 'crystal-ball' },
+  { id: 'case-020', customerName: '委託人', lostItemPresetId: 'crystal-ball' },
 ];
 
 /** Random greeting shown the instant an NPC arrives and turns to face the

@@ -1,16 +1,29 @@
-// Day 1～7 逐日內容與解鎖資料架構 ("Day 1～7 每日內容與解鎖規格" round) — THE
-// single source of truth every daily-content system reads from (spec十一:
-// "優先讓每日設定集中在單一資料來源，避免不同系統各自硬編碼Day1～7數值").
+// Day 1～7 逐日內容與解鎖資料架構 ("Day 1～7 每日內容與解鎖規格" round, extended
+// by "Day 1～7 每日系統完整實作" round) — THE single source of truth every
+// daily-content system reads from (spec十八: "優先讓每日設定集中在單一資料來
+// 源，避免不同系統各自硬編碼Day1～7數值").
 //
 // Every number/list below is copied verbatim from the requester's own
 // spec — never guessed, balanced, or invented (spec一/二/三). Day 8 is
-// deliberately left untouched (spec八/九: "Day 8 暫時不要自行新增或猜測每日
-// 數據，等待後續規格") — getEffectiveDayUnlockConfig() below falls back to
-// Day 7's own (already fully-unlocked-by-Day5) config for day>=8 purely so
-// the EXISTING, already-working Day 8 giant-cake flow never regresses
-// (spec十.7: "不要改變目前已經正常運作的物流...流程") — this is not new Day 8
-// content, just "don't apply a Day1-7 restriction to a day this round was
-// told not to touch".
+// deliberately left untouched (spec十四: "Day 8 不應重新生成大量普通貨物／信
+// 件／失物招領...不要破壞目前已完成的蛋糕流程") — getEffectiveDayUnlockConfig()
+// below falls back to Day 7's own (already fully-unlocked-by-Day5) config for
+// day>=8 purely so the EXISTING, already-working Day 8 giant-cake flow never
+// regresses — this is not new Day 8 content, just "don't apply a Day1-7
+// restriction to a day this round was told not to touch".
+//
+// "Day 1～7 每日系統完整實作" round: `dailyTotals.lostFoundNpcCount` below was
+// REVISED from the previous round's separate, smaller "失物招領人數" figures
+// (3/5/7/9/10/13/15) to this round's own explicit "每天按照指定人數" values
+// (5/8/10/13/15/18/20, spec八) — the requester's new message frames these as
+// the authoritative NPC-generation count (spec八 rule5: "不得因案例不足而少生
+// 成失物招領", talking specifically about case/NPC draws, never about decoy
+// items, which aren't drawn from LOST_FOUND_CASES at all), superseding the
+// previous round's smaller numbers. `lostFoundTotal` is kept equal to
+// `lostFoundNpcCount` for backward-informational consistency (the true daily
+// total INCLUDING decoys is inherently dynamic — LostFoundSystem computes it
+// live as `todaysQueue.length + todaysDecoyItemIds.length` — never a fixed
+// config number).
 //
 // Cumulative-unlock rule (spec八): once something opens on day N it stays
 // open every subsequent day, even if a LATER day's own bullet list happens
@@ -51,34 +64,39 @@ const TURTLE_VEHICLE_CONFIG_ID = 'sea-turtle-01';
 const KRAKEN_VEHICLE_CONFIG_ID = 'sea-kraken-01';
 
 export interface DailyTotals {
-  /** 包裹總量 — today's full daily cargo count (spec六: "每日總量是當天完整
-   * 物流流程的總數"). Recorded here for reference only this round — NOT yet
-   * wired into cargo-manifest-planner.ts's actual spawn quantities (the
-   * per-category ratio within this total was withheld, spec九: "每種貨物的
-   * 生成比例／每種貨物的實際數量" — see this file's header doc / the
-   * implementation report for why). */
+  /** 包裹總量 — today's full daily cargo count (spec六 from the previous
+   * round: "每日總量是當天完整物流流程的總數"). "Day 1～7 每日系統完整實作"
+   * round: wired for real into cargo-manifest-planner.ts's
+   * buildDailyCargoManifest() — that day's total item count, drawn uniformly
+   * at random across whatever (category, region) combos `cargoCategoriesByRegion`
+   * below unlocks that day (spec五: no per-category ratio was ever specified,
+   * so an even draw across unlocked combos is the actual implementation). */
   cargoTotal: number;
   /** 信件總量 — wired for real into mail-system.ts's spawnTodaysEnvelopes
    * (safe to parameterize: that method already does a pure even-split
    * across whichever destinations are open, no ratio to invent). */
   mailTotal: number;
-  /** 失物招領（總量／裝飾失物數） — recorded for reference only this round;
-   * NOT wired into lost-found-data.ts (see this file's header — the
-   * existing LOST_FOUND_CASES pool only has 5 entries, fewer than several
-   * days' own NPC targets below, a genuine conflict reported rather than
-   * silently resolved). */
+  /** 失物招領 — informational only; see lostFoundNpcCount's own doc comment
+   * for why this is kept numerically equal to it rather than separately
+   * wired anywhere. */
   lostFoundTotal: number;
-  /** 失物招領人數 — same "recorded, not wired, pool-size conflict reported"
-   * status as lostFoundTotal above. */
+  /** 失物招領人數 — "Day 1～7 每日系統完整實作" round: wired for real into
+   * lost-found-system.ts's prepareDailyCases() (draws this many DISTINCT
+   * cases from the now-20-entry LOST_FOUND_CASES pool, spec八). */
   lostFoundNpcCount: number;
 }
 
 export interface DayUnlockConfig {
   day: number;
   dailyTotals: DailyTotals;
-  /** 開放貨物種類 — per region (spec: 國內／國外 differ starting Day 3).
-   * Recorded for reference only this round (see dailyTotals.cargoTotal's own
-   * doc comment for why generation itself isn't wired yet). */
+  /** 開放貨物種類 — per region (spec: 國內／國外 differ starting Day 3). Wired
+   * for real into cargo-manifest-planner.ts (see dailyTotals.cargoTotal's own
+   * doc comment) — every draw is uniform across whatever this list allows
+   * that day. NOTE: cargo-manifest-planner.ts's unlockedCargoCombos()
+   * deliberately excludes 'live'+international even though Day 5-7 list it
+   * here (spec verbatim) — see that function's own doc comment for the
+   * existing-system conflict this resolves (no vehicle accepts international
+   * live cargo). */
   cargoCategoriesByRegion: { domestic: CargoCategory[]; international: CargoCategory[] };
   /** 開放信封種類 — wired for real into mail-system.ts (see mailTotal's own
    * doc comment). */
@@ -109,7 +127,7 @@ export interface DayUnlockConfig {
 /** Day 1 — spec: 包裹20／信件10／失物招領5／人數3. */
 const DAY1: DayUnlockConfig = {
   day: 1,
-  dailyTotals: { cargoTotal: 20, mailTotal: 10, lostFoundTotal: 5, lostFoundNpcCount: 3 },
+  dailyTotals: { cargoTotal: 20, mailTotal: 10, lostFoundTotal: 5, lostFoundNpcCount: 5 },
   cargoCategoriesByRegion: { domestic: ['normal', 'fragile'], international: [] },
   mailRegions: ['domestic'],
   vehicles: [FROG_VEHICLE_CONFIG_ID],
@@ -123,7 +141,7 @@ const DAY1: DayUnlockConfig = {
  * 具、貨物托盤／力量手套道具、信封搬運技能. */
 const DAY2: DayUnlockConfig = {
   day: 2,
-  dailyTotals: { cargoTotal: 40, mailTotal: 20, lostFoundTotal: 8, lostFoundNpcCount: 5 },
+  dailyTotals: { cargoTotal: 40, mailTotal: 20, lostFoundTotal: 8, lostFoundNpcCount: 8 },
   cargoCategoriesByRegion: { domestic: ['normal', 'fragile', 'large'], international: [] },
   mailRegions: ['domestic'],
   vehicles: [FROG_VEHICLE_CONFIG_ID, ROCKGIANT_VEHICLE_CONFIG_ID],
@@ -138,7 +156,7 @@ const DAY2: DayUnlockConfig = {
  * 2開放）在本日spec自身列表中被省略，依累積規則(spec八)持續保持開放。 */
 const DAY3: DayUnlockConfig = {
   day: 3,
-  dailyTotals: { cargoTotal: 50, mailTotal: 30, lostFoundTotal: 10, lostFoundNpcCount: 7 },
+  dailyTotals: { cargoTotal: 50, mailTotal: 30, lostFoundTotal: 10, lostFoundNpcCount: 10 },
   cargoCategoriesByRegion: {
     domestic: ['normal', 'fragile', 'large'],
     international: ['normal', 'fragile', 'large'],
@@ -156,7 +174,7 @@ const DAY3: DayUnlockConfig = {
  * 塵器強化技能. */
 const DAY4: DayUnlockConfig = {
   day: 4,
-  dailyTotals: { cargoTotal: 60, mailTotal: 30, lostFoundTotal: 13, lostFoundNpcCount: 9 },
+  dailyTotals: { cargoTotal: 60, mailTotal: 30, lostFoundTotal: 13, lostFoundNpcCount: 13 },
   cargoCategoriesByRegion: {
     domestic: ['normal', 'fragile', 'large', 'frozen'],
     international: ['normal', 'fragile', 'large', 'frozen'],
@@ -181,7 +199,7 @@ const DAY4: DayUnlockConfig = {
  * 10項UpgradeDefinition，驗證spec本身內部一致。 */
 const DAY5: DayUnlockConfig = {
   day: 5,
-  dailyTotals: { cargoTotal: 70, mailTotal: 30, lostFoundTotal: 15, lostFoundNpcCount: 10 },
+  dailyTotals: { cargoTotal: 70, mailTotal: 30, lostFoundTotal: 15, lostFoundNpcCount: 15 },
   cargoCategoriesByRegion: {
     domestic: ['normal', 'fragile', 'large', 'frozen', 'live'],
     international: ['normal', 'fragile', 'large', 'frozen', 'live'],
@@ -205,7 +223,7 @@ const DAY5: DayUnlockConfig = {
 const DAY6: DayUnlockConfig = {
   ...DAY5,
   day: 6,
-  dailyTotals: { cargoTotal: 80, mailTotal: 40, lostFoundTotal: 18, lostFoundNpcCount: 13 },
+  dailyTotals: { cargoTotal: 80, mailTotal: 40, lostFoundTotal: 18, lostFoundNpcCount: 18 },
 };
 
 /** Day 7 — spec: 包裹90／信件50／失物招領20／人數15；貨物／信封／載具／道具／
@@ -213,7 +231,7 @@ const DAY6: DayUnlockConfig = {
 const DAY7: DayUnlockConfig = {
   ...DAY5,
   day: 7,
-  dailyTotals: { cargoTotal: 90, mailTotal: 50, lostFoundTotal: 20, lostFoundNpcCount: 15 },
+  dailyTotals: { cargoTotal: 90, mailTotal: 50, lostFoundTotal: 20, lostFoundNpcCount: 20 },
 };
 
 export const DAILY_UNLOCKS: Record<number, DayUnlockConfig> = {
@@ -242,6 +260,10 @@ export function isMailRegionUnlockedOnDay(region: MailRegion, day: number): bool
 
 export function getDailyMailTotal(day: number): number {
   return getEffectiveDayUnlockConfig(day).dailyTotals.mailTotal;
+}
+
+export function getDailyLostFoundNpcCount(day: number): number {
+  return getEffectiveDayUnlockConfig(day).dailyTotals.lostFoundNpcCount;
 }
 
 export function isVehicleUnlockedOnDay(vehicleId: string, day: number): boolean {

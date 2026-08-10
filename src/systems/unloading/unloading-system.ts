@@ -308,17 +308,35 @@ export class UnloadingSystem {
       { preset: item.preset, region: item.region, portIndex: shuffledPortAssignment[i] }
     ));
 
-    const waveCount = Math.max(1, UNLOAD_BURST_CONFIG.waveCount);
+    // "Day 1～7 每日系統完整實作" round: UNLOAD_BURST_CONFIG.waveCount (30) was
+    // tuned as a fixed constant back when EVERY day generated exactly 90
+    // items (90/30 = 3 items/wave, with a waveGap pause between each wave —
+    // see the 'waveGap' phase below). Now that daily totals vary (20-90),
+    // keeping waveCount fixed at 30 would round-robin a small day's items
+    // across the SAME 30 buckets, leaving most waves with only 0-1 item —
+    // Day 1's 20 items would each become their OWN 1-item wave, meaning a
+    // waveGap pause after literally every single item (confirmed via live
+    // testing: a live headless run against Day 1 needed 30+ real seconds to
+    // finish spawning, vastly slower/choppier than the original 90-item
+    // day's pacing). Scaling waveCount to target the SAME ~3-items-per-wave
+    // ratio the original 90/30 constant implied — capped at the original 30
+    // ceiling, so Day 7's 90 items keep the exact original wave count/pacing
+    // — restores that intended cadence for every day's own (now-variable)
+    // total instead.
+    const targetItemsPerWave = 3;
+    const waveCount = Math.max(1, Math.min(UNLOAD_BURST_CONFIG.waveCount, Math.ceil(shuffledItems.length / targetItemsPerWave)));
     const waves: PlannedSpawn[][] = Array.from({ length: waveCount }, () => []);
     planned.forEach((item, i) => waves[i % waveCount].push(item));
     // Bug fix ("每日特殊劇情系統" round follow-up) — Day8's own single-item
-    // manifest (buildDailyCargoManifest's GIANT_CAKE_DAY override) means most
-    // of these 30 round-robin slots end up genuinely empty (1 item % 30
-    // waves leaves 29 with nothing). The 'spawning' phase below always reads
-    // `wave[itemIndexInWave]` unconditionally assuming `wave.length >= 1` —
-    // an empty wave crashed it (`spawnOne(undefined)` reading `.portIndex`
-    // off undefined). Every day with the normal 90-item quota divides evenly
-    // across all 30 waves (3 each), so this filter is a no-op for them.
+    // manifest (buildDailyCargoManifest's GIANT_CAKE_DAY override) computes
+    // waveCount=1 above, trivially fine, but this filter stays as defensive
+    // insurance for any future day whose manifest could be empty. The
+    // 'spawning' phase below always reads `wave[itemIndexInWave]`
+    // unconditionally assuming `wave.length >= 1` — an empty wave crashed it
+    // (`spawnOne(undefined)` reading `.portIndex` off undefined). Every
+    // normal day now divides evenly (or nearly so) across waveCount waves
+    // (~3 each, see waveCount's own doc comment above), so this filter is
+    // a no-op for them in practice.
     return waves.filter((w) => w.length > 0);
   }
 

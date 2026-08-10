@@ -11,9 +11,10 @@ import { CargoRegion } from './cargo-region-data';
 import { CargoShapePreset, getCargoShapePresetsByCategory, GIANT_CAKE_BOX_PRESET } from './cargo-shape-presets';
 import {
   CARGO_CAPACITY_ITEM_VOLUME_MULTIPLIER, CARGO_CAPACITY_SAFE_FILL_RATE, CARGO_MANIFEST_CATEGORY_ORDER,
-  CARGO_MANIFEST_PRESET_CAP_RATIO, DAILY_CARGO_CATEGORY_QUOTA, DAILY_CARGO_REGION_QUOTA,
+  CARGO_MANIFEST_PRESET_CAP_RATIO,
 } from './cargo-manifest-data';
 import { LAND_VEHICLE_CONFIGS, SEA_VEHICLE_CONFIGS, VehicleConfig } from '../vehicle/vehicle-data';
+import { getEffectiveDayUnlockConfig } from '../../data/daily-unlock-data';
 
 export interface CargoManifestItem {
   category: CargoCategory;
@@ -81,13 +82,47 @@ function selectPresetsForCategory(category: CargoCategory, count: number): Cargo
   return shuffle(result);
 }
 
-function buildRegionAssignments(category: CargoCategory): CargoRegion[] {
-  const quota = DAILY_CARGO_REGION_QUOTA[category];
-  const arr: CargoRegion[] = [
-    ...Array(quota.domestic).fill('domestic' as const),
-    ...Array(quota.international).fill('international' as const),
-  ];
-  return shuffle(arr);
+interface CargoCombo {
+  category: CargoCategory;
+  region: CargoRegion;
+}
+
+/** Every (category, region) pair the given day's own unlock config allows
+ * (daily-unlock-data.ts, the single source of truth) — the pool
+ * drawCargoCombos() below draws uniformly at random from (spec五: "從當日已
+ * 解鎖貨物種類中隨機生成", no per-combo ratio was ever specified, so an even
+ * draw across whatever's unlocked is the actual implementation).
+ *
+ * Deliberately excludes 'live'+'international' even on a day whose own
+ * spec text lists 活物 under both 國內 and 國外 (Day 5-7) — a genuine
+ * conflict with the EXISTING, already-established, three-times-documented
+ * system rule that no vehicle accepts international live cargo (see
+ * vehicle-data.ts's own SEA_VEHICLE_BASE_CONFIGS doc comment: "海外活體 has no
+ * accepting vehicle this round"). Generating it anyway would create cargo
+ * that can NEVER be shipped by any vehicle, no matter how the player plays —
+ * silently worse for the player, not a neutral omission. Reported in this
+ * round's completion notes rather than silently invented either way. */
+function unlockedCargoCombos(day: number): CargoCombo[] {
+  const cfg = getEffectiveDayUnlockConfig(day);
+  const combos: CargoCombo[] = [];
+  for (const category of cfg.cargoCategoriesByRegion.domestic) combos.push({ category, region: 'domestic' });
+  for (const category of cfg.cargoCategoriesByRegion.international) {
+    if (category === 'live') continue; // see this function's own doc comment
+    combos.push({ category, region: 'international' });
+  }
+  return combos;
+}
+
+/** Draws `total` items uniformly at random from `combos` (spec五). Returns
+ * them already shuffled (the draw itself is independent per item, so the
+ * resulting order is already random — shuffle is just defensive, matching
+ * every other list this file hands off). */
+function drawCargoCombos(combos: CargoCombo[], total: number): CargoCombo[] {
+  const draws: CargoCombo[] = [];
+  for (let i = 0; i < total; i++) {
+    draws.push(combos[Math.floor(Math.random() * combos.length)]);
+  }
+  return draws;
 }
 
 /** Raw physical volume (m^3) — box: w*h*d; cylinder (roller convention, see
@@ -228,44 +263,66 @@ function planVehicleCapacity(manifest: CargoManifestItem[]): VehicleCapacityRepo
 }
 
 /** Day8 finale's own cargo day (spec: "今天的貨物：只有一項") — the ONE day
- * this file's own fixed 90-item quota (DAILY_CARGO_CATEGORY_QUOTA) is
- * overridden entirely, per after-work-story-data.ts's own day-8 finale
- * entry. Kept as a local constant rather than importing the story data file
+ * this file's normal day-scaled generation (see buildDailyCargoManifest
+ * below) is overridden entirely, per after-work-story-data.ts's own day-8
+ * finale entry. Kept as a local constant rather than importing the story
+ * data file
  * (systems/cargo has no other reason to depend on systems/story) — the day
  * number itself is the one piece of coupling that already exists implicitly
  * via DailyFlowSystem.currentDay, same as every other day-numbered special
  * case in this codebase. */
 const GIANT_CAKE_DAY = 8;
 
-/** Builds one full day's cargo manifest (spec三: fixed 90-item total, fixed
- * per-category and per-region quotas decided before any shape is picked)
- * plus a generator-only vehicle capacity estimate (spec四). DEV-mode only
- * console report of each vehicle's estimated load — silent in production
- * builds (spec四: "正式環境不要顯示這個除錯輸出").
+/** Builds one full day's cargo manifest — "Day 1～7 每日系統完整實作" round:
+ * total item count AND which (category, region) combinations may appear are
+ * both read from `daily-unlock-data.ts`'s `getEffectiveDayUnlockConfig(
+ * currentDay)` (spec五/十八), replacing the old fixed-90-item/fixed-quota
+ * system entirely. Each of the day's `total` items independently draws one
+ * of that day's unlocked combos uniformly at random (unlockedCargoCombos/
+ * drawCargoCombos above), then `selectPresetsForCategory` picks presets
+ * per-category exactly as before (preset-variety-first pass + 35% cap),
+ * fed the ACTUAL count each category happened to draw rather than a fixed
+ * quota. Also builds a generator-only vehicle capacity estimate (from the
+ * earlier "rebalance daily manifest" round spec四), DEV-mode only console
+ * report (spec four: "正式環境不要顯示這個除錯輸出").
  *
  * "每日特殊劇情系統" round — `currentDay` is optional and defaults to a
- * normal day (undefined never matches GIANT_CAKE_DAY) so every existing
- * caller/test keeps working unchanged; only UnloadingSystem's own
- * buildSpawnPlan passes the real day, giving day8 its single-item override. */
+ * normal day (undefined never matches GIANT_CAKE_DAY, and
+ * getEffectiveDayUnlockConfig(undefined as unknown as number) is never
+ * called in that branch) so every existing caller/test keeps working
+ * unchanged; only UnloadingSystem's own buildSpawnPlan passes the real day,
+ * giving day8 its single-item override AND every normal day its own
+ * day-scaled total. */
 export function buildDailyCargoManifest(currentDay?: number): { manifest: CargoManifestItem[]; capacityReport: VehicleCapacityReport[] } {
   if (currentDay === GIANT_CAKE_DAY) {
     const manifest: CargoManifestItem[] = [{ category: 'large', region: 'domestic', preset: GIANT_CAKE_BOX_PRESET }];
     return { manifest, capacityReport: planVehicleCapacity(manifest) };
   }
 
+  const day = currentDay ?? 1;
+  const total = getEffectiveDayUnlockConfig(day).dailyTotals.cargoTotal;
+  const combos = unlockedCargoCombos(day);
+  const draws = combos.length > 0 ? drawCargoCombos(combos, total) : [];
+
+  const countByCategory = new Map<CargoCategory, number>();
+  for (const d of draws) countByCategory.set(d.category, (countByCategory.get(d.category) ?? 0) + 1);
+
   const manifest: CargoManifestItem[] = [];
   for (const category of CARGO_MANIFEST_CATEGORY_ORDER) {
-    const count = DAILY_CARGO_CATEGORY_QUOTA[category];
+    const count = countByCategory.get(category);
+    if (!count) continue;
     const presets = selectPresetsForCategory(category, count);
-    const regions = buildRegionAssignments(category);
+    const regionsForCategory = shuffle(draws.filter((d) => d.category === category).map((d) => d.region));
     for (let i = 0; i < count; i++) {
-      manifest.push({ category, region: regions[i], preset: presets[i] });
+      manifest.push({ category, region: regionsForCategory[i], preset: presets[i] });
     }
   }
+  const shuffledManifest = shuffle(manifest);
 
-  const capacityReport = planVehicleCapacity(manifest);
+  const capacityReport = planVehicleCapacity(shuffledManifest);
 
   if (import.meta.env.DEV) {
+    console.log(`[cargo-manifest] day ${day}: ${shuffledManifest.length}/${total} items drawn from ${combos.length} unlocked combos.`);
     console.log('[cargo-manifest] daily vehicle capacity plan:');
     for (const r of capacityReport) {
       console.log(
@@ -275,5 +332,5 @@ export function buildDailyCargoManifest(currentDay?: number): { manifest: CargoM
     }
   }
 
-  return { manifest, capacityReport };
+  return { manifest: shuffledManifest, capacityReport };
 }

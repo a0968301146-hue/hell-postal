@@ -431,6 +431,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // other late setter in this file already uses.
   mailSystem.setDayUnlockProvider(() => dailyFlowSystem.currentDay);
   upgradeSystem.setDayUnlockProvider(() => dailyFlowSystem.currentDay);
+  lostFoundSystem.setDayUnlockProvider(() => dailyFlowSystem.currentDay);
 
   // Day-1 dock story cutscene ("Add day one dock story event" round),
   // generalized to all 8 days by "每日特殊劇情系統". Constructed here (moved

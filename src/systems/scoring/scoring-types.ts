@@ -11,8 +11,9 @@
  * lost-found <-> scoring circular import; scoring-types.ts has no deps of
  * its own, so it's the neutral home for this shape). */
 export interface LostFoundSettlementInput {
-  /** How many of today's NPCs (DAILY_LOST_FOUND_NPC_COUNT, currently 3)
-   * were NOT successfully completed before 載具出發 ("Add sequential
+  /** How many of today's NPCs (day-based count, 5-20 — see
+   * daily-unlock-data.ts's getDailyLostFoundNpcCount) were NOT successfully
+   * completed before 載具出發 ("Add sequential
    * lost-found visitors and held cargo feedback" round一/六: "每位未接待NPC
    * 分別套用目前既有的漏接懲罰" — replaces the old single `missed: boolean`
    * now that more than one NPC can be outstanding at once; the PER-EVENT

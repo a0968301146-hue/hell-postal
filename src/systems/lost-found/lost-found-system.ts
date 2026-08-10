@@ -8,7 +8,7 @@ import { InteractableObject, createInteractableObject } from '../../shared/types
 import { PickupPort } from '../../shared/types/pickup-port';
 import {
   LOST_ITEM_PRESETS, LostItemPreset, LOST_FOUND_CASES, LostFoundCaseDef, LOST_FOUND_WRONG_ITEM_TEXT, LOST_FOUND_MISSED_TEXT,
-  LOST_FOUND_SEEKING_TEXT, LOST_FOUND_CONTINUE_PROMPT, DECOY_LOST_ITEM_COUNT, DAILY_LOST_FOUND_NPC_COUNT, buildLostItemGeometry,
+  LOST_FOUND_SEEKING_TEXT, LOST_FOUND_CONTINUE_PROMPT, DECOY_LOST_ITEM_COUNT, buildLostItemGeometry,
   pickRandomGreeting, pickRandomThanks, UNKNOWN_LOST_ITEM_DISPLAY_NAME, buildUnknownLostItemGeometry, buildUnknownLostItemMaterial,
   LOST_FOUND_NOT_CLEAN_TEXT,
 } from './lost-found-data';
@@ -19,6 +19,7 @@ import { LostItemPreviewRenderer } from './lost-item-preview-renderer';
 import { LostFoundCabinetSystem, computeLostItemFitScale } from './lost-found-cabinet-system';
 import { LostFoundSettlementInput } from '../scoring/scoring-types';
 import { logNpcEDebug } from '../interaction/npc-e-debug';
+import { getDailyLostFoundNpcCount } from '../../data/daily-unlock-data';
 
 export const LOST_ITEM_ID_PREFIX = 'lostitem-';
 
@@ -157,6 +158,12 @@ export class LostFoundSystem {
    * UNLOAD_BURST_CONFIG, never modified), so they don't visually launch
    * through a still-closed port. null when no spawn is pending. */
   private lostItemSpawnTimer: number | null = null;
+  /** "Day 1～7 每日系統完整實作" round — optional day-number source, wired
+   * from create-game-systems.ts once DailyFlowSystem exists (this class is
+   * constructed BEFORE it — same "avoid a constructor-time circular
+   * dependency" reasoning as every other late-bound getCurrentDay in this
+   * codebase). Defaults to "always day 1" if never wired. */
+  private getCurrentDay: () => number = () => 1;
 
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>,
@@ -176,15 +183,25 @@ export class LostFoundSystem {
     this.cabinetSystem = new LostFoundCabinetSystem(scene, physics, interactables, pickupSystem);
   }
 
-  /** Draws DAILY_LOST_FOUND_NPC_COUNT (3) DISTINCT cases from the pool —
-   * every LOST_FOUND_CASES entry maps to a different lostItemPresetId (see
-   * that file's own doc comment), so any 3 distinct cases automatically
-   * request 3 distinct items with no separate dedup check needed (spec一:
-   * "不可有兩位NPC要求同一件物品"). Builds all 3 queue entries up front, all
-   * 'queued' — advanceQueue() (called right after, from
-   * onDailyUnloadStarted) is what actually starts the first one entering. */
+  /** See getCurrentDay's own doc comment above — called once from
+   * create-game-systems.ts right after DailyFlowSystem is constructed. */
+  setDayUnlockProvider(fn: () => number): void {
+    this.getCurrentDay = fn;
+  }
+
+  /** Draws today's NPC count (daily-unlock-data.ts's
+   * getDailyLostFoundNpcCount, "Day 1～7 每日系統完整實作" round spec八) worth
+   * of DISTINCT cases from the now-20-entry LOST_FOUND_CASES pool (spec八
+   * rule2: "優先避免同一天重複相同案例" — case-id distinctness, guaranteed by
+   * construction here since `shuffle(...).slice(0, n)` on a pool of >=20
+   * never repeats an id; two different cases MAY share the same
+   * lostItemPresetId though, see that file's own doc comment). Builds all N
+   * queue entries up front, all 'queued' — advanceQueue() (called right
+   * after, from onDailyUnloadStarted) is what actually starts the first one
+   * entering. */
   private prepareDailyCases(): void {
-    const chosen = shuffle(LOST_FOUND_CASES).slice(0, DAILY_LOST_FOUND_NPC_COUNT);
+    const npcCount = getDailyLostFoundNpcCount(this.getCurrentDay());
+    const chosen = shuffle(LOST_FOUND_CASES).slice(0, npcCount);
     this.todaysQueue = chosen.map((caseDef) => ({ caseDef, targetItemId: null, state: 'queued' as const, outcome: null }));
     this.activeIndex = -1;
     this.thankingTimer = null;
