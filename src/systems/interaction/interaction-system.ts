@@ -17,7 +17,7 @@ import { DailyFlowSystem } from '../daily-flow';
 import { PalletSystem } from '../pallet';
 import { LostFoundSystem, LOST_FOUND_NPC_INTERACTABLE_ID } from '../lost-found';
 import { MailSystem } from '../mail/mail-system';
-import { MailBagSystem, MAIL_RACK_INTERACTABLE_ID } from '../mail/mail-bag-system';
+import { MailBagSystem } from '../mail/mail-bag-system';
 import { PackedMailBagSystem } from '../mail/packed-mail-bag-system';
 import { EnvelopeDispatchMachineSystem } from '../mail/envelope-dispatch-machine-system';
 import { EnvelopeStackSystem } from '../mail/envelope-stack-system';
@@ -414,7 +414,6 @@ export class InteractionSystem {
         !this.palletSystem.isRackId(this.currentTarget.id) &&
         !this.ladderSystem.isLadderTarget(this.currentTarget.id) &&
         !this.ladderSystem.isLadderRackTarget(this.currentTarget.id) &&
-        this.currentTarget.id !== MAIL_RACK_INTERACTABLE_ID &&
         this.currentTarget.id !== VEHICLE_CALL_BUTTON_ID && this.currentTarget.id !== VEHICLE_DEPART_BUTTON_ID &&
         !this.completeDayCheatSystem.isCheatButtonTarget(this.currentTarget.id) &&
         !this.completeDayCheatSystem.isJumpButtonTarget(this.currentTarget.id) &&
@@ -634,20 +633,6 @@ export class InteractionSystem {
     // reveal exactly what InteractionSystem actually saw instead.
     stopNpcTrace('currentTarget did not match NPC id when reaching Priority 0.7+ (see currentTargetId/freshRaycastHitId)');
 
-    // Priority 0.7: empty-bag supply rack (spec三/四: "玩家必須用準心射線直
-    // 接命中供應架互動Collider，按E才能取得新袋" — a raycast-precise target
-    // registered in the SAME shared interactables map, resolved by the SAME
-    // single crosshair raycast every other target already uses; no
-    // proximity/second raycaster). Intercepts before the generic pickup
-    // below since this target's canPickUp is only true to satisfy that
-    // raycast's own filter, never meant to actually be picked up — mirrors
-    // the sorting pallet's own special-case pattern just below.
-    if (this.currentTarget && this.currentTarget.id === MAIL_RACK_INTERACTABLE_ID) {
-      this.mailBagSystem.trySpawnBag();
-      this.clearHighlight(this.currentTarget);
-      this.currentTarget = null;
-      return;
-    }
 
     // Priority 0.8: vehicle call/depart buttons (re-enabled — see
     // feature-flags.ts ENABLE_VEHICLE_LOADING_FLOW) — now two wall-mounted
@@ -980,7 +965,7 @@ export class InteractionSystem {
       if (
         hit && !this.palletSystem.isPalletId(this.playerData.heldObjectId ?? '') && !this.ladderSystem.isCarrying &&
         !this.envelopeStackSystem.isCarryingViaHeldId &&
-        !this.palletSystem.isPalletId(hit.id) && !this.palletSystem.isRackId(hit.id) && hit.id !== MAIL_RACK_INTERACTABLE_ID &&
+        !this.palletSystem.isPalletId(hit.id) && !this.palletSystem.isRackId(hit.id) &&
         !this.ladderSystem.isLadderTarget(hit.id) && !this.ladderSystem.isLadderRackTarget(hit.id) &&
         !this.toolStationSystem.isToolStationTarget(hit.id) &&
         !this.envelopeDispatchMachineSystem.isPackButtonTarget(hit.id) &&
@@ -1185,17 +1170,6 @@ export class InteractionSystem {
           // above ("Add television media playlist" round spec二: "E 開啟媒
           // 體播放器").
           this.hud.showInteractionPrompt('二手電視', 'E 開啟媒體播放器');
-        } else if (newTarget.id === MAIL_RACK_INTERACTABLE_ID) {
-          // World prompt only while the crosshair directly hits the rack
-          // (spec三: "只在準心命中供應架時顯示...準心移開後立即隱藏") — this
-          // whole branch only runs on a newTarget CHANGE, and newTarget
-          // reverts to null (hiding it again, via updateStationPrompts'
-          // final hideInteractionPrompt fallback) the instant the raycast
-          // no longer hits this mesh.
-          this.hud.showInteractionPrompt(
-            newTarget.displayName,
-            this.mailBagSystem.canSpawnBag ? '按 E 取得新箱' : '空箱數量已達上限'
-          );
         } else if (newTarget.id === VEHICLE_CALL_BUTTON_ID) {
           // Wall-mounted call button ("Fix cargo throwing and rebalance
           // daily manifest" round二) — same blocked/idle text VehicleControlSystem

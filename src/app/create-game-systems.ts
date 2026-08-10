@@ -581,6 +581,11 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     playerData, hud, pauseManager, dailyFlowSystem, pickupSystem, toolSystem, () => playerController.isLocked,
     envelopeStackSystem
   );
+  // "貨物工具與技能升級系統修改" round — wires cargoHookLevel's own live push
+  // target now that the tool exists (see UpgradeLevelPushTarget's own doc
+  // comment in upgrade-system.ts for why this can't happen at UpgradeSystem's
+  // own construction time).
+  upgradeSystem.setCargoHookSystem(cargoHookSystem);
 
   // Tool cart's own swap UI ("Add ladder tool station and envelope vacuum"
   // round三) — same PauseManager/pointer-lock convention as
@@ -595,6 +600,9 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     physics, interactables, playerData, camera, pickupSystem.viewModelScene,
     mailSystem, pauseManager, () => playerController.isLocked
   );
+  // "貨物工具與技能升級系統修改" round — same reasoning as
+  // upgradeSystem.setCargoHookSystem above, for envelopeVacuumLevel.
+  upgradeSystem.setEnvelopeVacuumSystem(envelopeVacuumSystem);
 
   // Spray paint tool ("Fix pallet throw and add spray paint tool" round
   // spec五, hotbar slot 4) — restricted to the same real floor meshes

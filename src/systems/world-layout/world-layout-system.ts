@@ -89,11 +89,10 @@ export interface SceneData {
  * system" round spec二) — registered directly into the SAME shared
  * `interactables` map every other pickupable prop uses, so
  * InteractionSystem's existing single crosshair raycast resolves it for
- * free, exactly mirroring the empty-bag supply rack's own pattern
- * (MAIL_RACK_INTERACTABLE_ID, mail-bag-system.ts). `canPickUp: true` only
- * so it passes that raycast's own generic filter — it's never actually
- * handed to PickupSystem.pickUp(); InteractionSystem intercepts E specially
- * before the generic pickup/multi-carry path runs. */
+ * free. `canPickUp: true` only so it passes that raycast's own generic
+ * filter — it's never actually handed to PickupSystem.pickUp();
+ * InteractionSystem intercepts E specially before the generic pickup/
+ * multi-carry path runs. */
 export const BULLETIN_BOARD_INTERACTABLE_ID = 'bulletin-board';
 
 /** The west-wall television's own raycast-target id ("Add television media

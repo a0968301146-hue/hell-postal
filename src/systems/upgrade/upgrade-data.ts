@@ -123,6 +123,32 @@ export const UPGRADE_DEFINITIONS: UpgradeDefinition[] = [
       { level: 1, description: '小／中／大型托盤各 2 張（立即生成第二組）' },
     ],
   },
+  {
+    id: 'cargoHookLevel',
+    displayName: '勾貨勾升級',
+    description: '縮短捕貨鉤冷卻時間、增加勾取距離，並逐級解鎖可勾取的物件種類（信件／失物招領／大型／冷凍／活物貨物）。',
+    maxLevel: 3,
+    costs: [30, 55, 85],
+    levelEffects: [
+      { level: 0, description: '冷卻 9 秒／基礎距離／可勾取小型與中型貨物' },
+      { level: 1, description: '冷卻 7 秒／距離 +1／新增可勾取信件' },
+      { level: 2, description: '冷卻 5 秒／距離 +2／新增可勾取失物招領物品' },
+      { level: 3, description: '冷卻 3 秒／距離 +3／可勾取全部貨物（含大型／冷凍／活物）' },
+    ],
+  },
+  {
+    id: 'envelopeVacuumLevel',
+    displayName: '信封吸塵器升級',
+    description: '縮短信封吸塵器的使用冷卻時間，其餘吸取/吹風方式與信封系統維持不變。',
+    maxLevel: 3,
+    costs: [30, 55, 85],
+    levelEffects: [
+      { level: 0, description: '冷卻 9 秒' },
+      { level: 1, description: '冷卻 7 秒' },
+      { level: 2, description: '冷卻 5 秒' },
+      { level: 3, description: '冷卻 3 秒' },
+    ],
+  },
 ];
 
 export function getUpgradeDefinition(id: UpgradeId): UpgradeDefinition {

@@ -1,26 +1,13 @@
 import * as THREE from 'three';
 import { PhysicsSystem } from '../../adapters/rapier/physics-system';
-import { InteractableObject, createInteractableObject } from '../../shared/types/interactable';
+import { InteractableObject } from '../../shared/types/interactable';
 import { PickupPort } from '../../shared/types/pickup-port';
 import { HUD } from '../hud';
-import { BACK_AREA } from '../world-layout';
-import { BAG_RACK, MAIL_BOX_DIMENSIONS, ENVELOPE_SIZE } from '../../data/world/mail-layout-data';
-import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/world-label-system';
+import { MAIL_BOX_DIMENSIONS, ENVELOPE_SIZE } from '../../data/world/mail-layout-data';
+import { updateFloatingLabel } from '../../adapters/three/world-label-system';
 import { MailBagRecord, EnvelopeRecord } from './mail-types';
-import { MAIL_DESTINATIONS, MAX_OPEN_BAGS, MAIL_BAG_CAPACITY, getMailDestination, buildBagMaterials, buildBoxGeometry } from './mail-data';
+import { MAIL_DESTINATIONS, getMailDestination, buildBagMaterials } from './mail-data';
 import { MailSystem } from './mail-system';
-
-const BAG_ID_PREFIX = 'mailbag-';
-
-/** The empty-bag supply rack's own raycast-target id ("Resize mail bags and
- * fix supply rack interaction" round三/四: precise crosshair-hit
- * interaction, no proximity/second raycaster) — registered once in the
- * SAME shared `interactables` map every other pickupable prop uses, so
- * InteractionSystem's existing single raycast pipeline picks it up for
- * free (see interaction-system.ts's own special-case check against this
- * id, mirroring how it already special-cases the sorting pallet). Exported
- * so that file can reference it without a second lookup mechanism. */
-export const MAIL_RACK_INTERACTABLE_ID = 'mail-rack';
 
 function disposeMaterial(mat: THREE.Material | THREE.Material[]): void {
   if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
@@ -77,13 +64,24 @@ interface BagRuntime {
 }
 
 /**
- * Owns the empty-box supply rack and every mail box's own lifecycle — spawn
- * (spec六), pattern selection (spec六), physical envelope insertion (spec
- * 七). Player-visible as "信封箱" throughout (spec "Replace mail bags with
- * open mail boxes" round) — the class/field names here (MailBagSystem,
- * MailBagRecord, bagId, ...) are deliberately kept as-is (spec: "內部程式類
- * 別若大幅更名會增加風險，可以暫時保留MailBagSystem名稱"), a naming-only
- * difference from what the player sees.
+ * Owns every mail box's own lifecycle — pattern selection (spec六), physical
+ * envelope insertion (spec七), carry/placement/throw content hooks. Player-
+ * visible as "信封箱" throughout (spec "Replace mail bags with open mail
+ * boxes" round) — the class/field names here (MailBagSystem, MailBagRecord,
+ * bagId, ...) are deliberately kept as-is (spec: "內部程式類別若大幅更名會增
+ * 加風險，可以暫時保留MailBagSystem名稱"), a naming-only difference from what
+ * the player sees.
+ *
+ * "移除空封箱供應架" round — the empty-box supply rack (its own physical
+ * station + trySpawnBag()'s "player walks up, presses E, gets a fresh empty
+ * box" flow) has been removed entirely; the region envelope dispatch machine
+ * (envelope-dispatch-machine-system.ts / packed-mail-bag-system.ts) is now
+ * the primary way envelopes get packed and shipped. Every OTHER box-lifecycle
+ * method below (insertion sensor, escape tracking, carry/placement/throw
+ * hooks, pattern cycling, resetDaily, ...) is deliberately left completely
+ * untouched per spec ("不要刪除MailBagSystem整個系統") — nothing currently
+ * calls into this class to create a new box, but the class itself, and
+ * everything it does with a box once one exists, is unchanged.
  *
  * "Remove sealing and add physical mail box contents" round: sealing is
  * gone entirely (spec一) — a box is ALWAYS an open-top container that can be
@@ -122,8 +120,6 @@ export class MailBagSystem {
 
   private bags: Map<string, MailBagRecord> = new Map();
   private bagRuntime: Map<string, BagRuntime> = new Map();
-  private bagInstanceCounter = 0;
-  private rackLabel!: THREE.Sprite;
 
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>,
@@ -135,144 +131,6 @@ export class MailBagSystem {
     this.pickupSystem = pickupSystem;
     this.hud = hud;
     this.mailSystem = mailSystem;
-    this.buildRack();
-  }
-
-  private buildRack(): void {
-    const floorY = BACK_AREA.floorY;
-    const group = new THREE.Group();
-    const geo = new THREE.BoxGeometry(BAG_RACK.width, BAG_RACK.height, BAG_RACK.depth);
-    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x8a7050 }));
-    mesh.position.y = BAG_RACK.height / 2;
-    group.add(mesh);
-
-    this.rackLabel = createFloatingLabel(this.rackLabelText(), { width: 0.9, bg: 'rgba(30,25,15,0.75)' });
-    this.rackLabel.position.set(0, BAG_RACK.height + 0.4, 0);
-    group.add(this.rackLabel);
-
-    group.position.set(BAG_RACK.posX, floorY, BAG_RACK.posZ);
-    this.scene.add(group);
-
-    // Player-blocking collider — unrelated to the interaction fix below,
-    // unchanged from before (spec: only the INTERACTION gate changes).
-    this.physics.createStaticCuboid(BAG_RACK.posX, floorY + BAG_RACK.height / 2, BAG_RACK.posZ, BAG_RACK.width / 2, BAG_RACK.height / 2, BAG_RACK.depth / 2);
-
-    // Registered in the SAME shared `interactables` map every pickupable
-    // prop uses, so InteractionSystem's existing single crosshair raycast
-    // picks it up for free — no proximity check, no second raycaster
-    // (spec三/四). `canPickUp: true` only so it PASSES that raycast's own
-    // generic filter; it's never actually handed to PickupSystem.pickUp()
-    // — interaction-system.ts intercepts E specially before that generic
-    // path runs, exactly mirroring how it already special-cases the
-    // sorting pallet. Bounds exactly match the rack's own body (width x
-    // height x depth = 0.7 x 1.1 x 0.5), not an enlarged detection volume.
-    const rackObj = createInteractableObject(MAIL_RACK_INTERACTABLE_ID, '空封箱供應架', mesh, BAG_RACK.width, BAG_RACK.height, BAG_RACK.depth);
-    this.interactables.set(MAIL_RACK_INTERACTABLE_ID, rackObj);
-  }
-
-  private rackLabelText(): string {
-    return `空封箱供應架 (${this.bags.size}/${MAX_OPEN_BAGS})`;
-  }
-
-  get canSpawnBag(): boolean {
-    return this.bags.size < MAX_OPEN_BAGS;
-  }
-
-  /** Spawns one new open, pattern-unset mail box near the rack (spec六: "場
-   * 上空袋上限8個，不可無限生成"). No-op past the cap. Builds the open-top
-   * shell + compound (bottom/left/right/front/back, no top) collider —
-   * see the class doc comment above. */
-  trySpawnBag(): void {
-    if (!this.canSpawnBag) {
-      this.hud.showToast('空箱數量已達上限');
-      return;
-    }
-
-    const id = `${BAG_ID_PREFIX}${this.bagInstanceCounter++}`;
-    const x = BAG_RACK.posX + (Math.random() - 0.5) * 0.6;
-    const z = BAG_RACK.posZ + BAG_RACK.depth / 2 + 0.5 + Math.random() * 0.4;
-    const dims = MAIL_BOX_DIMENSIONS;
-    const y = BACK_AREA.floorY + dims.outerHeight / 2 + 0.05;
-
-    const geo = buildBoxGeometry(dims);
-    const mats = buildBagMaterials(null);
-    const mesh = new THREE.Mesh(geo, mats);
-    mesh.position.set(x, y, z);
-    this.scene.add(mesh);
-
-    const obj = createInteractableObject(id, '空信封箱', mesh, dims.outerWidth, dims.outerHeight, dims.outerDepth);
-
-    // 5 Colliders (bottom + left/right/back/front walls, no top) — every
-    // position/rotation/width/height/depth computed with the EXACT same
-    // formulas buildBoxGeometry() just used for the visible Mesh, from the
-    // SAME dims object, so Mesh and Collider line up pixel-for-pixel
-    // ("Align mail box colliders with visible mesh" round一/二). Rotation is
-    // always identity for every piece (axis-aligned boxes), so there's
-    // nothing to pass beyond position/half-extents here.
-    const bodyDesc = this.physics.createDynamicBodyDesc(x, y, z, 8);
-    const body = this.physics.createDynamicBody(bodyDesc);
-    const wallLocalY = -dims.outerHeight / 2 + dims.bottomThickness + dims.innerHeight / 2;
-    const bottomCollider = this.physics.addColliderToBody(
-      body, 0, -dims.outerHeight / 2 + dims.bottomThickness / 2, 0,
-      dims.outerWidth / 2, dims.bottomThickness / 2, dims.outerDepth / 2
-    );
-    this.physics.addColliderToBody( // left
-      body, -(dims.innerWidth / 2 + dims.wallThickness / 2), wallLocalY, 0,
-      dims.wallThickness / 2, dims.innerHeight / 2, dims.outerDepth / 2
-    );
-    this.physics.addColliderToBody( // right
-      body, dims.innerWidth / 2 + dims.wallThickness / 2, wallLocalY, 0,
-      dims.wallThickness / 2, dims.innerHeight / 2, dims.outerDepth / 2
-    );
-    this.physics.addColliderToBody( // back
-      body, 0, wallLocalY, -(dims.innerDepth / 2 + dims.wallThickness / 2),
-      dims.outerWidth / 2, dims.innerHeight / 2, dims.wallThickness / 2
-    );
-    this.physics.addColliderToBody( // front
-      body, 0, wallLocalY, dims.innerDepth / 2 + dims.wallThickness / 2,
-      dims.outerWidth / 2, dims.innerHeight / 2, dims.wallThickness / 2
-    );
-    obj.rigidBody = body;
-    obj.collider = bottomCollider;
-    // Tags this mesh as a mail box for PickupSystem's own generic
-    // pickUp/place/throw lifecycle (spec三/十: setMailBoxHooks' own
-    // isMailBox() check) — the ONLY thing PickupSystem needs to know to
-    // call the right content-carry hooks, never anything about
-    // MailBagRecord/envelopeIds itself.
-    mesh.userData.mailBoxId = id;
-    this.interactables.set(id, obj);
-
-    // Raycast hit-proxy ("Align mail box colliders with visible mesh"
-    // round三: "信封箱互動優先於一般放置模式") — the visible Mesh is a thin
-    // open shell (bottom + 4 walls only), so a crosshair ray aimed down
-    // through the genuinely-open top into empty interior space would often
-    // miss every real surface entirely, leaving currentTarget unresolved
-    // and letting E fall through to PickupSystem's generic placement mode
-    // instead of the box-specific insert flow. This invisible, slightly
-    // taller-than-the-box proxy (same established pattern already used for
-    // the sorting box's own open-top container, see sorting-box-system.ts's
-    // own HitProxy) makes the box's FULL outer volume — including the open
-    // air above the mouth — reliably raycastable, while carrying zero
-    // physics Collider of its own and being stripped from the held-item
-    // viewmodel clone automatically (PickupSystem already skips any child
-    // flagged `userData.isHitProxy`).
-    const proxyHeight = dims.outerHeight + 0.2;
-    const proxyGeo = new THREE.BoxGeometry(dims.outerWidth, proxyHeight, dims.outerDepth);
-    const proxyMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
-    const hitProxy = new THREE.Mesh(proxyGeo, proxyMat);
-    hitProxy.position.y = (proxyHeight - dims.outerHeight) / 2; // bottom-aligned, extra headroom above the rim
-    hitProxy.userData.isHitProxy = true;
-    mesh.add(hitProxy);
-
-    const label = createFloatingLabel('未設定\n0 封信', { width: 0.7, bg: 'rgba(20,20,20,0.75)' });
-    label.position.set(0, dims.outerHeight / 2 + 0.35, 0);
-    mesh.add(label);
-
-    this.bags.set(id, {
-      bagId: id, destinationPattern: null, region: null, envelopeIds: [], capacity: MAIL_BAG_CAPACITY,
-    });
-    this.bagRuntime.set(id, { label, stableCandidateId: null, stableElapsed: 0, lastAttemptedEnvelopeId: null, escapeTimers: new Map() });
-    updateFloatingLabel(this.rackLabel, this.rackLabelText());
   }
 
   /** PickupSystem's own `isMailBox` hook (spec三/十) — a plain userData tag
@@ -823,6 +681,5 @@ export class MailBagSystem {
     }
     this.bags.clear();
     this.bagRuntime.clear();
-    updateFloatingLabel(this.rackLabel, this.rackLabelText());
   }
 }

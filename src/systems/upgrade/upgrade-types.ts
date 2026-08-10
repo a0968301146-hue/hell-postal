@@ -5,7 +5,9 @@
 export type UpgradeId =
   | 'multiCarry' | 'heavyHandling' | 'moveSpeed' | 'similarCargoSense' | 'ropeStrap' | 'powerGlovesUpgrade'
   // "Add envelope stacks and expand pallet inventory" round.
-  | 'envelopeCarryLevel' | 'palletInventoryLevel';
+  | 'envelopeCarryLevel' | 'palletInventoryLevel'
+  // "貨物工具與技能升級系統修改" round.
+  | 'cargoHookLevel' | 'envelopeVacuumLevel';
 
 export interface UpgradeLevelEffect {
   level: number;

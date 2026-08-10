@@ -359,7 +359,7 @@ export class GameApp {
     // unconditional/self-guarding convention as cargoHookSystem/spraySystem
     // above — runs even while paused so a pause reliably releases any
     // currently-captured envelope the same frame it begins (spec八).
-    s.envelopeVacuumSystem.update();
+    s.envelopeVacuumSystem.update(deltaTime);
     // "Add freezer shelves and frozen cargo freshness system" round —
     // unconditional for the SAME reason as cargoHookSystem/spraySystem/
     // envelopeVacuumSystem above: a pause must take effect on the held-item

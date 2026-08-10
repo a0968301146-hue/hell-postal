@@ -5,7 +5,7 @@ import { PlayerInteractionData } from '../../core/game-state';
 import { HUD } from '../hud';
 import { PauseManager } from '../../core/pause-manager';
 import { PhysicsSystem, GROUP_STATIC, GROUP_BOX } from '../../adapters/rapier/physics-system';
-import { CargoSystem, CargoData } from '../cargo';
+import { CargoSystem, CargoData, CargoCategory } from '../cargo';
 import { DailyFlowSystem } from '../daily-flow';
 import { PickupSystem } from '../interaction';
 import { ToolSystem } from '../tool';
@@ -13,7 +13,9 @@ import { EnvelopeStackSystem } from '../mail/envelope-stack-system';
 import { LOST_ITEM_ID_PREFIX } from '../lost-found/lost-found-system';
 import {
   CARGO_HOOK_MAX_RANGE, CARGO_HOOK_FLIGHT_SPEED, CARGO_HOOK_MAX_ACTIVE_DURATION,
-  CARGO_HOOK_CATCH_DISTANCE, CARGO_HOOK_COOLDOWN, CARGO_HOOK_PULL_SPEED, CargoHookPullClass,
+  CARGO_HOOK_CATCH_DISTANCE, CARGO_HOOK_COOLDOWN_BY_LEVEL, CARGO_HOOK_RANGE_BONUS_BY_LEVEL,
+  CARGO_HOOK_CATEGORIES_BY_LEVEL, CARGO_HOOK_ENVELOPE_UNLOCKED_BY_LEVEL, CARGO_HOOK_LOST_FOUND_UNLOCKED_BY_LEVEL,
+  CARGO_HOOK_PULL_SPEED, CargoHookPullClass,
   CARGO_HOOK_LIFT_DURATION, CARGO_HOOK_LIFT_HEIGHT, CARGO_HOOK_ARC_HEIGHT_BONUS,
 } from './cargo-hook-data';
 
@@ -54,9 +56,11 @@ type AttachedPhase = 'lift' | 'arc';
  * convention `castShapeMove` already established — no second collision
  * system.
  *
- * Cooldown (3s) is tracked in its own `cooldownTimer` field, decremented
- * every frame regardless of `state`/tool selection so switching tools away
- * and back can never bypass a cooldown that's already counting down — but
+ * Cooldown (9/7/5/3s by cargoHookLevel — see cooldownDuration getter/
+ * cargo-hook-data.ts's own CARGO_HOOK_COOLDOWN_BY_LEVEL, "勾貨勾升級" round)
+ * is tracked in its own `cooldownTimer` field, decremented every frame
+ * regardless of `state`/tool selection so switching tools away and back can
+ * never bypass a cooldown that's already counting down — but
  * ("Add power gloves..." round spec一) it is ONLY ever started once the
  * hook has genuinely LATCHED ONTO a valid Cargo (entered 'attached'),
  * whether that sequence then succeeds or fails. A pure miss — nothing valid
@@ -85,6 +89,12 @@ export class CargoHookSystem {
    * (canPickUpTarget returns false for any non-envelope id — see
    * envelope-stack-system.ts's own eligibleGroundState). */
   private envelopeStackSystem: EnvelopeStackSystem;
+
+  /** "勾貨勾升級" round — pushed by UpgradeSystem.applyEffect (0..3), same
+   * narrow-setter convention as heavyHandling/moveSpeed's own push-from-
+   * UpgradeSystem pattern. Drives cooldownDuration/maxRange/category-
+   * unlock below — never read directly by anything outside this class. */
+  private upgradeLevel = 0;
 
   private state: HookState = 'idle';
   private raycaster = new THREE.Raycaster();
@@ -213,6 +223,32 @@ export class CargoHookSystem {
     );
   }
 
+  /** "勾貨勾升級" round — the ONE push point UpgradeSystem.applyEffect calls
+   * into for cargoHookLevel (0..3); every other effect below is derived
+   * fresh from this each time it's needed, never cached separately. */
+  setUpgradeLevel(level: number): void {
+    this.upgradeLevel = level;
+  }
+
+  private get cooldownDuration(): number {
+    return CARGO_HOOK_COOLDOWN_BY_LEVEL[this.upgradeLevel] ?? CARGO_HOOK_COOLDOWN_BY_LEVEL[0];
+  }
+
+  private get maxRange(): number {
+    return CARGO_HOOK_MAX_RANGE + (CARGO_HOOK_RANGE_BONUS_BY_LEVEL[this.upgradeLevel] ?? 0);
+  }
+
+  /** spec: Lv.0-2只能勾小型／中型貨物, Lv.3才能勾全部貨物 — gates the REAL
+   * cargo branch of target resolution (fire()'s own resolveCargoFromObject
+   * hit). `category` is CargoData's own existing classification (never a
+   * second one invented here) — see cargo-hook-data.ts's own doc comment on
+   * why category alone (not sizeClass) is the correct gate. */
+  private isCargoCategoryUnlocked(category: CargoCategory | null): boolean {
+    if (!category) return false;
+    const unlocked = CARGO_HOOK_CATEGORIES_BY_LEVEL[this.upgradeLevel] ?? CARGO_HOOK_CATEGORIES_BY_LEVEL[0];
+    return unlocked.includes(category);
+  }
+
   private determinePullClassById(id: string): CargoHookPullClass {
     const cargoData = this.cargoSystem.getCargoData(id);
     if (cargoData) return cargoData.category === 'live' ? 'live' : (cargoData.sizeClass ?? 'medium');
@@ -247,14 +283,20 @@ export class CargoHookSystem {
    * eligibility can never diverge from normal pickup eligibility) are ever
    * accepted; anything else found this way (pallets, mail-bag crates,
    * vehicles, the ladder/tool cart, ...) is deliberately rejected so this
-   * widening can never make those hookable too. */
+   * widening can never make those hookable too.
+   *
+   * "勾貨勾升級" round — lost-found items and envelopes are ADDITIONALLY
+   * gated by cargoHookLevel (spec: Lv.1解鎖信件, Lv.2解鎖失物招領), on top
+   * of (never instead of) the real eligibility checks above — an
+   * envelope/lost-item that already fails canPickUpTarget/isValidHookTarget
+   * stays rejected regardless of level. */
   private resolveNonCargoHookId(hitObject: THREE.Object3D): string | null {
     let current: THREE.Object3D | null = hitObject;
     while (current) {
       const id = current.userData.interactableId as string | undefined;
       if (id) {
-        const isLostItem = id.startsWith(LOST_ITEM_ID_PREFIX);
-        const isEnvelope = this.envelopeStackSystem.canPickUpTarget(id);
+        const isLostItem = id.startsWith(LOST_ITEM_ID_PREFIX) && CARGO_HOOK_LOST_FOUND_UNLOCKED_BY_LEVEL[this.upgradeLevel];
+        const isEnvelope = this.envelopeStackSystem.canPickUpTarget(id) && CARGO_HOOK_ENVELOPE_UNLOCKED_BY_LEVEL[this.upgradeLevel];
         return (isLostItem || isEnvelope) && this.isValidHookTarget(id) ? id : null;
       }
       current = current.parent;
@@ -338,15 +380,15 @@ export class CargoHookSystem {
     this.origin.copy(this.camera.position);
 
     this.raycaster.set(this.origin, this.direction);
-    this.raycaster.far = CARGO_HOOK_MAX_RANGE;
+    this.raycaster.far = this.maxRange;
     const hits = this.raycaster.intersectObjects(this.scene.children, true);
 
     this.targetId = null;
-    this.travelDistance = CARGO_HOOK_MAX_RANGE;
+    this.travelDistance = this.maxRange;
     if (hits.length > 0) {
-      this.travelDistance = Math.min(hits[0].distance, CARGO_HOOK_MAX_RANGE);
+      this.travelDistance = Math.min(hits[0].distance, this.maxRange);
       const cargoData = this.cargoSystem.resolveCargoFromObject(hits[0].object);
-      if (cargoData && this.isValidHookTarget(cargoData.id)) {
+      if (cargoData && this.isValidHookTarget(cargoData.id) && this.isCargoCategoryUnlocked(cargoData.category)) {
         this.targetId = cargoData.id;
       } else {
         // "貨物勾勾修改" round — only tried once real cargo resolution
@@ -560,7 +602,7 @@ export class CargoHookSystem {
    * is always correct — this is the ONE place a successful/failed catch
    * itself starts the cooldown. */
   private finishSequence(): void {
-    this.cooldownTimer = CARGO_HOOK_COOLDOWN;
+    this.cooldownTimer = this.cooldownDuration;
     this.state = 'idle';
     this.attachedPhase = 'lift';
     this.targetId = null;
@@ -579,7 +621,7 @@ export class CargoHookSystem {
    * finishSequence() would have imposed. */
   private cancel(): void {
     if (this.state === 'idle') return;
-    if (this.state === 'attached') this.cooldownTimer = CARGO_HOOK_COOLDOWN;
+    if (this.state === 'attached') this.cooldownTimer = this.cooldownDuration;
     this.state = 'idle';
     this.attachedPhase = 'lift';
     this.targetId = null;
@@ -609,7 +651,7 @@ export class CargoHookSystem {
     // Cooldown ticks down unconditionally, regardless of state or tool
     // selection (spec五: "切換工具不能繞過") — see class doc comment.
     if (this.cooldownTimer > 0) this.cooldownTimer = Math.max(0, this.cooldownTimer - deltaTime);
-    this.toolSystem.setCooldown(this.cooldownTimer, CARGO_HOOK_COOLDOWN);
+    this.toolSystem.setCooldown(this.cooldownTimer, this.cooldownDuration);
 
     // While something is held, PickupSystem/InteractionSystem already own
     // the prompt every frame (the "按 E 選擇放置位置\n按住 Q 蓄力丟出" hint,
@@ -622,7 +664,10 @@ export class CargoHookSystem {
       this.hud.showToolPrompt(
         this.cooldownTimer > 0 ? `冷卻中 ${this.cooldownTimer.toFixed(1)}s` : '右鍵 發射捕貨鉤'
       );
-      this.hud.setCargoHookReady(this.cooldownTimer <= 0 && this.state === 'idle' && this.isValidHookTarget(inspectedCargo?.id));
+      this.hud.setCargoHookReady(
+        this.cooldownTimer <= 0 && this.state === 'idle' && this.isValidHookTarget(inspectedCargo?.id) &&
+        this.isCargoCategoryUnlocked(inspectedCargo?.category ?? null)
+      );
     } else {
       this.hud.setCargoHookReady(false);
       // "Rebuild pallet storage and reset upgrade progression" round二: this

@@ -34,6 +34,24 @@ export interface PalletInventoryExpansionTarget {
   lockSecondSet(): void;
 }
 
+/** Narrow push-target shared by cargoHookLevel (CargoHookSystem) and
+ * envelopeVacuumLevel (EnvelopeVacuumSystem) — "貨物工具與技能升級系統修改"
+ * round. Both tools already derive their own cooldown/range/category-unlock
+ * effects fresh from this ONE pushed level every time they're needed
+ * (cargo-hook-system.ts's own cooldownDuration/maxRange/
+ * isCargoCategoryUnlocked getters, envelope-vacuum-system.ts's own
+ * cooldownDuration getter) — this class never computes those effects
+ * itself, matching every other upgrade's "UpgradeSystem owns the level,
+ * the target system owns what the level DOES" split. Wired late via
+ * setCargoHookSystem/setEnvelopeVacuumSystem below (both classes are
+ * constructed well after UpgradeSystem in create-game-systems.ts — same
+ * "avoid a constructor-time circular dependency" reasoning as
+ * PalletInventoryExpansionTarget/setPalletSystem above), matched
+ * structurally rather than imported by name for the same reason. */
+export interface UpgradeLevelPushTarget {
+  setUpgradeLevel(level: number): void;
+}
+
 /** "Rebuild pallet storage and reset upgrade progression" round八: bumped
  * from v1 — a genuine schema/rebalance reset (spec: "本次為技能重製版本...
  * bump upgrade schema version...對目前prototype舊技能存檔執行一次性乾淨重
@@ -68,7 +86,7 @@ function createDefaultUpgradeSaveState(): UpgradeSaveState {
     availableSettlementScore: TEMPORARY_TEST_STARTING_SCORE, // TEMPORARY TEST GRANT — remove before public demo
     levels: {
       multiCarry: 0, heavyHandling: 0, moveSpeed: 0, similarCargoSense: 0, ropeStrap: 0, powerGlovesUpgrade: 0,
-      envelopeCarryLevel: 0, palletInventoryLevel: 0,
+      envelopeCarryLevel: 0, palletInventoryLevel: 0, cargoHookLevel: 0, envelopeVacuumLevel: 0,
     },
     settledDayId: null,
     testGrantVersion: TEMPORARY_TEST_GRANT_VERSION, // TEMPORARY TEST GRANT — remove before public demo
@@ -150,6 +168,11 @@ export class UpgradeSystem {
    * create-game-systems.ts wires it via setPalletSystem() once PalletSystem
    * exists (constructed after this class, to avoid a circular import). */
   private palletSystem: PalletInventoryExpansionTarget | null = null;
+  /** See UpgradeLevelPushTarget's own doc comment above — both null until
+   * create-game-systems.ts wires them via setCargoHookSystem/
+   * setEnvelopeVacuumSystem once those tools exist. */
+  private cargoHookSystem: UpgradeLevelPushTarget | null = null;
+  private envelopeVacuumSystem: UpgradeLevelPushTarget | null = null;
   /** This day's accumulated (shipped*reward - penalties) tally across
    * however many departures settle before the day actually ends — consumed
    * exactly once by settleDay() and reset to 0 immediately after (spec四). */
@@ -169,6 +192,25 @@ export class UpgradeSystem {
    * constructed. */
   setPalletSystem(palletSystem: PalletInventoryExpansionTarget): void {
     this.palletSystem = palletSystem;
+  }
+
+  /** See UpgradeLevelPushTarget's own doc comment above — called once from
+   * create-game-systems.ts right after CargoHookSystem is constructed;
+   * immediately re-pushes the CURRENT cargoHookLevel so a mid-session wire-
+   * up (this class already applied every effect once at construction, well
+   * before CargoHookSystem existed) doesn't leave the tool sitting at its
+   * own internal default (Lv.0) despite a real save already at a higher
+   * level. */
+  setCargoHookSystem(target: UpgradeLevelPushTarget): void {
+    this.cargoHookSystem = target;
+    this.cargoHookSystem.setUpgradeLevel(this.state.levels.cargoHookLevel);
+  }
+
+  /** See setCargoHookSystem's own doc comment above — same reasoning, for
+   * EnvelopeVacuumSystem/envelopeVacuumLevel. */
+  setEnvelopeVacuumSystem(target: UpgradeLevelPushTarget): void {
+    this.envelopeVacuumSystem = target;
+    this.envelopeVacuumSystem.setUpgradeLevel(this.state.levels.envelopeVacuumLevel);
   }
 
   /** The ONLY entry point for wiping this playthrough's upgrade progress
@@ -340,6 +382,16 @@ export class UpgradeSystem {
         // case, once setPalletSystem() has wired a live reference.
         if (level >= 1) this.palletSystem?.unlockSecondSet();
         else this.palletSystem?.lockSecondSet();
+        break;
+      case 'cargoHookLevel':
+        // Push, same "may still be null at construction time" reasoning as
+        // palletInventoryLevel above — setCargoHookSystem() itself already
+        // re-pushes the current level the instant CargoHookSystem exists, so
+        // this call only matters for the "purchased mid-session" case.
+        this.cargoHookSystem?.setUpgradeLevel(level);
+        break;
+      case 'envelopeVacuumLevel':
+        this.envelopeVacuumSystem?.setUpgradeLevel(level);
         break;
     }
   }

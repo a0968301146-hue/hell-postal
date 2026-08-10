@@ -15,6 +15,17 @@ const VACUUM_SUCK_SPEED = 7.0;
 const VACUUM_CAPTURE_DISTANCE = 0.45;
 const VACUUM_MAX_CAPTURED = 20;
 
+/** "信封吸塵器升級" round — cooldown (seconds) entered every time the player
+ * STOPS using the tool (releases either mouse button, see onMouseUp below),
+ * indexed by the player's envelopeVacuumLevel upgrade (0..3, see
+ * upgrade-data.ts): 9/7/5/3s, same curve as cargoHookLevel. While the
+ * cooldown is counting down, a new suck/blow session cannot start
+ * (onMouseDown's own guard) — a real gameplay restriction, not merely a UI
+ * number. Ticks down unconditionally every frame regardless of tool
+ * selection (mirrors cargo-hook-system.ts's own cooldownTimer, "切換工具不
+ * 能繞過"), so switching away and back can't bypass it either. */
+const ENVELOPE_VACUUM_COOLDOWN_BY_LEVEL: readonly number[] = [9, 7, 5, 3];
+
 const VACUUM_BLOW_MAX_RANGE = 4.0;
 const VACUUM_BLOW_HALF_ANGLE = THREE.MathUtils.degToRad(40);
 /** Values AT the nozzle (distance≈0) — tapers down toward VACUUM_BLOW_MAX_RANGE
@@ -69,6 +80,11 @@ export class EnvelopeVacuumSystem {
   private isSucking = false;
   private isBlowing = false;
   private captured: Map<string, CapturedEntry> = new Map();
+
+  /** "信封吸塵器升級" round — pushed by UpgradeSystem.applyEffect (0..3),
+   * same narrow-setter convention as CargoHookSystem.setUpgradeLevel. */
+  private upgradeLevel = 0;
+  private cooldownTimer = 0;
 
   constructor(
     physics: PhysicsSystem, interactables: Map<string, InteractableObject>,
@@ -128,6 +144,16 @@ export class EnvelopeVacuumSystem {
     return group;
   }
 
+  /** "信封吸塵器升級" round — the ONE push point UpgradeSystem.applyEffect
+   * calls into for envelopeVacuumLevel (0..3). */
+  setUpgradeLevel(level: number): void {
+    this.upgradeLevel = level;
+  }
+
+  private get cooldownDuration(): number {
+    return ENVELOPE_VACUUM_COOLDOWN_BY_LEVEL[this.upgradeLevel] ?? ENVELOPE_VACUUM_COOLDOWN_BY_LEVEL[0];
+  }
+
   /** Same combined predicate the exploration research established: a
    * loose, unbagged, not-currently-held, not-on-the-stamp-table envelope. */
   private isEligibleEnvelope(id: string, obj: InteractableObject): boolean {
@@ -157,6 +183,11 @@ export class EnvelopeVacuumSystem {
   private onMouseDown(event: MouseEvent): void {
     if (this.playerData.activeTool !== 'envelopeVacuum') return;
     if (!this.isLocked() || this.pauseManager.isPaused) return;
+    // "信封吸塵器升級" round — a new suck/blow session cannot start while
+    // the cooldown from the LAST session is still counting down (real
+    // restriction, not just a UI number — see class field's own doc
+    // comment).
+    if (this.cooldownTimer > 0) return;
     if (event.button === 0) {
       this.isSucking = true;
       this.isBlowing = false;
@@ -168,9 +199,11 @@ export class EnvelopeVacuumSystem {
 
   private onMouseUp(event: MouseEvent): void {
     if (event.button === 0) {
+      if (this.isSucking) this.cooldownTimer = this.cooldownDuration;
       this.isSucking = false;
       this.releaseAllCaptured();
     } else if (event.button === 2) {
+      if (this.isBlowing) this.cooldownTimer = this.cooldownDuration;
       this.isBlowing = false;
     }
   }
@@ -188,12 +221,22 @@ export class EnvelopeVacuumSystem {
     );
   }
 
-  update(): void {
+  update(deltaTime: number): void {
     const isSelected = this.playerData.activeTool === 'envelopeVacuum';
     this.toolProp.visible = isSelected;
 
+    // "信封吸塵器升級" round — ticks down unconditionally, regardless of
+    // tool selection/pause/lock state, so switching away mid-cooldown can
+    // never bypass it (same reasoning as cargo-hook-system.ts's own
+    // cooldownTimer).
+    if (this.cooldownTimer > 0) this.cooldownTimer = Math.max(0, this.cooldownTimer - deltaTime);
+
     if (!this.canUseThisFrame()) {
       if (this.captured.size > 0) this.releaseAllCaptured();
+      // A forced stop (tool switch/pause/menu/lock loss) mid-session still
+      // starts the cooldown, same as a normal mouseup release — otherwise
+      // switching tools away and back would be a free way to dodge it.
+      if (this.isSucking || this.isBlowing) this.cooldownTimer = this.cooldownDuration;
       this.isSucking = false;
       this.isBlowing = false;
       return;
