@@ -13,10 +13,10 @@ import {
 // needed in game/codex-data.ts (unlike vehicle/cargo codex, this data is
 // already in its final display shape).
 import { REGION_CODEX_ENTRIES, RegionCodexId, isRegionCodexUnlockedOnDay } from '../../data/world/region-codex-data';
-import { getStampForRegion } from '../../data/world/stamp-collection-data';
+import { getStampForRegion, STAMP_DEFINITIONS } from '../../data/world/stamp-collection-data';
 
 type Bookmark = 'tutorial' | 'controls' | 'display' | 'audio' | 'text' | 'data' | 'codex';
-type CodexTab = 'vehicle' | 'species' | 'cargo' | 'region';
+type CodexTab = 'vehicle' | 'species' | 'cargo' | 'region' | 'stamp';
 
 const BOOKMARKS: { id: Bookmark; label: string }[] = [
   { id: 'tutorial', label: '教學' },
@@ -68,6 +68,11 @@ export class ManualUI {
   private selectedSpeciesId: string | null = null;
   private selectedCargoId: string | null = null;
   private selectedRegionId: RegionCodexId | null = null;
+  /** "郵票獨立圖鑑分類" round — 郵票 is now its own top-level codex tab
+   * (spec: "不要把郵票藏在國家/地區裡...我要的是一個獨立的郵票圖鑑分類"),
+   * separate from selectedRegionId above which still drives the country/
+   * region tab's own (unrelated) selection. */
+  private selectedStampId: string | null = null;
   private capturingFor: InputAction | null = null;
   private captureConflictMsg: string | null = null;
   private noticeMsg: string | null = null;
@@ -95,6 +100,7 @@ export class ManualUI {
           <button data-codex-tab="species">種族</button>
           <button data-codex-tab="cargo">貨物</button>
           <button data-codex-tab="region">地區</button>
+          <button data-codex-tab="stamp">郵票</button>
         </div>
         <div class="manual-pages">
           <div class="manual-page manual-page-left"></div>
@@ -262,6 +268,7 @@ export class ManualUI {
       this.selectedVehicleId = null;
       this.selectedSpeciesId = null;
       this.selectedCargoId = null;
+      this.selectedStampId = null;
       this.captureConflictMsg = null;
       this.noticeMsg = null;
       this.restartConfirmArmed = false;
@@ -307,6 +314,13 @@ export class ManualUI {
     const regionRow = target.closest<HTMLElement>('[data-region-id]');
     if (regionRow) {
       this.selectedRegionId = regionRow.dataset.regionId as RegionCodexId;
+      this.render();
+      return;
+    }
+
+    const stampRow = target.closest<HTMLElement>('[data-stamp-id]');
+    if (stampRow) {
+      this.selectedStampId = stampRow.dataset.stampId!;
       this.render();
       return;
     }
@@ -619,6 +633,7 @@ export class ManualUI {
     if (this.codexTab === 'vehicle') { this.renderVehicleCodex(); return; }
     if (this.codexTab === 'cargo') { this.renderCargoCodex(); return; }
     if (this.codexTab === 'region') { this.renderRegionCodex(); return; }
+    if (this.codexTab === 'stamp') { this.renderStampCodex(); return; }
     this.renderSpeciesCodex();
   }
 
@@ -795,6 +810,55 @@ export class ManualUI {
       ${selected.mainExports.length > 0 ? `<div class="manual-data-row"><span>主要產出</span><span>${selected.mainExports.join('、')}</span></div>` : ''}
       ${selected.logisticsFeatures ? `<div class="manual-data-row"><span>物流特色</span><span>${selected.logisticsFeatures}</span></div>` : ''}
       ${stampHtml}
+    `;
+  }
+
+  /** 郵票圖鑑 ("郵票獨立圖鑑分類" round) — a standalone top-level codex tab
+   * (spec: "不要把郵票藏在國家/地區裡...獨立的郵票圖鑑分類"), separate from
+   * renderRegionCodex's own nested stamp-status block above (that nested
+   * block is left untouched — this is an ADDITIONAL entry point into the
+   * SAME collectedStamps data, not a second collection system). Every one
+   * of the 5 STAMP_DEFINITIONS is always listed regardless of collected
+   * state (spec: "不要讓未取得郵票消失") — only the detail pane's own
+   * content differs, same "list always visible, detail pane is what's
+   * gated" convention as the vehicle/region codex tabs. Collected-status
+   * logic is copy-identical to renderRegionCodex's own stampCollected
+   * check (Ithaca's mailDestinationId===null short-circuit included) —
+   * both read straight off the ONE real settingsManager.isStampCollected,
+   * never a second stamp-collection data source. */
+  private renderStampCodex(): void {
+    const rows = STAMP_DEFINITIONS.map((s) => {
+      const collected = s.mailDestinationId === null || this.settingsManager.isStampCollected(s.stampId);
+      const active = s.stampId === this.selectedStampId ? 'active' : '';
+      return `
+        <div class="manual-list-row ${collected ? '' : 'locked'} ${active}" data-stamp-id="${s.stampId}">
+          <span class="manual-list-icon" style="color:#${s.color.toString(16).padStart(6, '0')}">${collected ? s.icon : '❔'}</span>
+          <span>${collected ? s.displayName : '尚未取得'}</span>
+        </div>`;
+    }).join('');
+    this.leftPageEl.innerHTML = `<h2 class="manual-page-title">郵票圖鑑</h2><div class="manual-list">${rows}</div>`;
+
+    const selected = STAMP_DEFINITIONS.find((s) => s.stampId === this.selectedStampId) ?? STAMP_DEFINITIONS[0];
+    if (!selected) {
+      this.rightPageEl.innerHTML = `<div class="manual-placeholder"><div class="manual-placeholder-icon">❔</div><p>尚無郵票資料</p></div>`;
+      return;
+    }
+    const region = REGION_CODEX_ENTRIES.find((r) => r.id === selected.regionId);
+    const collected = selected.mailDestinationId === null || this.settingsManager.isStampCollected(selected.stampId);
+    if (!collected) {
+      this.rightPageEl.innerHTML = `
+        <h2 class="manual-page-title">尚未取得</h2>
+        <div class="manual-placeholder"><div class="manual-placeholder-icon">❔</div><p>尚未取得</p><p class="manual-hint">在信封貼上這個地區的郵票即可取得</p></div>
+      `;
+      return;
+    }
+    this.rightPageEl.innerHTML = `
+      <h2 class="manual-page-title">${selected.displayName}</h2>
+      <div class="manual-vehicle-preview" style="color:#${selected.color.toString(16).padStart(6, '0')}">${selected.icon}</div>
+      <div class="manual-data-row"><span>所屬地區</span><span>${region ? region.name : selected.regionId}</span></div>
+      <div class="manual-data-row"><span>色彩主題</span><span>${selected.colorTheme}</span></div>
+      <div class="manual-data-row"><span>圖樣元素</span><span>${selected.motifs.join('、')}</span></div>
+      <p class="manual-body-text">${selected.description}</p>
     `;
   }
 }
