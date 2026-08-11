@@ -23,6 +23,11 @@ import { createInteractableObject } from '../../shared/types/interactable';
 // lost-found never import each other's internals; both read the same
 // data/world/ file instead).
 import { LOST_FOUND_ROOM, LOST_FOUND_DOOR, LOST_FOUND_NPC_GATE } from '../../data/world/lost-found-layout-data';
+// "主角房間" round — new player bedroom, same "plain data file, geometry
+// built here" split every other room already follows.
+import {
+  PLAYER_ROOM, PLAYER_ROOM_DOOR, PLAYER_BED, PLAYER_WARDROBE, PLAYER_DESK, PLAYER_CHAIR, PLAYER_ROOM_LABEL_POS,
+} from '../../data/world/player-room-layout-data';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
 import {
   FISHING_PIER, FISHING_CHAIR_A, FISHING_CHAIR_B, FISHING_ROD_A, FISHING_ROD_B,
@@ -141,6 +146,7 @@ export function createLogisticsScene(scene: THREE.Scene, physics: PhysicsWorldPo
   const shelfSurfaces = buildWestWallShelves(scene, physics);
   buildFishingPier(scene, physics);
   buildCoffeeRoom(scene, physics);
+  buildPlayerRoom(scene, physics);
   buildCampfireArea(scene, physics);
   buildMainHallSkylight(scene, physics);
   buildSeaInteractionPlatform(scene, physics);
@@ -341,7 +347,16 @@ function buildBackArea(scene: THREE.Scene, physics: PhysicsWorldPort): THREE.Mes
   const chuteGapL = CARGO_CHUTE_DOORWAY.centerX - CARGO_CHUTE_DOORWAY.halfWidth;
   const chuteGapR = CARGO_CHUTE_DOORWAY.centerX + CARGO_CHUTE_DOORWAY.halfWidth;
   addWall(scene, physics, wallMat, (minX + chuteGapL) / 2, midY, minZ, chuteGapL - minX, ceilingHeight, WALL_THICKNESS);
-  addWall(scene, physics, wallMat, (chuteGapR + maxX) / 2, midY, minZ, maxX - chuteGapR, ceilingHeight, WALL_THICKNESS);
+
+  // "主角房間" round — a second gap further east on this same wall, for
+  // PLAYER_ROOM_DOOR (the player bedroom's own entrance, spec: "位於物流中心
+  // 東北方牆角"). Splits what used to be one long solid segment
+  // (chuteGapR..maxX) into solid/gap/solid, same convention as every other
+  // gate opening in this file.
+  const playerGapL = PLAYER_ROOM_DOOR.centerX - PLAYER_ROOM_DOOR.halfWidth;
+  const playerGapR = PLAYER_ROOM_DOOR.centerX + PLAYER_ROOM_DOOR.halfWidth;
+  addWall(scene, physics, wallMat, (chuteGapR + playerGapL) / 2, midY, minZ, playerGapL - chuteGapR, ceilingHeight, WALL_THICKNESS);
+  addWall(scene, physics, wallMat, (playerGapR + maxX) / 2, midY, minZ, maxX - playerGapR, ceilingHeight, WALL_THICKNESS);
 
   // West wall — gap for the lost-found room's door ("Reduce daily cargo and
   // add lost found desk" round 二: 西側新增小型前台房間). The new room's own
@@ -561,6 +576,118 @@ function buildCoffeeRoom(scene: THREE.Scene, physics: PhysicsWorldPort): void {
 
   const roomLabel = createFloatingLabel('休息室', { width: 0.7, bg: 'rgba(40,30,20,0.75)' });
   roomLabel.position.set(cx, floorY + ceilingHeight - 0.5, cz);
+  scene.add(roomLabel);
+}
+
+/** Player's private bedroom ("主角房間" round, spec: "位於物流中心東北方牆
+ * 角，朝北側延伸...場景空間＋基本家具配置"), north of BACK_AREA's own north
+ * wall, already gapped at PLAYER_ROOM_DOOR (see buildBackArea above). Only
+ * north/west/east walls are built here — the south side is intentionally
+ * left open, mirroring buildCargoChuteRoom's own "shared wall, only one side
+ * actually builds it" convention for a room hanging off BACK_AREA's own
+ * north wall. Scene-only this round (spec: "不要新增睡覺、休息、時間推進、
+ * 存檔或其他遊戲功能") — every piece of furniture below gets a plain static
+ * collider (so the player can't walk through it) but is NEVER registered
+ * into the shared `interactables` map, exactly mirroring COFFEE_ROOM's own
+ * table/chairs (no interaction wiring of any kind). */
+function buildPlayerRoom(scene: THREE.Scene, physics: PhysicsWorldPort): void {
+  const { minX, maxX, minZ, maxZ, floorY, ceilingHeight } = PLAYER_ROOM;
+  const width = maxX - minX;
+  const depth = maxZ - minZ;
+  const cx = (minX + maxX) / 2;
+  const cz = (minZ + maxZ) / 2;
+
+  const floorGeo = new THREE.PlaneGeometry(width, depth);
+  const floor = new THREE.Mesh(floorGeo, stdMat(0x7a6858)); // warm neutral flooring
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(cx, floorY, cz);
+  scene.add(floor);
+  physics.createStaticCuboid(cx, floorY - WALL_THICKNESS / 2, cz, width / 2, WALL_THICKNESS / 2, depth / 2);
+
+  const wallMat = stdMat(0x8a7a68, { side: THREE.DoubleSide });
+  const midY = floorY + ceilingHeight / 2;
+
+  addWall(scene, physics, wallMat, cx, midY, minZ, width, ceilingHeight, WALL_THICKNESS); // north wall (solid)
+  addWall(scene, physics, wallMat, minX, midY, cz, WALL_THICKNESS, ceilingHeight, depth); // west wall
+  addWall(scene, physics, wallMat, maxX, midY, cz, WALL_THICKNESS, ceilingHeight, depth); // east wall
+
+  // Warm lamp (mirrors COFFEE_ROOM's own "暖色系燈光" fixture) — this
+  // prototype's established way of giving a small room a lived-in, cozy
+  // feel without any new lighting system.
+  const lamp = new THREE.PointLight(0xffb060, 0.7, 5);
+  lamp.position.set(cx, floorY + ceilingHeight - 0.4, cz);
+  scene.add(lamp);
+  const lampMesh = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), stdMat(0xffcc88, { emissive: 0xffaa55, emissiveIntensity: 0.5 }));
+  lampMesh.position.copy(lamp.position);
+  scene.add(lampMesh);
+
+  // --- Bed (spec: "床靠牆") — base frame + mattress + pillow + headboard.
+  const bedFrameMat = stdMat(0x6b4a2a);
+  const bedFrame = new THREE.Mesh(new THREE.BoxGeometry(PLAYER_BED.sizeX, PLAYER_BED.height, PLAYER_BED.sizeZ), bedFrameMat);
+  bedFrame.position.set(PLAYER_BED.centerX, floorY + PLAYER_BED.height / 2, PLAYER_BED.centerZ);
+  scene.add(bedFrame);
+  physics.createStaticCuboid(bedFrame.position.x, bedFrame.position.y, bedFrame.position.z, PLAYER_BED.sizeX / 2, PLAYER_BED.height / 2, PLAYER_BED.sizeZ / 2);
+
+  const mattressMat = stdMat(0xe8e0d0);
+  const mattressHeight = 0.14;
+  const mattress = new THREE.Mesh(new THREE.BoxGeometry(PLAYER_BED.sizeX - 0.08, mattressHeight, PLAYER_BED.sizeZ - 0.08), mattressMat);
+  mattress.position.set(PLAYER_BED.centerX, floorY + PLAYER_BED.height + mattressHeight / 2, PLAYER_BED.centerZ);
+  scene.add(mattress);
+
+  const pillowMat = stdMat(0xffffff);
+  const pillow = new THREE.Mesh(new THREE.BoxGeometry(PLAYER_BED.sizeX - 0.3, 0.1, 0.4), pillowMat);
+  pillow.position.set(PLAYER_BED.centerX, floorY + PLAYER_BED.height + mattressHeight + 0.05, PLAYER_BED.centerZ - PLAYER_BED.sizeZ / 2 + 0.32);
+  scene.add(pillow);
+
+  const headboard = new THREE.Mesh(new THREE.BoxGeometry(PLAYER_BED.sizeX, 0.9, 0.08), bedFrameMat);
+  headboard.position.set(PLAYER_BED.centerX, floorY + 0.45, minZ + WALL_THICKNESS / 2 + 0.04);
+  scene.add(headboard);
+  physics.createStaticCuboid(headboard.position.x, headboard.position.y, headboard.position.z, PLAYER_BED.sizeX / 2, 0.45, 0.04);
+
+  // --- Wardrobe (spec: "櫃子靠近床").
+  const wardrobeMat = stdMat(0x5a4530);
+  const wardrobe = new THREE.Mesh(new THREE.BoxGeometry(PLAYER_WARDROBE.sizeX, PLAYER_WARDROBE.height, PLAYER_WARDROBE.sizeZ), wardrobeMat);
+  wardrobe.position.set(PLAYER_WARDROBE.centerX, floorY + PLAYER_WARDROBE.height / 2, PLAYER_WARDROBE.centerZ);
+  scene.add(wardrobe);
+  physics.createStaticCuboid(wardrobe.position.x, wardrobe.position.y, wardrobe.position.z, PLAYER_WARDROBE.sizeX / 2, PLAYER_WARDROBE.height / 2, PLAYER_WARDROBE.sizeZ / 2);
+  // Two vertical door-seam lines — purely cosmetic surface detail.
+  const seamMat = stdMat(0x3a2e1e);
+  const seam = new THREE.Mesh(new THREE.BoxGeometry(PLAYER_WARDROBE.sizeX + 0.01, PLAYER_WARDROBE.height - 0.1, 0.02), seamMat);
+  seam.position.set(PLAYER_WARDROBE.centerX, floorY + PLAYER_WARDROBE.height / 2, PLAYER_WARDROBE.centerZ);
+  scene.add(seam);
+
+  // --- Desk (spec: "書桌靠牆") — tabletop + 4 legs, mirrors buildTelevision-
+  // AndTable's own table construction.
+  const deskMat = stdMat(0x7a5a34);
+  const deskTopThickness = 0.05;
+  const deskTop = new THREE.Mesh(new THREE.BoxGeometry(PLAYER_DESK.sizeX, deskTopThickness, PLAYER_DESK.sizeZ), deskMat);
+  deskTop.position.set(PLAYER_DESK.centerX, floorY + PLAYER_DESK.height - deskTopThickness / 2, PLAYER_DESK.centerZ);
+  scene.add(deskTop);
+
+  const deskLegThickness = 0.05;
+  const deskLegHeight = PLAYER_DESK.height - deskTopThickness;
+  const deskLegGeo = new THREE.BoxGeometry(deskLegThickness, deskLegHeight, deskLegThickness);
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const leg = new THREE.Mesh(deskLegGeo, deskMat);
+      leg.position.set(
+        PLAYER_DESK.centerX + sx * (PLAYER_DESK.sizeX / 2 - deskLegThickness / 2),
+        floorY + deskLegHeight / 2,
+        PLAYER_DESK.centerZ + sz * (PLAYER_DESK.sizeZ / 2 - deskLegThickness / 2)
+      );
+      scene.add(leg);
+    }
+  }
+  physics.createStaticCuboid(PLAYER_DESK.centerX, floorY + PLAYER_DESK.height / 2, PLAYER_DESK.centerZ, PLAYER_DESK.sizeX / 2, PLAYER_DESK.height / 2, PLAYER_DESK.sizeZ / 2);
+
+  // --- Chair (spec: "椅子放在書桌前") — mirrors COFFEE_ROOM's own simple box chair.
+  const chairMat = stdMat(0x4a3a2a);
+  const chair = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.45, 0.45), chairMat);
+  chair.position.set(PLAYER_CHAIR.x, floorY + 0.225, PLAYER_CHAIR.z);
+  scene.add(chair);
+
+  const roomLabel = createFloatingLabel('主角房間', { width: 0.8, bg: 'rgba(35,30,25,0.75)' });
+  roomLabel.position.copy(PLAYER_ROOM_LABEL_POS);
   scene.add(roomLabel);
 }
 

@@ -160,8 +160,25 @@ export function pickWeightedMailEnvelopeVisualPreset(): MailEnvelopeVisualPreset
  * dashed stamp-slot box in the corner, filled in with the attached stamp's
  * icon once stamped (spec三: "表面顯示：目的地圖樣/目的地文字/貼票區"), plus
  * an optional inset border frame for kraft-envelope's own "較厚紙邊" detail
- * (spec: "四種輪廓或細節能直接看出差異"). */
-function drawEnvelopeCanvas(dest: MailDestinationInfo, attachedStamp: MailDestination | null, borderColor: number | null): HTMLCanvasElement {
+ * (spec: "四種輪廓或細節能直接看出差異").
+ *
+ * "讓裝飾郵票實際顯示在信封3D模型正面" round — a second, always-filled stamp
+ * box sits directly below the required-stamp slot (spec三: "必要郵票與裝飾郵
+ * 票要有固定且清楚的位置，避免互相重疊...建議保留必要郵票原本的位置，在信封
+ * 正面另外安排裝飾郵票位置"). Unlike the required-stamp slot (empty/dashed
+ * until actually applied), the decorative stamp is drawn from the moment the
+ * envelope spawns — it's a pure per-envelope DISPLAY of `decorativeStampId`
+ * (mail-system.ts's spawnEnvelope), never itself a collection trigger (spec
+ * 六: "裝飾郵票只是顯示...不可以在生成信封時就登錄收藏") — this function has
+ * no awareness of collectedStamps at all, it only ever draws whatever
+ * `decorativeStamp` the caller hands it. A white dashed inset (vs. the
+ * required slot's own gray dashed empty box) visually distinguishes "a real
+ * collectible stamp is already here" from "waiting for the correct required
+ * stamp". */
+function drawEnvelopeCanvas(
+  dest: MailDestinationInfo, attachedStamp: MailDestination | null, borderColor: number | null,
+  decorativeStamp: { icon: string; color: number } | null
+): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = 256;
   canvas.height = 180;
@@ -208,6 +225,26 @@ function drawEnvelopeCanvas(dest: MailDestinationInfo, attachedStamp: MailDestin
     ctx.fillText('郵票', 207, 45);
   }
 
+  // Decorative stamp slot, directly below the required-stamp slot above
+  // (170,94)-(240,158) — comfortably clear of both that box (ends y=70) and
+  // the canvas's own bottom border (starts y=174), so the two never overlap
+  // (spec三: "裝飾郵票不會遮住必要郵票"). Always filled once a
+  // decorativeStamp is handed in (every real envelope has one from spawn
+  // onward — see mail-system.ts's spawnEnvelope), never left empty like the
+  // required slot can be.
+  if (decorativeStamp) {
+    ctx.fillStyle = `#${decorativeStamp.color.toString(16).padStart(6, '0')}`;
+    ctx.fillRect(170, 94, 70, 64);
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.setLineDash([3, 2]);
+    ctx.lineWidth = 2;
+    ctx.strokeRect(173, 97, 64, 58);
+    ctx.setLineDash([]);
+    ctx.font = '28px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(decorativeStamp.icon, 205, 133);
+  }
+
   return canvas;
 }
 
@@ -252,10 +289,22 @@ function drawWaxSealCanvas(paperColor: number): HTMLCanvasElement {
  * only ever happens on a deliberate state change, never per-frame) — the
  * REBUILT materials always read the SAME preset the envelope was originally
  * spawned with (spec: "貼郵票後，在原信封外型上顯示郵票"), never a different
- * one. */
-export function buildEnvelopeMaterials(dest: MailDestinationInfo, attachedStamp: MailDestination | null, preset: MailEnvelopeVisualPreset): THREE.Material[] {
+ * one.
+ *
+ * `decorativeStamp` ("讓裝飾郵票實際顯示在信封3D模型正面" round) — just the
+ * icon/color a caller already resolved from stamp-collection-data.ts's own
+ * DecorativeStampDefinition (spec七: "不要建立第二套郵票資料"); this file
+ * never imports stamp-collection-data.ts directly (that would create an
+ * import cycle, since stamp-collection-data.ts itself already imports THIS
+ * file's own MAIL_DESTINATIONS) — mail-system.ts resolves the real
+ * definition and hands down only the two plain fields this drawing code
+ * actually needs. */
+export function buildEnvelopeMaterials(
+  dest: MailDestinationInfo, attachedStamp: MailDestination | null, preset: MailEnvelopeVisualPreset,
+  decorativeStamp: { icon: string; color: number } | null
+): THREE.Material[] {
   const paperMat = new THREE.MeshStandardMaterial({ color: preset.paperColor });
-  const topCanvas = drawEnvelopeCanvas(dest, attachedStamp, preset.borderColor);
+  const topCanvas = drawEnvelopeCanvas(dest, attachedStamp, preset.borderColor, decorativeStamp);
   const topMat = new THREE.MeshStandardMaterial({ map: new THREE.CanvasTexture(topCanvas) });
   const backMat = preset.hasWaxSeal
     ? new THREE.MeshStandardMaterial({ map: new THREE.CanvasTexture(drawWaxSealCanvas(preset.paperColor)) })

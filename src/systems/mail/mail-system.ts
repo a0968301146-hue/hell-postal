@@ -16,7 +16,7 @@ import { getDailyMailTotal, isMailRegionUnlockedOnDay } from '../../data/daily-u
 // data/world/), a one-directional dependency (stamp-collection-data.ts
 // itself only imports FROM mail-data.ts/mail-types.ts, never back into this
 // file), so no import cycle risk.
-import { getStampRegionForMailDestination, pickRandomDecorativeStampForRegion } from '../../data/world/stamp-collection-data';
+import { getStampRegionForMailDestination, pickRandomDecorativeStampForRegion, getDecorativeStamp } from '../../data/world/stamp-collection-data';
 
 const ENVELOPE_ID_PREFIX = 'envelope-';
 const STABLE_THRESHOLD = 0.3;
@@ -264,8 +264,17 @@ export class MailSystem {
     const z = point.z + jitterZ;
 
     const id = `${ENVELOPE_ID_PREFIX}${this.envelopeInstanceCounter++}`;
+    // "讓裝飾郵票實際顯示在信封3D模型正面" round — picked BEFORE the mesh's
+    // own materials are built (moved up from where this used to run, right
+    // before this.envelopes.set below) so buildEnvelopeMaterials can draw it
+    // onto the top-face texture from the very first frame the envelope
+    // exists (spec五: "信封放在地面...都應該能正常看到郵票"). Still purely a
+    // VISUAL pick — nothing here touches settingsManager/collectedStamps
+    // (spec六: "不可以在生成信封時就登錄收藏"), exactly as before this round.
+    const stampRegionId = getStampRegionForMailDestination(dest)!;
+    const decorativeStamp = pickRandomDecorativeStampForRegion(stampRegionId);
     const geo = buildEnvelopeGeometry(preset.dimensions);
-    const mats = buildEnvelopeMaterials(destInfo, null, preset);
+    const mats = buildEnvelopeMaterials(destInfo, null, preset, decorativeStamp);
     const mesh = new THREE.Mesh(geo, mats);
     mesh.position.set(x, y, z);
     this.scene.add(mesh);
@@ -286,15 +295,14 @@ export class MailSystem {
     }, true);
 
     this.interactables.set(id, obj);
-    // "郵票系統重新區分" round spec四: drawn once here, at spawn — every
-    // MailDestination has exactly one StampRegionId (module-load-checked in
-    // stamp-collection-data.ts itself), so this is never undefined in
-    // practice; the `!` mirrors getMailDestination's own established
-    // "trust the validated id" convention just above. Independent of
-    // `dest`/`preset`/everything else about this envelope (spec四's own
-    // two-stage draw is entirely self-contained).
-    const stampRegionId = getStampRegionForMailDestination(dest)!;
-    const decorativeStamp = pickRandomDecorativeStampForRegion(stampRegionId);
+    // "郵票系統重新區分" round spec四: decorativeStamp (picked above, before
+    // the mesh's own materials were built) is stored here as the envelope's
+    // permanent record — every MailDestination has exactly one StampRegionId
+    // (module-load-checked in stamp-collection-data.ts itself), so
+    // stampRegionId above is never undefined in practice; the `!` mirrors
+    // getMailDestination's own established "trust the validated id"
+    // convention. Independent of `dest`/`preset`/everything else about this
+    // envelope (spec四's own two-stage draw is entirely self-contained).
     this.envelopes.set(id, {
       envelopeId: id, destination: dest, region: destInfo.region,
       requiredStamp: dest, attachedStamp: null, state: 'unstamped', bagId: null,
@@ -589,7 +597,12 @@ export class MailSystem {
       // Rebuilt on the SAME preset the envelope was originally spawned with
       // (spec: "貼郵票後，在原信封外型上顯示郵票") — never a different one.
       const preset = getMailEnvelopeVisualPreset(rec.visualPresetId)!;
-      obj.mesh.material = buildEnvelopeMaterials(getMailDestination(rec.destination), stamp, preset);
+      // Re-resolves the SAME decorativeStampId this envelope was spawned
+      // with (never re-picked here) purely so the redraw keeps showing it —
+      // this lookup is a pure data read, not a collection registration (that
+      // happens below, via onStampApplied).
+      const decorativeStamp = getDecorativeStamp(rec.decorativeStampId) ?? null;
+      obj.mesh.material = buildEnvelopeMaterials(getMailDestination(rec.destination), stamp, preset, decorativeStamp);
       for (const m of oldMats) m.dispose();
     }
     // "國家／地區圖鑑＋郵票收集系統" round — fires on every successful stamp

@@ -10,6 +10,7 @@
 // than importing each other).
 import { LOST_FOUND_ROOM, LOST_FOUND_DOOR } from '../../data/world/lost-found-layout-data';
 import { CARGO_CHUTE_ROOM } from '../../data/world/cargo-chute-room-layout-data';
+import { PLAYER_ROOM } from '../../data/world/player-room-layout-data';
 import { CARGO_SHAPE_PRESETS } from '../cargo/cargo-shape-presets';
 
 export const WALL_THICKNESS = 0.2;
@@ -395,10 +396,13 @@ export const SEA_GATE = {
 // "重製出貨口" round: folds in CARGO_CHUTE_ROOM's own footprint too (same
 // reasoning as LOST_FOUND_ROOM above — item placement inside the new north
 // room must not be rejected just for sitting north of BACK_AREA's own wall).
+// "主角房間" round: folds in PLAYER_ROOM's own footprint too (same reasoning
+// — its minZ=4 sits further north than CARGO_CHUTE_ROOM's own minZ=6, so
+// without this the room's own north strip would fall outside WORLD_BOUNDS).
 export const WORLD_BOUNDS = {
   minX: Math.min(BACK_AREA.minX, LOST_FOUND_ROOM.minX) - 1,
   maxX: Math.max(BACK_AREA.maxX, PIER.maxX) + 40, // generous — land/sea vehicles travel well beyond the walls
-  minZ: Math.min(BACK_AREA.minZ, CARGO_CHUTE_ROOM.minZ) - 1,
+  minZ: Math.min(BACK_AREA.minZ, CARGO_CHUTE_ROOM.minZ, PLAYER_ROOM.minZ) - 1,
   maxZ: BACK_AREA.maxZ + 40,
 };
 
