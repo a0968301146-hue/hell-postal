@@ -175,8 +175,20 @@ export class DailyFlowSystem {
    * wire through that SAME callback, so there is no cheat-only path to keep
    * in sync. The `state !== 'dayComplete'` guard is purely defensive: this
    * is only ever invoked immediately after notifyDayComplete() has already
-   * set that state, so it should never actually trip in practice. */
+   * set that state, so it should never actually trip in practice.
+   *
+   * "Day8載具流程完全停用" round spec四: Day8 must never run a normal day
+   * transition at all — VehicleControlSystem.canCall/canDepart already keep
+   * every real/cheat path that could reach this method from ever firing on
+   * day 8 (see their own doc comments), but this file is deliberately kept
+   * as the ONE place currentDay actually advances, so the day-8 block is
+   * repeated here too as its own independent floor: no removeCargo() sweep
+   * of the finale cake, no currentDay++, no resetTools() — not "skip only
+   * the cake", the WHOLE method is a no-op on day 8, exactly matching spec
+   * four's own "根本不應該執行正常換日" framing rather than adding a
+   * cake-specific exception inside an otherwise-normal transition. */
   advanceToNextDay(): void {
+    if (this.currentDay === 8) return;
     if (this.state !== 'dayComplete') return;
 
     this.state = 'resetting';

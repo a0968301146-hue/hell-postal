@@ -113,6 +113,12 @@ const DEPART_IDLE_TEXT = '載具出發\n按 E 讓六台載具一起離場';
 const DEPART_BLOCKED_TEXT = '載具尚未全部停靠';
 const NOT_UNLOADED_TEXT = '請先接收今日貨物';
 const ALREADY_HAVE_TEXT = '目前已有載具';
+/** "Day8載具流程完全停用" round — shown by both callBlockedMessage/
+ * departBlockedMessage whenever dailyFlowSystem.currentDay===8, reusing the
+ * SAME existing flash-message block pattern every other "not right now"
+ * button state already uses (spec二: "請優先沿用現有UI架構，不要另外建立一
+ * 套新的UI") — no separate hide/disable UI system built for this. */
+const FINALE_DAY_TEXT = '今天是特別的一天\n不需要進行載具作業';
 
 /** Cargo must sit stable inside a docked vehicle's cargoBounds for this long
  * before it counts as shipped — no organized/pallet/rack prerequisite (see
@@ -357,8 +363,17 @@ export class VehicleControlSystem {
   /** Allowed only once today's cargo has actually been unloaded (spec:
    * sorting/loading), and only while EVERY slot is still 'absent' — a
    * partial call (some slots already occupied) can't happen since
-   * pressCallButton() always spawns all six atomically. */
+   * pressCallButton() always spawns all six atomically.
+   *
+   * "Day8載具流程完全停用" round spec二/三: Day8 is the finale day — it has no
+   * normal cargo/vehicle/settlement flow at all (the giant cake spawns via
+   * the same chute but is deliberately excluded from vehicle judgment
+   * entirely, see isFinaleCakeCargo above), so 呼叫載具 is blocked
+   * unconditionally on day 8 REGARDLESS of dailyFlowSystem.state — otherwise
+   * a player could still call vehicles once the cake's own unload sequence
+   * reaches 'sorting', same as any normal day. */
   get canCall(): boolean {
+    if (this.dailyFlowSystem.currentDay === 8) return false;
     const flowState = this.dailyFlowSystem.state;
     const flowAllows = flowState === 'sorting' || flowState === 'loading';
     return flowAllows && this.slots.every((s) => s.state === 'absent');
@@ -372,12 +387,25 @@ export class VehicleControlSystem {
    * loaded at that moment settled via pressDepartButton's score snapshot
    * instead of gating the button itself. "船運載具規格重製" round: `this.
    * slots` IS already today's exact roster (see buildSlotsForDay/
-   * resetForNewDay above) — no separate unlock filter needed here anymore. */
+   * resetForNewDay above) — no separate unlock filter needed here anymore.
+   *
+   * "Day8載具流程完全停用" round spec二/三: same unconditional day-8 block as
+   * canCall above — this is the ONE gate pressDepartButton() itself already
+   * checks before doing anything else (scanCargoForShipment/
+   * settleDeparture/showDayCompleteSummary/advanceToNextDay all sit behind
+   * it), so blocking it here is sufficient to keep Day8 from ever reaching
+   * any of them, however the player tries (call vehicles then depart,
+   * spam-press, etc.) — canCall already keeps day8 from ever getting a
+   * docked slot in the first place, but this is blocked independently too
+   * as its own defensive layer rather than relying purely on canCall's own
+   * upstream block. */
   get canDepart(): boolean {
+    if (this.dailyFlowSystem.currentDay === 8) return false;
     return this.slots.length > 0 && this.slots.every((s) => s.state === 'docked');
   }
 
   callBlockedMessage(): string {
+    if (this.dailyFlowSystem.currentDay === 8) return FINALE_DAY_TEXT;
     const flowState = this.dailyFlowSystem.state;
     if (flowState === 'ready' || flowState === 'unloading') return NOT_UNLOADED_TEXT;
     if (!this.slots.every((s) => s.state === 'absent')) {
@@ -387,9 +415,10 @@ export class VehicleControlSystem {
     return ALREADY_HAVE_TEXT;
   }
 
-  /** Only reason left to block departure is "not all six docked yet" — see
-   * canDepart's doc comment. */
+  /** Only reason left to block departure is "not all six docked yet" (or
+   * Day8's own unconditional block above) — see canDepart's doc comment. */
   departBlockedMessage(): string {
+    if (this.dailyFlowSystem.currentDay === 8) return FINALE_DAY_TEXT;
     return DEPART_BLOCKED_TEXT;
   }
 

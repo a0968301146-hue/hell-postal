@@ -66,6 +66,14 @@ const IDLE_TEXT = '測試用\n完成當日';
 const ALREADY_DONE_TEXT = '本日工作已完成';
 const NOT_STARTED_TEXT = '請先開始今日工作';
 const PROMPT_TEXT = 'E 完成所有工作並結算';
+/** "Day8載具流程完全停用" round — Day8 has no normal settlement at all
+ * (spec: "根本不應該執行正常換日"), so this cheat's own settlement shortcut
+ * (forceSettleDayForTesting, which funnels through the SAME
+ * showDayCompleteSummary/advanceToNextDay pipeline the real depart button
+ * does) must be blocked here too — otherwise it would still be a live
+ * backdoor to the exact Day8→Day9 bug this round fixes, even with
+ * VehicleControlSystem's own canCall/canDepart both blocked. */
+const FINALE_DAY_BLOCKED_TEXT = '今天是特別的一天\n不需要進行結算';
 
 const JUMP_IDLE_TEXT = '測試用\n跳至第八天';
 const JUMP_PROMPT_TEXT = 'E 清除今日物件並跳至第八天';
@@ -300,6 +308,7 @@ export class CompleteDayCheatSystem {
    * InteractionSystem so the on-screen hint always matches pressCheatButton
    * below's own actual outcome. */
   getPromptText(): string {
+    if (this.dailyFlowSystem.currentDay === 8) return FINALE_DAY_BLOCKED_TEXT;
     if (this.completedCheatDayId === this.dailyFlowSystem.currentDay) return ALREADY_DONE_TEXT;
     if (!this.canStartCheat()) return NOT_STARTED_TEXT;
     return PROMPT_TEXT;
@@ -331,8 +340,12 @@ export class CompleteDayCheatSystem {
    * `lostFoundSystem.hasTodaysQueue` — Day8's own finale day (spec follow-
    * up: "除了巨大蛋糕之外，不要生成...失物招領物品") never populates a
    * lost-found queue at all, which would otherwise have made this always
-   * return false and permanently disable the cheat button on that one day. */
+   * return false and permanently disable the cheat button on that one day.
+   *
+   * "Day8載具流程完全停用" round: also unconditionally blocked on day 8 — see
+   * FINALE_DAY_BLOCKED_TEXT's own doc comment above for why. */
   private canStartCheat(): boolean {
+    if (this.dailyFlowSystem.currentDay === 8) return false;
     const state = this.dailyFlowSystem.state;
     if (state === 'ready') return false;
     if (state === 'departing' || state === 'dayComplete' || state === 'resetting') return false;
@@ -342,6 +355,10 @@ export class CompleteDayCheatSystem {
   /** The cheat button's own E-action (spec二/三/四/五/六 in full). */
   pressCheatButton(): void {
     if (this.isExecuting) return;
+    if (this.dailyFlowSystem.currentDay === 8) {
+      this.hud.showToast(FINALE_DAY_BLOCKED_TEXT);
+      return;
+    }
     if (this.completedCheatDayId === this.dailyFlowSystem.currentDay) {
       this.hud.showToast(ALREADY_DONE_TEXT);
       return;
