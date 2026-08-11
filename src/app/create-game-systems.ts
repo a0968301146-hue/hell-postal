@@ -496,7 +496,6 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   const vehicleControlSystem = new VehicleControlSystem(
     scene, physics, interactables, cargoSystem, pickupSystem, hud,
     dailyFlowSystem,
-    settingsManager,
     scoringSystem,
     mailSystem,
     mailBagSystem,

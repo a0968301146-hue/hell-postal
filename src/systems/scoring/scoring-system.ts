@@ -3,6 +3,11 @@ import { UNSHIPPED_PENALTY_PER_ITEM, LOST_FOUND_MISSED_PENALTY, LOST_ITEM_UNSTOR
 import { DepartureSettlement, LostFoundSettlementInput, MailSettlementInput } from './scoring-types';
 import { FrozenSettlementInput } from '../cargo/cold-value-data';
 import { LiveSettlementInput } from '../cargo/living-cargo-data';
+// Imported directly from the concrete file (not the '../upgrade' barrel,
+// which also pulls in UpgradeSystem/UpgradeMenuUI and their own much wider
+// import graphs) — this file only needs the one pure formula, matching this
+// codebase's established "avoid a barrel-cycle risk" convention elsewhere.
+import { computeSettlementScoreDelta } from '../upgrade/upgrade-data';
 
 /**
  * Owns the departure settlement math (spec四-10: 成功出貨數量/未出貨數量/未
@@ -65,6 +70,15 @@ export class ScoringSystem {
     );
     const totalPenalty = penalty + lostFoundPenalty + lostItemPenalty + mailPenalty + frozenPenalty;
     if (totalPenalty > 0) this.settingsManager.addScore(-totalPenalty);
+    // "統一結算分數" round — the REAL settlement-score currency's own
+    // penalty scope deliberately excludes frozenPenalty (matches
+    // UpgradeSystem.recordDepartureSettlement's own penaltyTotal exactly —
+    // frozen-freshness scoring stays entirely on the legacy progress.score
+    // track above, untouched by this round's spec against changing scoring
+    // RULES). Used below for `finalScore`, never for the addScore() call
+    // above (that still applies the full totalPenalty, including
+    // frozenPenalty, to progress.score exactly as before).
+    const settlementPenaltyTotal = penalty + lostFoundPenalty + lostItemPenalty + mailPenalty;
 
     // "活物安撫值規格" round spec七 — THREE fixed tiers (75~100% "舒服"
     // ->110%／50~74% "焦慮"->100%／0~49% "害怕"->85%), unified with the UI's
@@ -107,7 +121,19 @@ export class ScoringSystem {
       liveAnxiousCount: live.anxiousCount,
       liveScaredCount: live.scaredCount,
       liveBonus,
-      finalScore: this.settingsManager.progress.score,
+      // "統一結算分數" round spec: the settlement UI's own "當日最終分數"
+      // must read from the SAME currency purchaseUpgrade() spends
+      // (availableSettlementScore), never the separate, never-reset-on-
+      // new-game settingsManager.progress.score that used to back this
+      // field — computeSettlementScoreDelta is the ONE formula this and
+      // UpgradeSystem.recordDepartureSettlement both use, so the two can
+      // never disagree. This is a PREVIEW of today's own net contribution
+      // (floored at 0, matching settleDay's own floor) — it does not read
+      // availableSettlementScore itself, since that only actually updates
+      // later, once advanceToNextDay()'s settleDay() call runs (spec五's
+      // own flow: 分數正式加入 availableSettlementScore happens AFTER 繼續,
+      // not at this settlement-snapshot moment).
+      finalScore: computeSettlementScoreDelta(shippedCorrect, mail.shipped, settlementPenaltyTotal),
     };
     this.onSettlement?.(settlement);
     return settlement;

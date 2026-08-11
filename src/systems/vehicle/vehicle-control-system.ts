@@ -3,7 +3,7 @@ import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { InteractableObject, createInteractableObject } from '../../shared/types/interactable';
 import {
   CargoSystem, CargoData, CargoType, FrozenSettlementInput, createEmptyFrozenSettlementInput, tallyFrozenColdValue,
-  LiveSettlementInput, createEmptyLiveSettlementInput, tallyLiveCalmValue,
+  LiveSettlementInput, createEmptyLiveSettlementInput, tallyLiveCalmValue, GIANT_CAKE_BOX_PRESET,
 } from '../cargo';
 // Depends on the neutral PickupPort contract (Phase 6: 模組邊界修正)
 // instead of importing PickupSystem (systems/interaction) — that system's
@@ -25,7 +25,6 @@ import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/w
 import { HUD } from '../hud';
 import { DailyFlowSystem } from '../daily-flow';
 import { ALL_PALLET_IDS, isPalletId } from '../pallet';
-import { SettingsManager } from '../settings';
 import { isVehicleUnlockedOnDay } from '../../data/daily-unlock-data';
 
 /** A daily cargo item's EFFECTIVE cargo kind for vehicle-compatibility
@@ -49,6 +48,21 @@ function effectiveCargoKind(data: CargoData): CargoType {
   return 'normal';
 }
 
+/** Day8's finale cake ("Day8巨型蛋糕與載具完全隔離" round) — identified the
+ * SAME way after-work-story-system.ts's own findGiantCakeCargo already does
+ * (shapePresetId match against the ONE real GIANT_CAKE_BOX_PRESET
+ * cargo-manifest-planner.ts ever spawns for day 8), so there is no second,
+ * driftable definition of "which cargo is the cake". This is the ONE place
+ * VehicleControlSystem checks it — scanCargoForShipment and
+ * pressDepartButton's own settlement scan both call this before touching
+ * loadedVehicleId/correctlyShipped/shippedCorrect/unshipped/pinnedCargo, so
+ * the cake structurally never becomes loadable, shippable, scoreable, or
+ * physically pinned to a departing vehicle no matter what the player does
+ * with it near a vehicle bay (spec: "完全不能與載具系統產生互動"). */
+function isFinaleCakeCargo(data: CargoData): boolean {
+  return data.shapePresetId === GIANT_CAKE_BOX_PRESET.id;
+}
+
 /** Whether `vehicle` is one of the six creature haulers allowed to accept
  * this item — the ONLY "correctly loaded" test (spec: "貨物放入正確載具才算
  * 成功出貨"). Computed exactly once per load event, inside
@@ -65,9 +79,14 @@ function effectiveCargoKind(data: CargoData): CargoType {
  * correct. data.region is null for pre-existing (non-daily) cargo, which
  * this function is never actually called against in practice (only
  * dailyFlowSystem.dailyCargoIds items reach here) — the null check is just
- * defensive. */
+ * defensive. Also defensively excludes the Day8 finale cake (see
+ * isFinaleCakeCargo's own doc comment) even though scanCargoForShipment's
+ * own earlier skip already keeps this from ever being called against it in
+ * practice — belt-and-braces "可裝載判定" hardening per spec's own explicit
+ * checklist. */
 function vehicleAcceptsCargo(config: VehicleConfig, data: CargoData): boolean {
   return (
+    !isFinaleCakeCargo(data) &&
     data.region !== null &&
     config.acceptedRegions.includes(data.region) &&
     config.acceptedCargoTypes.includes(effectiveCargoKind(data))
@@ -136,7 +155,6 @@ export class VehicleControlSystem {
   private pickupSystem: PickupPort;
   private hud: HUD;
   private dailyFlowSystem: DailyFlowSystem;
-  private settingsManager: SettingsManager;
   private scoringSystem: ScoringSystem;
   private onPauseChange: (paused: boolean) => void;
   private onVehicleDiscovered?: (config: VehicleConfig) => void;
@@ -200,7 +218,6 @@ export class VehicleControlSystem {
     pickupSystem: PickupPort,
     hud: HUD,
     dailyFlowSystem: DailyFlowSystem,
-    settingsManager: SettingsManager,
     scoringSystem: ScoringSystem,
     mailSystem: MailSystem,
     mailBagSystem: MailBagSystem,
@@ -220,7 +237,6 @@ export class VehicleControlSystem {
     this.pickupSystem = pickupSystem;
     this.hud = hud;
     this.dailyFlowSystem = dailyFlowSystem;
-    this.settingsManager = settingsManager;
     this.scoringSystem = scoringSystem;
     this.mailSystem = mailSystem;
     this.mailBagSystem = mailBagSystem;
@@ -460,6 +476,15 @@ export class VehicleControlSystem {
       const data = this.cargoSystem.getCargoData(id);
       const obj = this.interactables.get(id);
       if (!data || !obj) { unshipped++; continue; }
+      // Day8's finale cake never counts toward regular cargo shipment
+      // totals at all — not shipped, not unshipped, never pinned/carried
+      // away by a departing vehicle (spec: "不應被計入一般貨物出貨數量...不
+      // 應觸發正常的載具出發結算"). `total` below is derived from
+      // shippedCorrect+unshipped rather than dailyFlowSystem.
+      // totalCargoCount specifically so this skip can never desync the
+      // settlement snapshot's own displayed total from what was actually
+      // tallied.
+      if (isFinaleCakeCargo(data)) continue;
 
       const slot = data.loadedVehicleId ? slotById.get(data.loadedVehicleId) : undefined;
 
@@ -584,7 +609,15 @@ export class VehicleControlSystem {
       slot.waypointIndex = 0;
     }
 
-    this.pendingSettlement = this.scoringSystem.settleDeparture(this.dailyFlowSystem.totalCargoCount, shippedCorrect, unshipped, lostFound, mail, frozen, live);
+    // Deliberately shippedCorrect+unshipped here, NOT dailyFlowSystem.
+    // totalCargoCount — the two are identical on every normal day (every
+    // dailyCargoIds entry falls into exactly one bucket), but on Day8
+    // totalCargoCount still includes the finale cake (registered in
+    // dailyCargoIds for AfterWorkStorySystem's own lookup) while the scan
+    // loop above deliberately skips it — using the scan's own tally keeps
+    // this settlement's displayed "今日貨物總數" always consistent with what
+    // was actually counted, cake excluded.
+    this.pendingSettlement = this.scoringSystem.settleDeparture(shippedCorrect + unshipped, shippedCorrect, unshipped, lostFound, mail, frozen, live);
 
     this.dailyFlowSystem.notifyDeparting();
 
@@ -686,6 +719,13 @@ export class VehicleControlSystem {
       const obj = this.interactables.get(id);
       const data = this.cargoSystem.getCargoData(id);
       if (!obj || !data) continue;
+      // Day8's finale cake is registered in dailyCargoIds (so
+      // AfterWorkStorySystem's own findGiantCakeCargo can still locate it —
+      // see isFinaleCakeCargo's own doc comment) but must never be tracked
+      // for vehicle loading at all: skipping it here means it can sit
+      // inside a docked vehicle's cargo bay indefinitely without ever
+      // getting loadedVehicleId/correctlyShipped set.
+      if (isFinaleCakeCargo(data)) continue;
 
       if (obj.isHeld || !obj.mesh.visible) {
         this.shipStableTimers.delete(id);
@@ -825,7 +865,11 @@ export class VehicleControlSystem {
       mailTotal: 0, mailShipped: 0, mailUnshipped: 0, mailPenalty: 0,
       frozenTotal: 0, frozenTier100: 0, frozenTier75: 0, frozenTier50: 0, frozenTier25: 0, frozenPenalty: 0,
       liveTotal: 0, liveComfortableCount: 0, liveAnxiousCount: 0, liveScaredCount: 0, liveBonus: 0,
-      finalScore: this.settingsManager.progress.score,
+      // "統一結算分數" round — this all-zero defensive fallback's own
+      // finalScore is now a genuine 0, matching every other zeroed field
+      // here (was settingsManager.progress.score, the legacy currency this
+      // round removed from the settlement UI entirely).
+      finalScore: 0,
     };
     this.pendingSettlement = null;
 

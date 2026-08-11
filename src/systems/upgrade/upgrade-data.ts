@@ -19,6 +19,31 @@ export const CARGO_POINT_REWARD_PER_SHIPPED_ITEM = 5;
  * move independently of mail's. */
 export const MAIL_POINT_REWARD_PER_SHIPPED_ITEM = 1;
 
+/** Pure per-departure settlement→score conversion ("統一結算分數" round) —
+ * the ONE formula both UpgradeSystem.recordDepartureSettlement() (the real
+ * accumulator, upgrade-system.ts) and ScoringSystem.settleDeparture()'s own
+ * `finalScore` preview (scoring-system.ts, shown on the day-complete
+ * summary UI as "當日最終分數") read, so the number the player sees on the
+ * settlement screen can never drift from the number that actually lands in
+ * availableSettlementScore. `penaltyTotal` intentionally excludes
+ * frozenPenalty (frozen-freshness scoring stays entirely on the separate
+ * settingsManager.progress.score track — spec explicitly forbids changing
+ * any scoring RULE this round, only which score the UI reads) — pass the
+ * SAME `penalty + lostFoundPenalty + lostItemPenalty + mailPenalty` sum
+ * recordDepartureSettlement already computes. Floored at 0, mirroring
+ * settleDay's own `Math.max(0, pendingDayScore)` — a bad day never PREVIEWS
+ * a negative number it wouldn't actually be charged. Deliberately NOT used
+ * by recordDepartureSettlement itself (that function accumulates
+ * pendingDayScore raw, un-floored, across however many departures happen
+ * before the day's own single end-of-day floor — see its own doc comment);
+ * this is a read-only preview of "what today's departure is worth", which
+ * in this game's actual design (all six vehicles always depart together,
+ * exactly once per day) always exactly equals what settleDay later
+ * credits. */
+export function computeSettlementScoreDelta(shipped: number, mailShipped: number, penaltyTotal: number): number {
+  return Math.max(0, shipped * CARGO_POINT_REWARD_PER_SHIPPED_ITEM + mailShipped * MAIL_POINT_REWARD_PER_SHIPPED_ITEM - penaltyTotal);
+}
+
 /** envelopeCarryLevel's own numeric effect (spec十一: Lv.0-3 -> 5/10/15/20
  *封) — a lookup table rather than a formula since the steps aren't a fixed
  * arithmetic progression tied to `level` alone in a way worth deriving. */
