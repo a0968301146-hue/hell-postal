@@ -12,6 +12,11 @@ import {
   MailEnvelopeVisualPreset, pickWeightedMailEnvelopeVisualPreset, getMailEnvelopeVisualPreset,
 } from './mail-data';
 import { getDailyMailTotal, isMailRegionUnlockedOnDay } from '../../data/daily-unlock-data';
+// Imported directly from the concrete file (not a barrel — none exists for
+// data/world/), a one-directional dependency (stamp-collection-data.ts
+// itself only imports FROM mail-data.ts/mail-types.ts, never back into this
+// file), so no import cycle risk.
+import { getStampRegionForMailDestination, pickRandomDecorativeStampForRegion } from '../../data/world/stamp-collection-data';
 
 const ENVELOPE_ID_PREFIX = 'envelope-';
 const STABLE_THRESHOLD = 0.3;
@@ -88,8 +93,16 @@ export class MailSystem {
    * MailSystem stays unaware of the stamp-collection/persistence concept
    * itself, matching the "narrow callback, not a cross-system import" wiring
    * convention every other achievement-like trigger in this codebase already
-   * uses (e.g. VehicleControlSystem's own onVehicleDiscovered). */
-  private onStampApplied?: (stamp: MailDestination) => void;
+   * uses (e.g. VehicleControlSystem's own onVehicleDiscovered).
+   *
+   * "郵票系統重新區分" round spec五/十二: `stamp` is still the required stamp
+   * that was just validated (unchanged, kept for whatever the caller still
+   * wants it for), and `decorativeStampId` is the SAME envelope's own
+   * pre-assigned collectible (EnvelopeRecord.decorativeStampId, drawn at
+   * spawn — never re-picked here). This is the ONE moment either ever
+   * reaches the caller — never at spawn, pickup, drop, or discard time
+   * (spec五: "信件生成≠收藏...玩家拿起信件≠收藏"). */
+  private onStampApplied?: (stamp: MailDestination, decorativeStampId: string) => void;
 
   /** "Day 1～7 每日內容與解鎖規格" round — optional day-number source, wired
    * from create-game-systems.ts once DailyFlowSystem exists (this class is
@@ -125,7 +138,7 @@ export class MailSystem {
 
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>, pickupSystem: PickupPort,
-    onStampApplied?: (stamp: MailDestination) => void
+    onStampApplied?: (stamp: MailDestination, decorativeStampId: string) => void
   ) {
     this.scene = scene;
     this.physics = physics;
@@ -273,10 +286,19 @@ export class MailSystem {
     }, true);
 
     this.interactables.set(id, obj);
+    // "郵票系統重新區分" round spec四: drawn once here, at spawn — every
+    // MailDestination has exactly one StampRegionId (module-load-checked in
+    // stamp-collection-data.ts itself), so this is never undefined in
+    // practice; the `!` mirrors getMailDestination's own established
+    // "trust the validated id" convention just above. Independent of
+    // `dest`/`preset`/everything else about this envelope (spec四's own
+    // two-stage draw is entirely self-contained).
+    const stampRegionId = getStampRegionForMailDestination(dest)!;
+    const decorativeStamp = pickRandomDecorativeStampForRegion(stampRegionId);
     this.envelopes.set(id, {
       envelopeId: id, destination: dest, region: destInfo.region,
       requiredStamp: dest, attachedStamp: null, state: 'unstamped', bagId: null,
-      visualPresetId: preset.id,
+      visualPresetId: preset.id, decorativeStampId: decorativeStamp.stampId,
     });
     return id;
   }
@@ -573,8 +595,13 @@ export class MailSystem {
     // "國家／地區圖鑑＋郵票收集系統" round — fires on every successful stamp
     // application, not just the first (idempotent on the caller's own side,
     // settings-manager.ts's markStampCollected), so this class never needs
-    // to track "have we already collected this one" itself.
-    this.onStampApplied?.(stamp);
+    // to track "have we already collected this one" itself. "郵票系統重新
+    // 區分" round spec五/十二: this IS the "工作台成功處理" moment — the ONE
+    // place either the required stamp's own collectible identity or this
+    // envelope's pre-assigned decorative stamp ever reaches the caller;
+    // rec.decorativeStampId was fixed back at spawn (spawnEnvelope above)
+    // and is simply read here, never re-drawn.
+    this.onStampApplied?.(stamp, rec.decorativeStampId);
     return true;
   }
 

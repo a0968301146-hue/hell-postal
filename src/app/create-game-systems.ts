@@ -1,5 +1,5 @@
 import { GameContext } from './game-context';
-import { getStampForMailDestination } from '../data/world/stamp-collection-data';
+import { getRequiredStampForMailDestination } from '../data/world/stamp-collection-data';
 import { PlayerController } from '../systems/player';
 import { InteractionSystem, PickupSystem } from '../systems/interaction';
 import { EnvelopeSystem } from '../game/envelope-system';
@@ -207,12 +207,17 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // construction time. Only needs pickupSystem, already built just above.
   const mailSystem = new MailSystem(
     scene, physics, interactables, pickupSystem,
-    // "國家／地區圖鑑＋郵票收集系統" round — every successful stamp
-    // application marks that region's own stamp collected (permanently,
-    // via SettingsManager's own idempotent markStampCollected).
-    (stamp) => {
-      const def = getStampForMailDestination(stamp);
-      if (def) settingsManager.markStampCollected(def.stampId);
+    // "郵票系統重新區分" round spec五/九/十二 — fires ONLY on a successful
+    // stamp-table processing (mail-system.ts's applyStamp, never at spawn/
+    // pickup/drop). Registers BOTH collectibles into the SAME idempotent
+    // settingsManager.collectedStamps array (spec六/十一: no second
+    // collection data structure): the region's own required stamp (spec
+    // 九: 必要郵票也套用鎖定／已取得規則, counted in the 36-total) and this
+    // specific envelope's pre-drawn decorative stamp.
+    (stamp, decorativeStampId) => {
+      const required = getRequiredStampForMailDestination(stamp);
+      if (required) settingsManager.markStampCollected(required.stampId);
+      settingsManager.markStampCollected(decorativeStampId);
     }
   );
 

@@ -13,7 +13,15 @@ import {
 // needed in game/codex-data.ts (unlike vehicle/cargo codex, this data is
 // already in its final display shape).
 import { REGION_CODEX_ENTRIES, RegionCodexId, isRegionCodexUnlockedOnDay } from '../../data/world/region-codex-data';
-import { getStampForRegion, STAMP_DEFINITIONS } from '../../data/world/stamp-collection-data';
+// "郵票系統重新區分" round — StampRegionId deliberately EXCLUDES 'ithaca' at
+// the type level (spec一/十三: 伊塔卡港鎮完全排除郵票系統), so this file's own
+// STAMP_REGION_IDS list below can never accidentally include it.
+import {
+  StampRegionId, StampRarity, STAMP_RARITY_ORDER, STAMP_RARITY_LABELS,
+  getRequiredStampForRegion, getDecorativeStampsForRegionByRarity,
+} from '../../data/world/stamp-collection-data';
+
+const STAMP_REGION_IDS: StampRegionId[] = ['argos', 'hephaestia', 'evergreen-isles', 'artemisia'];
 
 type Bookmark = 'tutorial' | 'controls' | 'display' | 'audio' | 'text' | 'data' | 'codex';
 type CodexTab = 'vehicle' | 'species' | 'cargo' | 'region' | 'stamp';
@@ -71,8 +79,11 @@ export class ManualUI {
   /** "郵票獨立圖鑑分類" round — 郵票 is now its own top-level codex tab
    * (spec: "不要把郵票藏在國家/地區裡...我要的是一個獨立的郵票圖鑑分類"),
    * separate from selectedRegionId above which still drives the country/
-   * region tab's own (unrelated) selection. */
-  private selectedStampId: string | null = null;
+   * region tab's own (unrelated) selection. "郵票系統重新區分" round: the
+   * left list is now the 4 stamp regions themselves (not individual
+   * stamps) — selecting one shows that region's full required+decorative
+   * grid on the right (spec七). */
+  private selectedStampRegionId: StampRegionId | null = null;
   private capturingFor: InputAction | null = null;
   private captureConflictMsg: string | null = null;
   private noticeMsg: string | null = null;
@@ -268,7 +279,7 @@ export class ManualUI {
       this.selectedVehicleId = null;
       this.selectedSpeciesId = null;
       this.selectedCargoId = null;
-      this.selectedStampId = null;
+      this.selectedStampRegionId = null;
       this.captureConflictMsg = null;
       this.noticeMsg = null;
       this.restartConfirmArmed = false;
@@ -318,9 +329,9 @@ export class ManualUI {
       return;
     }
 
-    const stampRow = target.closest<HTMLElement>('[data-stamp-id]');
-    if (stampRow) {
-      this.selectedStampId = stampRow.dataset.stampId!;
+    const stampRegionRow = target.closest<HTMLElement>('[data-stamp-region-id]');
+    if (stampRegionRow) {
+      this.selectedStampRegionId = stampRegionRow.dataset.stampRegionId as StampRegionId;
       this.render();
       return;
     }
@@ -756,14 +767,15 @@ export class ManualUI {
   /** 國家／地區圖鑑 ("國家／地區圖鑑＋郵票收集系統" round). Rebuilt fresh on
    * every render, same reasoning as renderVehicleCodex/renderCargoCodex —
    * REGION_CODEX_ENTRIES is immutable static data, this.getCurrentDay() is
-   * the only thing that changes. An unlocked region's own detail pane also
-   * shows its stamp-collection status (spec四: "開放該地區郵票收集內容") —
-   * deliberately nested here rather than a separate top-level tab, matching
-   * the spec's own information architecture (stamps live UNDER their
-   * region, not alongside it). A locked region shows only its name/silhouette
-   * (spec四: "未解鎖地區：顯示地區名稱／基本輪廓／鎖定狀態，詳細資料保持鎖
-   * 定") — same "list is always fully visible, detail pane is what's gated"
-   * convention as the vehicle codex's own isVehicleDiscovered check. */
+   * the only thing that changes. A locked region shows only its name/
+   * silhouette (spec四: "未解鎖地區：顯示地區名稱／基本輪廓／鎖定狀態，詳細
+   * 資料保持鎖定") — same "list is always fully visible, detail pane is
+   * what's gated" convention as the vehicle codex's own isVehicleDiscovered
+   * check. "郵票系統重新區分" round: the old nested "地區郵票" block that
+   * used to live at the bottom of this pane was removed — browsing stamps
+   * is now the dedicated 郵票 tab's own exclusive job (renderStampCodex
+   * below), so there is only ever ONE place in the UI a stamp's collected
+   * status is shown, never two that could drift out of sync. */
   private renderRegionCodex(): void {
     const day = this.getCurrentDay();
     const rows = REGION_CODEX_ENTRIES.map((r) => {
@@ -784,21 +796,6 @@ export class ManualUI {
       return;
     }
 
-    const stamp = getStampForRegion(selected.id);
-    const stampCollected = !!stamp && (stamp.mailDestinationId === null || this.settingsManager.isStampCollected(stamp.stampId));
-    const stampHtml = stamp ? `
-      <h3 class="manual-subheading">地區郵票</h3>
-      <div class="manual-stamp-row ${stampCollected ? '' : 'locked'}">
-        <span class="manual-stamp-icon" style="color:#${stamp.color.toString(16).padStart(6, '0')}">${stampCollected ? stamp.icon : '❔'}</span>
-        <div class="manual-stamp-info">
-          <span class="manual-stamp-name">${stampCollected ? stamp.displayName : '尚未取得'}</span>
-          ${stampCollected
-            ? `<span class="manual-stamp-desc">${stamp.description}</span>`
-            : `<span class="manual-stamp-desc">在信封貼上這個地區的郵票即可取得</span>`}
-        </div>
-      </div>
-    ` : '';
-
     this.rightPageEl.innerHTML = `
       <h2 class="manual-page-title">${selected.name}｜${selected.subtitle}</h2>
       <div class="manual-data-row"><span>地區類型</span><span>${selected.regionType}</span></div>
@@ -809,56 +806,81 @@ export class ManualUI {
       <div class="manual-data-row"><span>地區特色</span><span>${selected.regionFeatures}</span></div>
       ${selected.mainExports.length > 0 ? `<div class="manual-data-row"><span>主要產出</span><span>${selected.mainExports.join('、')}</span></div>` : ''}
       ${selected.logisticsFeatures ? `<div class="manual-data-row"><span>物流特色</span><span>${selected.logisticsFeatures}</span></div>` : ''}
-      ${stampHtml}
     `;
   }
 
-  /** 郵票圖鑑 ("郵票獨立圖鑑分類" round) — a standalone top-level codex tab
-   * (spec: "不要把郵票藏在國家/地區裡...獨立的郵票圖鑑分類"), separate from
-   * renderRegionCodex's own nested stamp-status block above (that nested
-   * block is left untouched — this is an ADDITIONAL entry point into the
-   * SAME collectedStamps data, not a second collection system). Every one
-   * of the 5 STAMP_DEFINITIONS is always listed regardless of collected
-   * state (spec: "不要讓未取得郵票消失") — only the detail pane's own
-   * content differs, same "list always visible, detail pane is what's
-   * gated" convention as the vehicle/region codex tabs. Collected-status
-   * logic is copy-identical to renderRegionCodex's own stampCollected
-   * check (Ithaca's mailDestinationId===null short-circuit included) —
-   * both read straight off the ONE real settingsManager.isStampCollected,
-   * never a second stamp-collection data source. */
+  /** One stamp's own icon box — collected shows its real icon on a
+   * region-tinted background, uncollected shows a black silhouette with a
+   * centered yellow "?" (spec九: "顯示黑色剪影／剪影中央顯示黃色「？」／不
+   * 顯示真實郵票圖案／不顯示真實名稱") — a plain glyph rather than the ❔
+   * emoji used elsewhere in this file, since that emoji's own built-in
+   * colors can't be recolored to the spec's specific black+yellow
+   * combination via CSS. Shared by every stamp category this tab renders
+   * (required + all 3 decorative rarities), so the visual rule can never
+   * drift between them (spec九's own "同時套用" requirement). */
+  private renderStampIconBox(collected: boolean, icon: string, color: number): string {
+    if (!collected) return `<div class="stamp-icon-box locked">?</div>`;
+    return `<div class="stamp-icon-box" style="background:#${color.toString(16).padStart(6, '0')}22;color:#${color.toString(16).padStart(6, '0')}">${icon}</div>`;
+  }
+
+  /** 郵票圖鑑 ("郵票獨立圖鑑分類" round, restructured by "郵票系統重新區分"
+   * round spec七/八). Left list is now the 4 stamp regions themselves
+   * (StampRegionId — Ithaca structurally cannot appear, spec十三) rather
+   * than individual stamps; picking one shows that region's full
+   * collection on the right, laid out in the spec's own fixed order (spec
+   * 八: 必要郵票 → 普通 → 稀有 → 超級稀有, never interleaved). Every stamp
+   * slot in every category is always rendered regardless of collected
+   * state (spec九: "不要讓未取得郵票消失") — only renderStampIconBox's own
+   * per-item visual differs. Collected-status source is, for both
+   * categories, the ONE real settingsManager.isStampCollected — no second
+   * stamp-collection data source (spec六/十一), and no day-based lock on
+   * the region SELECTOR itself (spec十四's own "4個地區都可以選擇" —
+   * distinct from the region CODEX tab's own day-gated unlock, an
+   * unrelated concept this tab doesn't reuse). */
   private renderStampCodex(): void {
-    const rows = STAMP_DEFINITIONS.map((s) => {
-      const collected = s.mailDestinationId === null || this.settingsManager.isStampCollected(s.stampId);
-      const active = s.stampId === this.selectedStampId ? 'active' : '';
+    const rows = STAMP_REGION_IDS.map((id) => {
+      const region = REGION_CODEX_ENTRIES.find((r) => r.id === id);
+      const active = id === this.selectedStampRegionId ? 'active' : '';
       return `
-        <div class="manual-list-row ${collected ? '' : 'locked'} ${active}" data-stamp-id="${s.stampId}">
-          <span class="manual-list-icon" style="color:#${s.color.toString(16).padStart(6, '0')}">${collected ? s.icon : '❔'}</span>
-          <span>${collected ? s.displayName : '尚未取得'}</span>
+        <div class="manual-list-row ${active}" data-stamp-region-id="${id}">
+          <span class="manual-list-icon">🗺️</span>
+          <span>${region ? region.name : id}</span>
         </div>`;
     }).join('');
     this.leftPageEl.innerHTML = `<h2 class="manual-page-title">郵票圖鑑</h2><div class="manual-list">${rows}</div>`;
 
-    const selected = STAMP_DEFINITIONS.find((s) => s.stampId === this.selectedStampId) ?? STAMP_DEFINITIONS[0];
-    if (!selected) {
-      this.rightPageEl.innerHTML = `<div class="manual-placeholder"><div class="manual-placeholder-icon">❔</div><p>尚無郵票資料</p></div>`;
-      return;
-    }
-    const region = REGION_CODEX_ENTRIES.find((r) => r.id === selected.regionId);
-    const collected = selected.mailDestinationId === null || this.settingsManager.isStampCollected(selected.stampId);
-    if (!collected) {
-      this.rightPageEl.innerHTML = `
-        <h2 class="manual-page-title">尚未取得</h2>
-        <div class="manual-placeholder"><div class="manual-placeholder-icon">❔</div><p>尚未取得</p><p class="manual-hint">在信封貼上這個地區的郵票即可取得</p></div>
+    const regionId = this.selectedStampRegionId ?? STAMP_REGION_IDS[0];
+    const region = REGION_CODEX_ENTRIES.find((r) => r.id === regionId);
+    const required = getRequiredStampForRegion(regionId);
+    const requiredCollected = !!required && this.settingsManager.isStampCollected(required.stampId);
+
+    const rarityBlocks = STAMP_RARITY_ORDER.map((rarity: StampRarity) => {
+      const stamps = getDecorativeStampsForRegionByRarity(regionId, rarity);
+      const items = stamps.map((s) => {
+        const collected = this.settingsManager.isStampCollected(s.stampId);
+        return `
+          <div class="stamp-grid-item ${collected ? '' : 'locked'}">
+            ${this.renderStampIconBox(collected, s.icon, s.color)}
+            <span class="stamp-grid-name">${collected ? s.displayName : '尚未取得'}</span>
+          </div>`;
+      }).join('');
+      return `
+        <h4 class="stamp-rarity-heading stamp-rarity-${rarity}">${STAMP_RARITY_LABELS[rarity]}</h4>
+        <div class="stamp-grid">${items}</div>
       `;
-      return;
-    }
+    }).join('');
+
     this.rightPageEl.innerHTML = `
-      <h2 class="manual-page-title">${selected.displayName}</h2>
-      <div class="manual-vehicle-preview" style="color:#${selected.color.toString(16).padStart(6, '0')}">${selected.icon}</div>
-      <div class="manual-data-row"><span>所屬地區</span><span>${region ? region.name : selected.regionId}</span></div>
-      <div class="manual-data-row"><span>色彩主題</span><span>${selected.colorTheme}</span></div>
-      <div class="manual-data-row"><span>圖樣元素</span><span>${selected.motifs.join('、')}</span></div>
-      <p class="manual-body-text">${selected.description}</p>
+      <h2 class="manual-page-title">${region ? region.name : regionId}｜郵票收藏</h2>
+      <h3 class="manual-subheading">地區必要郵票</h3>
+      <div class="stamp-grid">
+        <div class="stamp-grid-item ${requiredCollected ? '' : 'locked'}">
+          ${required ? this.renderStampIconBox(requiredCollected, required.icon, required.color) : ''}
+          <span class="stamp-grid-name">${requiredCollected ? required!.displayName : '尚未取得'}</span>
+        </div>
+      </div>
+      <h3 class="manual-subheading">裝飾郵票</h3>
+      ${rarityBlocks}
     `;
   }
 }

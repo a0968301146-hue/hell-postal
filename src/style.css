@@ -902,49 +902,80 @@ canvas {
   opacity: 0.6;
 }
 
-/* "國家／地區圖鑑＋郵票收集系統" round — a region's own stamp status, shown
- * inside its unlocked codex detail pane. Collected: full color icon + real
- * name/description. Not yet collected: dimmed silhouette + "尚未取得" (spec
- * 七: "不要讓未取得郵票消失...讓玩家知道這裡還有東西可以收集") — same
- * "stays visible, just dark" convention as the tool-cart/skill-panel locked
- * states elsewhere in this game. */
-.manual-stamp-row {
+/* "郵票系統重新區分" round — the 郵票 codex tab's own required+decorative
+ * stamp grid (spec七/八/九/十). Each stamp is a small icon-first tile
+ * (spec十: "郵票本身請以圖示為主要視覺呈現"), grouped by rarity heading
+ * (spec十: "明確的區塊標題...能讓玩家一眼分辨稀有度") — replaces the old
+ * single-stamp-per-region ".manual-stamp-row" block (removed alongside the
+ * region tab's own nested stamp section this round). */
+.stamp-grid {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid #cbb98c;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.35);
+  margin-bottom: 14px;
 }
 
-.manual-stamp-row.locked {
-  opacity: 0.5;
-  background: rgba(0, 0, 0, 0.06);
-}
-
-.manual-stamp-icon {
-  font-size: 30px;
-  width: 40px;
-  text-align: center;
-  flex-shrink: 0;
-}
-
-.manual-stamp-info {
+.stamp-grid-item {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  width: 84px;
+  gap: 4px;
+  text-align: center;
 }
 
-.manual-stamp-name {
-  font-size: 14px;
+.stamp-icon-box {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  border: 1px solid #cbb98c;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+}
+
+/* spec9: black tile + centered yellow question mark, deliberately NOT the
+ * question-mark emoji used elsewhere in this file (its own baked-in colors
+ * can't be recolored to this exact black+yellow combination). */
+.stamp-icon-box.locked {
+  background: #111;
+  color: #ffd23c;
   font-weight: bold;
-  color: #3a2e22;
+  font-size: 24px;
+  border-color: #333;
 }
 
-.manual-stamp-desc {
-  font-size: 12px;
-  color: #6a5a44;
+.stamp-grid-name {
+  font-size: 11px;
+  color: #3a2e22;
+  line-height: 1.3;
+}
+
+.stamp-grid-item.locked .stamp-grid-name {
+  color: #8a7860;
+}
+
+/* spec10: rarity tiers must be visually distinguishable at a glance, not
+ * just by text — an escalating left accent bar (common: plain, rare: warm
+ * accent, superRare: gold accent) alongside the heading text itself. */
+.stamp-rarity-heading {
+  margin: 10px 0 8px 0;
+  padding-left: 8px;
+  font-size: 13px;
+  color: #4a3420;
+  border-left: 4px solid #b8a583;
+}
+
+.stamp-rarity-rare {
+  border-left-color: #c97a3a;
+  color: #8a4a1a;
+}
+
+.stamp-rarity-superRare {
+  border-left-color: #d4af37;
+  color: #a3781a;
+  font-weight: bold;
 }
 
 .manual-vehicle-preview {

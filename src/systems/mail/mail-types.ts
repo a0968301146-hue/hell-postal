@@ -30,6 +30,15 @@ export interface EnvelopeRecord {
    * (mail-data.ts buildEnvelopeGeometry/buildEnvelopeMaterials) — nothing
    * else (region/stamp/bag judgment) ever reads this field. */
   visualPresetId: string;
+  /** "郵票系統重新區分" round — which DecorativeStampDefinition.stampId
+   * (data/world/stamp-collection-data.ts) this specific envelope carries,
+   * drawn once at spawn (independent of destination/region/requiredStamp,
+   * same "彼此獨立" convention as visualPresetId above) and never re-picked.
+   * Purely a collectible — never read by any shipping/sorting/settlement
+   * logic. Only reaches settingsManager.collectedStamps if THIS envelope is
+   * later successfully processed at the stamp table (mail-system.ts's
+   * applyStamp) — never at spawn, pickup, drop, or discard time. */
+  decorativeStampId: string;
 }
 
 /** "Remove sealing and add physical mail box contents" round一: sealing is
