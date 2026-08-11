@@ -3,7 +3,10 @@ import { DepartureSettlement } from '../scoring';
 import { PickupSystem } from '../interaction/pickup-system';
 import { PlayerController } from '../player';
 import { UpgradeId, UpgradeSaveState, UpgradeDefinition } from './upgrade-types';
-import { UPGRADE_DEFINITIONS, getUpgradeDefinition, UPGRADE_POINT_REWARD_PER_SHIPPED_ITEM, ENVELOPE_CARRY_CAPACITY_BY_LEVEL } from './upgrade-data';
+import {
+  UPGRADE_DEFINITIONS, getUpgradeDefinition, CARGO_POINT_REWARD_PER_SHIPPED_ITEM, MAIL_POINT_REWARD_PER_SHIPPED_ITEM,
+  ENVELOPE_CARRY_CAPACITY_BY_LEVEL,
+} from './upgrade-data';
 import { PalletSize, PALLET_SIZE_ORDER } from '../pallet/pallet-data';
 import { isSkillUnlockedOnDay } from '../../data/daily-unlock-data';
 
@@ -299,9 +302,14 @@ export class UpgradeSystem {
    * THIS departure, never re-scanning cargo/vehicle state itself (spec:
    * "不得自行掃描場景"). */
   recordDepartureSettlement(settlement: DepartureSettlement): void {
-    const shippedTotal = settlement.shipped + settlement.mailShipped;
+    // "每日貨物數量與結算分數/技能價格" round spec一: cargo and mail now earn
+    // at DIFFERENT per-item rates (5 vs the unchanged 1) — no longer a
+    // single shippedTotal * one shared constant.
     const penaltyTotal = settlement.penalty + settlement.lostFoundPenalty + settlement.lostItemPenalty + settlement.mailPenalty;
-    this.pendingDayScore += shippedTotal * UPGRADE_POINT_REWARD_PER_SHIPPED_ITEM - penaltyTotal;
+    this.pendingDayScore +=
+      settlement.shipped * CARGO_POINT_REWARD_PER_SHIPPED_ITEM +
+      settlement.mailShipped * MAIL_POINT_REWARD_PER_SHIPPED_ITEM -
+      penaltyTotal;
   }
 
   /** Wired to DailyFlowSystem's own onDayCompleted(finishedDay) hook —

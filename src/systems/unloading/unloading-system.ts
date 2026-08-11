@@ -312,18 +312,19 @@ export class UnloadingSystem {
     // "Day 1～7 每日系統完整實作" round: UNLOAD_BURST_CONFIG.waveCount (30) was
     // tuned as a fixed constant back when EVERY day generated exactly 90
     // items (90/30 = 3 items/wave, with a waveGap pause between each wave —
-    // see the 'waveGap' phase below). Now that daily totals vary (20-90),
-    // keeping waveCount fixed at 30 would round-robin a small day's items
-    // across the SAME 30 buckets, leaving most waves with only 0-1 item —
-    // Day 1's 20 items would each become their OWN 1-item wave, meaning a
-    // waveGap pause after literally every single item (confirmed via live
-    // testing: a live headless run against Day 1 needed 30+ real seconds to
-    // finish spawning, vastly slower/choppier than the original 90-item
-    // day's pacing). Scaling waveCount to target the SAME ~3-items-per-wave
-    // ratio the original 90/30 constant implied — capped at the original 30
-    // ceiling, so Day 7's 90 items keep the exact original wave count/pacing
-    // — restores that intended cadence for every day's own (now-variable)
-    // total instead.
+    // see the 'waveGap' phase below). Now that daily totals vary (50-120,
+    // "每日貨物數量與結算分數/技能價格" round's own +30/day bump), keeping
+    // waveCount fixed at 30 would round-robin a small day's items across the
+    // SAME 30 buckets, leaving most waves with only 0-1 item — a small day's
+    // items would each become their OWN 1-item wave, meaning a waveGap pause
+    // after literally every single item (confirmed via live testing: a live
+    // headless run against Day 1 needed 30+ real seconds to finish spawning
+    // back when Day1 was only 20 items, vastly slower/choppier than the
+    // original 90-item day's pacing). Scaling waveCount to target the SAME
+    // ~3-items-per-wave ratio the original 90/30 constant implied — capped
+    // at the original 30 ceiling, so even Day 7's now-120 items stay at
+    // exactly 30 waves (~4 items/wave, still comfortably within the intended
+    // cadence) instead of spawning 40 separate waves.
     const targetItemsPerWave = 3;
     const waveCount = Math.max(1, Math.min(UNLOAD_BURST_CONFIG.waveCount, Math.ceil(shuffledItems.length / targetItemsPerWave)));
     const waves: PlannedSpawn[][] = Array.from({ length: waveCount }, () => []);

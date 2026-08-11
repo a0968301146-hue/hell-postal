@@ -123,10 +123,11 @@ export interface DayUnlockConfig {
   skills: UpgradeId[];
 }
 
-/** Day 1 — spec: 包裹20／信件10／失物招領5／人數3. */
+/** Day 1 — spec: 包裹50（"每日貨物數量與結算分數/技能價格" round: 原20＋30）
+ * ／信件10／失物招領5／人數3. */
 const DAY1: DayUnlockConfig = {
   day: 1,
-  dailyTotals: { cargoTotal: 20, mailTotal: 10, lostFoundTotal: 5, lostFoundNpcCount: 5 },
+  dailyTotals: { cargoTotal: 50, mailTotal: 10, lostFoundTotal: 5, lostFoundNpcCount: 5 },
   cargoCategoriesByRegion: { domestic: ['normal', 'fragile'], international: [] },
   mailRegions: ['domestic'],
   vehicles: [FROG_VEHICLE_CONFIG_ID],
@@ -136,11 +137,11 @@ const DAY1: DayUnlockConfig = {
   skills: ['moveSpeed', 'similarCargoSense', 'multiCarry'],
 };
 
-/** Day 2 — spec: 包裹40／信件20／失物招領8／人數5. 新增：大型貨物、石頭人載
- * 具、貨物托盤／力量手套道具、信封搬運技能. */
+/** Day 2 — spec: 包裹70（原40＋30）／信件20／失物招領8／人數5. 新增：大型貨
+ * 物、石頭人載具、貨物托盤／力量手套道具、信封搬運技能. */
 const DAY2: DayUnlockConfig = {
   day: 2,
-  dailyTotals: { cargoTotal: 40, mailTotal: 20, lostFoundTotal: 8, lostFoundNpcCount: 8 },
+  dailyTotals: { cargoTotal: 70, mailTotal: 20, lostFoundTotal: 8, lostFoundNpcCount: 8 },
   cargoCategoriesByRegion: { domestic: ['normal', 'fragile', 'large'], international: [] },
   mailRegions: ['domestic'],
   vehicles: [FROG_VEHICLE_CONFIG_ID, ROCKGIANT_VEHICLE_CONFIG_ID],
@@ -150,12 +151,13 @@ const DAY2: DayUnlockConfig = {
   skills: ['moveSpeed', 'similarCargoSense', 'multiCarry', 'envelopeCarryLevel'],
 };
 
-/** Day 3 — spec: 包裹50／信件30／失物招領10／人數7. 新增：國外貨物／信封目
- * 的地、魟魚／海龜載具、梯子道具、重物適應／力量手套強化技能. 貨物托盤（Day
- * 2開放）在本日spec自身列表中被省略，依累積規則(spec八)持續保持開放。 */
+/** Day 3 — spec: 包裹80（原50＋30）／信件30／失物招領10／人數7. 新增：國外貨
+ * 物／信封目的地、魟魚／海龜載具、梯子道具、重物適應／力量手套強化技能. 貨物
+ * 托盤（Day2開放）在本日spec自身列表中被省略，依累積規則(spec八)持續保持開
+ * 放。 */
 const DAY3: DayUnlockConfig = {
   day: 3,
-  dailyTotals: { cargoTotal: 50, mailTotal: 30, lostFoundTotal: 10, lostFoundNpcCount: 10 },
+  dailyTotals: { cargoTotal: 80, mailTotal: 30, lostFoundTotal: 10, lostFoundNpcCount: 10 },
   cargoCategoriesByRegion: {
     domestic: ['normal', 'fragile', 'large'],
     international: ['normal', 'fragile', 'large'],
@@ -168,12 +170,12 @@ const DAY3: DayUnlockConfig = {
   skills: ['moveSpeed', 'similarCargoSense', 'multiCarry', 'envelopeCarryLevel', 'heavyHandling', 'powerGlovesUpgrade'],
 };
 
-/** Day 4 — spec: 包裹60／信件30／失物招領13／人數9. 新增：冷凍貨物、蝸牛／克
- * 拉肯載具（六台載具集滿）、噴漆／信封吸塵器道具、托盤強化／固定繩索／信封吸
- * 塵器強化技能. */
+/** Day 4 — spec: 包裹90（原60＋30）／信件30／失物招領13／人數9. 新增：冷凍貨
+ * 物、蝸牛／克拉肯載具（六台載具集滿）、噴漆／信封吸塵器道具、托盤強化／固定
+ * 繩索／信封吸塵器強化技能. */
 const DAY4: DayUnlockConfig = {
   day: 4,
-  dailyTotals: { cargoTotal: 60, mailTotal: 30, lostFoundTotal: 13, lostFoundNpcCount: 13 },
+  dailyTotals: { cargoTotal: 90, mailTotal: 30, lostFoundTotal: 13, lostFoundNpcCount: 13 },
   cargoCategoriesByRegion: {
     domestic: ['normal', 'fragile', 'large', 'frozen'],
     international: ['normal', 'fragile', 'large', 'frozen'],
@@ -192,13 +194,13 @@ const DAY4: DayUnlockConfig = {
   ],
 };
 
-/** Day 5 — spec: 包裹70／信件30／失物招領15／人數10. 新增：活物貨物、勾貨勾
- * 道具／技能（技能與道具集滿）. 固定繩索（Day 4開放）在本日spec自身列表中被
- * 省略，依累積規則(spec八)持續保持開放 — 累積技能集合在本日恰好等於現有全部
- * 10項UpgradeDefinition，驗證spec本身內部一致。 */
+/** Day 5 — spec: 包裹100（原70＋30）／信件30／失物招領15／人數10. 新增：活物
+ * 貨物、勾貨勾道具／技能（技能與道具集滿）. 固定繩索（Day 4開放）在本日spec
+ * 自身列表中被省略，依累積規則(spec八)持續保持開放 — 累積技能集合在本日恰好
+ * 等於現有全部10項UpgradeDefinition，驗證spec本身內部一致。 */
 const DAY5: DayUnlockConfig = {
   day: 5,
-  dailyTotals: { cargoTotal: 70, mailTotal: 30, lostFoundTotal: 15, lostFoundNpcCount: 15 },
+  dailyTotals: { cargoTotal: 100, mailTotal: 30, lostFoundTotal: 15, lostFoundNpcCount: 15 },
   cargoCategoriesByRegion: {
     domestic: ['normal', 'fragile', 'large', 'frozen', 'live'],
     international: ['normal', 'fragile', 'large', 'frozen', 'live'],
@@ -217,20 +219,20 @@ const DAY5: DayUnlockConfig = {
   ],
 };
 
-/** Day 6 — spec: 包裹80／信件40／失物招領18／人數13；貨物／信封／載具／道具／
- * 技能皆與Day5相同列表. */
+/** Day 6 — spec: 包裹110（原80＋30）／信件40／失物招領18／人數13；貨物／信封
+ * ／載具／道具／技能皆與Day5相同列表. */
 const DAY6: DayUnlockConfig = {
   ...DAY5,
   day: 6,
-  dailyTotals: { cargoTotal: 80, mailTotal: 40, lostFoundTotal: 18, lostFoundNpcCount: 18 },
+  dailyTotals: { cargoTotal: 110, mailTotal: 40, lostFoundTotal: 18, lostFoundNpcCount: 18 },
 };
 
-/** Day 7 — spec: 包裹90／信件50／失物招領20／人數15；貨物／信封／載具／道具／
- * 技能皆與Day5/6相同列表. */
+/** Day 7 — spec: 包裹120（原90＋30）／信件50／失物招領20／人數15；貨物／信封
+ * ／載具／道具／技能皆與Day5/6相同列表. */
 const DAY7: DayUnlockConfig = {
   ...DAY5,
   day: 7,
-  dailyTotals: { cargoTotal: 90, mailTotal: 50, lostFoundTotal: 20, lostFoundNpcCount: 20 },
+  dailyTotals: { cargoTotal: 120, mailTotal: 50, lostFoundTotal: 20, lostFoundNpcCount: 20 },
 };
 
 export const DAILY_UNLOCKS: Record<number, DayUnlockConfig> = {
