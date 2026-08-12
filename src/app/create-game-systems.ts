@@ -39,6 +39,7 @@ import { EnvelopeVacuumSystem } from '../systems/envelope-vacuum-system';
 // "Add day one dock story event" round.
 import { AfterWorkStorySystem } from '../systems/story/after-work-story-system';
 import { DreamComicSystem } from '../systems/dream-comic/dream-comic-system';
+import { ItemRewardSystem } from '../systems/item-reward/item-reward-system';
 import { VehicleNightCleaningSystem } from '../systems/vehicle-night-cleaning/vehicle-night-cleaning-system';
 // "Add complete day testing cheat button" round.
 import { CompleteDayCheatSystem } from '../systems/cheat/complete-day-cheat-system';
@@ -120,6 +121,8 @@ export interface GameSystems {
   freezerSystem: FreezerSystem;
   /** "活物貨物系統" round. */
   livingCargoSystem: LivingCargoSystem;
+  /** "每日獲得道具" round. */
+  itemRewardSystem: ItemRewardSystem;
 }
 
 /** Back-references into GameApp's own small orchestration methods — the
@@ -541,6 +544,13 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     // THIS departure, no re-scanning of cargo/vehicle state.
     (settlement) => upgradeSystem.recordDepartureSettlement(settlement)
   );
+  // "每日獲得道具" round — constructed right before vehicleControlSystem so
+  // its show() can be wired into that system's own new onDayCompleteContinue
+  // hook below (vehicleControlSystem never imports/references this class
+  // itself, only calls the plain callback — see VehicleControlSystem's own
+  // doc comment on that constructor param).
+  const itemRewardSystem = new ItemRewardSystem(playerController, playerData, settingsManager);
+
   const vehicleControlSystem = new VehicleControlSystem(
     scene, physics, interactables, cargoSystem, pickupSystem, hud,
     dailyFlowSystem,
@@ -557,7 +567,12 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     // penalties at the exact moment 載具出發 is pressed — see
     // LostFoundSystem.settleAtDeparture.
     () => lostFoundSystem.settleAtDeparture(),
-    ENABLE_VEHICLE_LOADING_FLOW
+    ENABLE_VEHICLE_LOADING_FLOW,
+    // "每日獲得道具" round spec五 — inserted into the EXISTING settlement-
+    // confirm→day-advance callback chain, never a second day-transition
+    // system: itemRewardSystem.show() itself calls `proceed`
+    // (=advanceToNextDay) immediately if today has nothing to show.
+    (finishedDay, proceed) => itemRewardSystem.show(finishedDay, proceed)
   );
 
   const unloadingSystem = new UnloadingSystem(
@@ -770,6 +785,12 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     // genuinely replays its dream instead of being silently suppressed by a
     // stale completedDays entry from a previous run.
     dreamComicSystem.resetDreamProgress();
+    // "每日獲得道具" round — same "新周目重置" reasoning as the two resets
+    // immediately above: clears the persisted hp_item_reward_v1 flag so the
+    // next playthrough's own Day1 genuinely re-shows its reward popup
+    // instead of being silently suppressed by a stale grantedDays entry
+    // from a previous run.
+    itemRewardSystem.resetItemRewardProgress();
     window.location.reload();
   };
 
@@ -802,5 +823,6 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     ladderSystem, toolStationSystem, envelopeVacuumSystem,
     afterWorkStorySystem, dreamComicSystem, vehicleNightCleaningSystem,
     completeDayCheatSystem, mainMenuSystem, freezerSystem, livingCargoSystem,
+    itemRewardSystem,
   };
 }

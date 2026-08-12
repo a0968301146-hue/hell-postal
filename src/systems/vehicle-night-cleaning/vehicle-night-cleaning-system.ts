@@ -560,7 +560,25 @@ export class VehicleNightCleaningSystem {
    * teleport — spec七: "不要瞬間teleport消失") is the vehicle disposed and
    * dropped from `this.vehicles`; `waitingForStory` (spec十一: AND
    * allVehiclesDeparted) is only reachable here, once every vehicle is
-   * gone. */
+   * gone.
+   *
+   * BUG FIX ("清潔完成後玩家無法移動" round) — root cause: this method used
+   * to only re-enable player input in the `this.vehicles.length > 0`
+   * branch (more vehicles still to clean), never in the `=== 0` branch
+   * (every vehicle done, heading into 'waitingForStory'). Since nothing
+   * else in the whole night-cleaning→NPC handoff ever calls
+   * setInputEnabled(true) again — AfterWorkStorySystem deliberately leaves
+   * player input alone while its own NPC is merely walking in/waiting
+   * ('npcWalking'/'waitingForPlayer'; it only locks input itself once the
+   * player actively presses E to start dialogue, in startStory()/
+   * beginLetterReading()) — the player was left permanently stuck at
+   * playerData.state='stamping-minigame' with input disabled the instant
+   * the LAST vehicle of the night finished departing, with no system left
+   * to ever restore it. Re-enabling unconditionally, before branching on
+   * vehicle count, is the actual fix — the player must always be free to
+   * walk around (including over to the waiting NPC) once every vehicle has
+   * cleaned+thanked+departed, exactly as they already are while mid-way
+   * through the night with vehicles still remaining. */
   private updateVehicleDeparting(deltaTime: number): void {
     const vehicle = this.departingVehicle;
     if (!vehicle) { this.state = 'cleaning'; return; } // defensive — unreachable in practice
@@ -572,13 +590,10 @@ export class VehicleNightCleaningSystem {
     this.vehicles = this.vehicles.filter((v) => v !== vehicle);
     this.departingVehicle = null;
 
-    if (this.vehicles.length === 0) {
-      this.state = 'waitingForStory';
-      return;
-    }
     this.playerData.state = 'empty-handed';
     this.playerController.setInputEnabled(true);
-    this.state = 'cleaning';
+
+    this.state = this.vehicles.length === 0 ? 'waitingForStory' : 'cleaning';
   }
 
   // --- Input (spec十/十一) ---

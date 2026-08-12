@@ -176,6 +176,7 @@ export class VehicleControlSystem {
    * LostFoundSystem.settleAtDeparture(); this class never inspects
    * lost-found state itself. */
   private onShippingStarted?: () => LostFoundSettlementInput;
+  private onDayCompleteContinue?: (finishedDay: number, proceed: () => void) => void;
   /** MailSystem/MailBagSystem — narrow read/write surface ("Add modular
    * envelope stamping and regional mail bag system" round 九/十一): this
    * class is the ONE place a bag's region is checked against a vehicle's
@@ -234,7 +235,19 @@ export class VehicleControlSystem {
     onCargoLoaded?: () => void,
     onVehicleDeparted?: () => void,
     onShippingStarted?: () => LostFoundSettlementInput,
-    enabled: boolean = true
+    enabled: boolean = true,
+    // "每日獲得道具" round — same optional-callback-hook shape as every
+    // other onXxx? param above (onVehicleDiscovered/onVehicleCalled/etc.),
+    // not a direct system-object dependency: VehicleControlSystem never
+    // imports or references ItemRewardSystem itself, keeping this class's
+    // own responsibility (vehicle slots + settlement lifecycle) unchanged.
+    // If provided, called instead of advancing the day directly the moment
+    // the player dismisses the settlement summary — `proceed` IS the real
+    // DailyFlowSystem.advanceToNextDay() call, deferred until the callee
+    // itself calls it (immediately, if it has nothing to show for
+    // `finishedDay`). Omitted (or absent) falls back to the exact previous
+    // behavior of advancing immediately.
+    onDayCompleteContinue?: (finishedDay: number, proceed: () => void) => void
   ) {
     this.scene = scene;
     this.physics = physics;
@@ -253,6 +266,7 @@ export class VehicleControlSystem {
     this.onCargoLoaded = onCargoLoaded;
     this.onVehicleDeparted = onVehicleDeparted;
     this.onShippingStarted = onShippingStarted;
+    this.onDayCompleteContinue = onDayCompleteContinue;
 
     // Initial roster — Day 1's own unlocked vehicles (same derivation
     // resetForNewDay() below reuses on every later day transition). Reads
@@ -863,8 +877,22 @@ export class VehicleControlSystem {
   private checkAllDeparted(): void {
     if (this.slots.every((s) => s.state === 'departed') && !this.dayCompleteShown) {
       this.dayCompleteShown = true;
-      this.showDayCompleteSummary(() => this.dailyFlowSystem.advanceToNextDay());
+      this.showDayCompleteSummary(() => this.continueAfterSettlement());
     }
+  }
+
+  /** "每日獲得道具" round — the ONE place both real callers (checkAllDeparted
+   * above, forceSettleDayForTesting below) route through once the
+   * settlement summary is dismissed, so the optional reward-popup hook
+   * (onDayCompleteContinue) and the fallback direct-advance behavior never
+   * drift apart between the two call sites. `dailyFlowSystem.currentDay` is
+   * read HERE, before advanceToNextDay() has run, so it's still the day
+   * that just finished — the exact day any reward is keyed to. */
+  private continueAfterSettlement(): void {
+    const finishedDay = this.dailyFlowSystem.currentDay;
+    const proceed = () => this.dailyFlowSystem.advanceToNextDay();
+    if (this.onDayCompleteContinue) this.onDayCompleteContinue(finishedDay, proceed);
+    else proceed();
   }
 
   /** Completion screen — reads the settlement snapshot computed back at
@@ -950,6 +978,6 @@ export class VehicleControlSystem {
     live: LiveSettlementInput
   ): void {
     this.pendingSettlement = this.scoringSystem.settleDeparture(cargoTotal, cargoTotal, 0, lostFound, mail, frozen, live);
-    this.showDayCompleteSummary(() => this.dailyFlowSystem.advanceToNextDay());
+    this.showDayCompleteSummary(() => this.continueAfterSettlement());
   }
 }
