@@ -44,10 +44,11 @@ type DreamState = 'inactive' | 'showing';
  *   - Same E/Space/pickupPlace advance-key check AfterWorkStorySystem's own
  *     onKeyDown already uses (settingsManager.inputBindings.matches), plus a
  *     left-click listener for spec四's own explicit "滑鼠左鍵" option (which
- *     AfterWorkStorySystem's own dialogue never needed) — both gated on
- *     `playerController.isLocked`, the same guard AfterWorkStorySystem's own
- *     onKeyDown uses to ignore input whenever pointer lock isn't held (e.g.
- *     the Tab pause menu is open).
+ *     AfterWorkStorySystem's own dialogue never needed) — deliberately NOT
+ *     also gated on `playerController.isLocked` the way AfterWorkStorySystem's
+ *     own onKeyDown is (see onKeyDown/onMouseDown's own doc comment below for
+ *     why that guard is actively wrong here, not just unnecessary — copying
+ *     it verbatim was this system's original "stuck on panel 1 forever" bug).
  *   - Same LocalStorageAdapter "completedDays" persistence shape
  *     AfterWorkStorySystem's own hp_after_work_story_v1 key already
  *     establishes, under its own hp_dream_comic_v1 key — a per-CALENDAR-DAY
@@ -231,10 +232,33 @@ export class DreamComicSystem {
   }
 
   // --- Input (spec四) ---
+  //
+  // "夢境卡死修正" round — deliberately does NOT gate on
+  // playerController.isLocked (the original, buggy version did, copied from
+  // AfterWorkStorySystem.onKeyDown without noticing a real difference
+  // between the two systems' own lifecycles). AfterWorkStorySystem's own
+  // cutscenes only ever start mid-gameplay, well after the player has
+  // already clicked the canvas to acquire real Pointer Lock at least once —
+  // so isLocked is always already true by the time IT checks it. This
+  // system's own Day1 dream, by contrast, can start on the very FIRST idle
+  // frame of a brand new game, before the player has EVER clicked the
+  // canvas — and once the dream's own full-screen overlay (pointer-events:
+  // auto) covers the canvas, the canvas's own click-to-lock listener
+  // (player-system.ts's `domElement.addEventListener('click', ...)`) can
+  // never fire, so isLocked can structurally never become true while the
+  // dream is showing. Gating on it made every dream permanently stuck on
+  // panel 1 forever (confirmed via a live repro: isLocked read false
+  // immediately after a fresh new game, and stayed false through repeated
+  // simulated E presses, with dreamComicSystem.isActive/panel index frozen).
+  // `this.state === 'showing'` alone is the correct, sufficient guard here —
+  // the dream is its own exclusive modal input owner while active (movement/
+  // interact are ALREADY blocked separately via playerData.state/
+  // setInputEnabled(false), so nothing else meaningfully competes for E/
+  // Space/click while this reads true) — dream input and player input are
+  // now genuinely independent, exactly as spec five requires.
 
   private onKeyDown = (event: KeyboardEvent): void => {
     if (this.state !== 'showing') return;
-    if (!this.playerController.isLocked) return;
     if (event.repeat) return;
     const bindings = this.settingsManager.inputBindings;
     if (event.code === 'Space' || bindings.matches('interact', event.code) || bindings.matches('pickupPlace', event.code)) {
@@ -245,7 +269,6 @@ export class DreamComicSystem {
 
   private onMouseDown = (event: MouseEvent): void => {
     if (this.state !== 'showing') return;
-    if (!this.playerController.isLocked) return;
     if (event.button !== 0) return;
     this.advancePanel();
   };

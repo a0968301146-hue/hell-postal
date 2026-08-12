@@ -38,12 +38,11 @@ export function createDreamComicUi(): DreamComicUiHandle {
     'font-family:"Noto Serif TC","Noto Serif","serif"',
   ].join(';');
 
-  // Comic panel box — placeholder-only this round (spec十五: "第一階段請不要
-  // 要求我提供漫畫圖片...黑色背景中央灰色矩形，顯示DAY 1 DREAM PANEL 01").
-  // A future round swapping in real art only ever needs to change what THIS
-  // element renders (e.g. a background-image instead of centered text) —
-  // DreamComicSystem's own control flow never needs to change alongside it
-  // (spec十五).
+  // Comic panel box — placeholder-only this round (spec八: "目前沒有圖片時可
+  // 以顯示：DREAM PANEL"). updateDreamComicPanel below swaps this element's
+  // own background-image in once a panel's `image` field is non-null — a
+  // future round filling in real art only ever needs to edit
+  // dream-comic-data.ts's own data, never this file's control flow.
   const panelBox = document.createElement('div');
   panelBox.style.cssText = [
     'width:min(640px,80vw)', 'height:min(360px,45vh)',
@@ -90,8 +89,21 @@ export function hideDreamComicUi(handle: DreamComicUiHandle): void {
   handle.root.style.pointerEvents = 'none';
 }
 
+/** `panel.image` is always null this round (see dream-comic-data.ts's own
+ * doc comment) — the generic "DREAM PANEL" placeholder (spec八) always
+ * shows. Once a real image URL is supplied there, this switches the box to
+ * render it as a background-image instead, with no other code needing to
+ * change. */
 export function updateDreamComicPanel(handle: DreamComicUiHandle, panel: DreamPanel, index: number, total: number): void {
-  handle.panelBoxEl.textContent = panel.placeholderLabel;
+  if (panel.image) {
+    handle.panelBoxEl.textContent = '';
+    handle.panelBoxEl.style.backgroundImage = `url(${panel.image})`;
+    handle.panelBoxEl.style.backgroundSize = 'cover';
+    handle.panelBoxEl.style.backgroundPosition = 'center';
+  } else {
+    handle.panelBoxEl.style.backgroundImage = 'none';
+    handle.panelBoxEl.textContent = 'DREAM PANEL';
+  }
   handle.textEl.textContent = panel.text;
   handle.progressEl.textContent = `${index} / ${total}`;
 }
