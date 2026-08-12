@@ -60,9 +60,7 @@ const MARKER_RADIUS = 0.09;
  * interactionDistance's own existing range check, unchanged, is still the
  * real distance limiter; this only widens the LATERAL aim tolerance). */
 const HITBOX_HALF_EXTENT = 0.22;
-const DIALOGUE_LINE_POINT = ['……'];
-
-type DialogueKind = 'return' | 'point' | 'thankYou';
+type DialogueKind = 'return' | 'thankYou';
 
 /**
  * "載具夜間清潔互動" round — the new 白天出貨→夜晚載具回來→玩家清潔→載具道謝→
@@ -150,7 +148,7 @@ export class VehicleNightCleaningSystem {
   private pendingVehicleIds: string[] = [];
 
   private dialogueBubble: THREE.Sprite | null = null;
-  private dialogueKind: DialogueKind = 'point';
+  private dialogueKind: DialogueKind = 'return';
   private dialogueLines: string[] = [];
   private dialogueLineIndex = 0;
   private dialogueVehicle: VehicleCleaningInstance | null = null;
@@ -240,7 +238,6 @@ export class VehicleNightCleaningSystem {
     switch (this.state) {
       case 'idle':
       case 'vehicleReturnDialogue':
-      case 'cleaningDialogue':
       case 'vehicleThankYou':
       case 'waitingForStory':
         return; // no continuous per-frame work — driven entirely by onKeyDown (spec三: 對話絕不自動消失/自動推進)
@@ -442,6 +439,20 @@ export class VehicleNightCleaningSystem {
     this.hud.hideChargeBar();
   }
 
+  /** BUG FIX ("清潔光點完成後無法移動" round) — root cause: this used to
+   * unconditionally call beginDialogue(vehicle, 'point'), which locked
+   * player input (playerData.state='stamping-minigame'/setInputEnabled
+   * (false)) for a barely-visible "……" reaction popup on EVERY completed
+   * point, not just the vehicle's last one — the player had to press E a
+   * SECOND time (easy to miss, since the light point had already vanished)
+   * before they could move again. That whole per-point dialogue kind is
+   * removed entirely (see DialogueKind's own doc comment) rather than
+   * patched with another setInputEnabled(true) call — completing an
+   * ordinary (non-final) point now does nothing to player input at all;
+   * `state` stays 'cleaning' (already was, unchanged) and the player can
+   * walk straight to the next light point. Only completing THIS vehicle's
+   * OWN LAST point still locks — that's the real, intentional "載具感謝對
+   * 話" beat (beginDialogue(vehicle, 'thankYou')), unchanged from before. */
   private completePoint(pointId: string): void {
     const vehicle = this.vehicles.find((v) => v.activePointIds.includes(pointId));
     if (!vehicle) return;
@@ -451,7 +462,18 @@ export class VehicleNightCleaningSystem {
     this.chargeElapsed = 0;
     vehicle.completedPointIds.add(pointId);
     this.removeMarker(pointId);
-    this.beginDialogue(vehicle, 'point');
+
+    if (vehicle.completedPointIds.size >= vehicle.activePointIds.length) {
+      // Every one of THIS vehicle's own nightly points is done — go
+      // straight into its thank-you popup (spec十二/十三), the one place
+      // completing a point still locks the player.
+      this.beginDialogue(vehicle, 'thankYou');
+    }
+    // Else: an ordinary point completion — `this.state` is already
+    // 'cleaning' (completePoint only ever runs from inside
+    // updateCleaning(), itself only reachable in that state) and
+    // playerData.state/inputEnabled were never touched, so nothing further
+    // is needed for the player to keep moving immediately.
   }
 
   // --- Dialogue popups (spec十一/十二/十三) ---
@@ -459,8 +481,8 @@ export class VehicleNightCleaningSystem {
   private beginDialogue(vehicle: VehicleCleaningInstance, kind: DialogueKind): void {
     this.dialogueVehicle = vehicle;
     this.dialogueKind = kind;
-    this.dialogueLines = kind === 'point' ? DIALOGUE_LINE_POINT
-      : kind === 'return' ? (VEHICLE_RETURN_LINES[vehicle.vehicleId] ?? DIALOGUE_LINE_RETURN_FALLBACK)
+    this.dialogueLines = kind === 'return'
+      ? (VEHICLE_RETURN_LINES[vehicle.vehicleId] ?? DIALOGUE_LINE_RETURN_FALLBACK)
       : (VEHICLE_THANKYOU_LINES[vehicle.vehicleId] ?? DIALOGUE_LINE_THANKYOU_FALLBACK);
     this.dialogueLineIndex = 0;
 
@@ -480,7 +502,7 @@ export class VehicleNightCleaningSystem {
     vs.vehicleGroup.add(this.dialogueBubble);
     showStoryBubbleText(this.dialogueBubble, wrapStoryLine(this.dialogueLines[0]));
 
-    this.state = kind === 'point' ? 'cleaningDialogue' : kind === 'return' ? 'vehicleReturnDialogue' : 'vehicleThankYou';
+    this.state = kind === 'return' ? 'vehicleReturnDialogue' : 'vehicleThankYou';
   }
 
   private advanceDialogue(): void {
@@ -513,27 +535,18 @@ export class VehicleNightCleaningSystem {
       return;
     }
 
-    if (kind === 'thankYou' && vehicle) {
+    // kind === 'thankYou' — still locked: this vehicle now performs its own
+    // departure (a "watch it leave" beat, not a free moment) before
+    // anything is unlocked again (beginDeparture keeps input disabled;
+    // updateVehicleDeparting() is what finally re-enables it — see that
+    // method's own doc comment). Point-completion dialogue no longer
+    // exists (see completePoint()'s own doc comment), so 'thankYou' is the
+    // ONLY kind that can still reach here after the 'return' branch above
+    // — there is no more "fall through and unlock into 'cleaning'" case.
+    if (vehicle) {
       vehicle.thanked = true;
-      // "回歸對話＋離開表演" round spec六/七 — still locked: this vehicle now
-      // performs its own departure (a "watch it leave" beat, not a free
-      // moment) before anything is unlocked again.
       this.beginDeparture(vehicle);
-      return;
     }
-
-    this.playerData.state = 'empty-handed';
-    this.playerController.setInputEnabled(true);
-
-    if (kind === 'point' && vehicle && vehicle.completedPointIds.size >= vehicle.activePointIds.length) {
-      // Every one of THIS vehicle's own nightly points is done — go
-      // straight into its thank-you popup (spec十二/十三), not back to free
-      // cleaning first.
-      this.beginDialogue(vehicle, 'thankYou');
-      return;
-    }
-
-    this.state = 'cleaning';
   }
 
   // --- Departure performance (spec六/七/八) ---
@@ -610,7 +623,7 @@ export class VehicleNightCleaningSystem {
       return;
     }
 
-    if (this.state === 'vehicleReturnDialogue' || this.state === 'cleaningDialogue' || this.state === 'vehicleThankYou') {
+    if (this.state === 'vehicleReturnDialogue' || this.state === 'vehicleThankYou') {
       const bindings = this.settingsManager.inputBindings;
       if (event.code === 'Space' || bindings.matches('interact', event.code) || bindings.matches('pickupPlace', event.code)) {
         event.preventDefault();
