@@ -10,15 +10,12 @@ import { ALL_DOCK_SLOTS } from '../vehicle/vehicle-dock-data';
 import { LAND_VEHICLE_CONFIGS, SEA_VEHICLE_CONFIGS, VehicleConfig } from '../vehicle/vehicle-data';
 import { getEffectiveDayUnlockConfig } from '../../data/daily-unlock-data';
 import {
-  CleaningToolId, CleaningPointDefinition, getVehicleCleaningDefinition, pickNightlyCleaningPoints,
-  CLEANING_TOOL_LABELS,
+  CleaningPointDefinition, getVehicleCleaningDefinition, pickNightlyCleaningPoints,
 } from '../../data/vehicle/vehicle-cleaning-data';
 import {
   createStoryBubble, showStoryBubbleText, hideStoryBubble, disposeStoryBubble, wrapStoryLine,
 } from '../story/after-work-story-bubble-ui';
-import {
-  createNightCleaningUi, setFadeOpacity, showToolBar, hideToolBar, highlightSelectedTool, NightCleaningUiHandle,
-} from './vehicle-night-cleaning-ui';
+import { createNightCleaningUi, setFadeOpacity, NightCleaningUiHandle } from './vehicle-night-cleaning-ui';
 import { NightCleaningState, VehicleCleaningInstance } from './vehicle-night-cleaning-types';
 
 const ALL_VEHICLE_CONFIGS: VehicleConfig[] = [...LAND_VEHICLE_CONFIGS, ...SEA_VEHICLE_CONFIGS];
@@ -31,10 +28,20 @@ const ALL_VEHICLE_CONFIGS: VehicleConfig[] = [...LAND_VEHICLE_CONFIGS, ...SEA_VE
  * literal, same reasoning those two files already document). */
 const DAY8 = 8;
 
-/** Marker light + its owning point/vehicle ids — the ONLY thing the aim
- * raycast actually tests against. */
+/** One active cleaning marker — `mesh` is the small visible glow sphere
+ * (spec八: "小型發光球"), `hitboxMesh` is a SEPARATE, larger invisible box the
+ * aim raycast actually tests against ("清潔點附著＋互動修正" follow-up spec
+ * 二/七: "互動區應該比視覺光點稍大，讓玩家容易操作...不要因此讓玩家可以隔著
+ * 很遠的距離互動" — a bigger hit VOLUME co-located with the small visual dot,
+ * not a bigger visual dot). Splitting these two follows the exact same
+ * pattern AfterWorkStorySystem's own NPC already uses (a small visible body
+ * + a separate, appropriately-sized invisible `npcHitboxMesh` the raycast
+ * targets) — reused here rather than invented fresh. Both are disposed
+ * together the moment a point completes (spec七: "同時移除：視覺光點/
+ * interaction target/hitbox"). */
 interface CleaningMarker {
   mesh: THREE.Mesh;
+  hitboxMesh: THREE.Mesh;
   pointId: string;
   vehicleId: string;
 }
@@ -42,6 +49,14 @@ interface CleaningMarker {
 const NIGHT_FADE_HOLD_SECONDS = 0.7;
 const CLEAN_HOLD_DURATION_SECONDS = 1.0; // matches lost-found-cleaning-system.ts's own 1.0s precedent
 const MARKER_RADIUS = 0.09;
+/** Half-extent of the INVISIBLE hitbox raycasting actually targets — well
+ * bigger than MARKER_RADIUS so the player never needs pixel-precise aim
+ * (spec: "不要要求玩家必須瞄準非常精確的單一像素"), but still small enough
+ * that it can't be triggered from far away or through unrelated geometry
+ * (spec: "不要因此讓玩家可以隔著很遠的距離互動" — SCENE_CONFIG.
+ * interactionDistance's own existing range check, unchanged, is still the
+ * real distance limiter; this only widens the LATERAL aim tolerance). */
+const HITBOX_HALF_EXTENT = 0.22;
 const DIALOGUE_LINE_POINT = ['……'];
 const DIALOGUE_LINE_THANKYOU = ['謝謝你幫我整理乾淨。'];
 
@@ -80,11 +95,15 @@ type DialogueKind = 'point' | 'thankYou';
  *     'stamping-minigame' + playerController.setInputEnabled(false)
  *     combination AfterWorkStorySystem/DreamComicSystem already established
  *     (spec十八).
- *   - "Which tool is equipped" is a small, fully self-contained concept
- *     (vehicle-night-cleaning-ui.ts's own tool-select strip) — deliberately
- *     NOT wired into core/game-state.ts's ActiveTool union or ToolSystem's
- *     hotbar/day-unlock gating (spec二十五: "不要自行發明新的遊戲工具模型") —
- *     see vehicle-cleaning-data.ts's own doc comment for the full reasoning.
+ *   - "Which tool is required" ("清潔點附著＋互動修正" follow-up round spec
+ *     五/六: "玩家不選工具...requiredTool不應該顯示給玩家") is now PURELY an
+ *     internal correctness field — tryStartCharge() below resolves it itself
+ *     from the aimed point's own vehicleId via getVehicleCleaningDefinition,
+ *     never compares it against anything the player chose. There is no
+ *     tool-select UI at all any more (vehicle-night-cleaning-ui.ts no longer
+ *     builds one), and this stays deliberately NOT wired into
+ *     core/game-state.ts's ActiveTool union or ToolSystem's hotbar/day-unlock
+ *     gating either way.
  *
  * NPC gating (spec十四/十五): this class does NOT call
  * AfterWorkStorySystem.trigger() itself and has no reference to that class
@@ -123,7 +142,6 @@ export class VehicleNightCleaningSystem {
   private markers: CleaningMarker[] = [];
   private markerGroup: THREE.Group;
 
-  private selectedToolId: CleaningToolId | null = null;
   private chargingPointId: string | null = null;
   private chargeElapsed = 0;
   private fadeTimer = 0;
@@ -150,7 +168,7 @@ export class VehicleNightCleaningSystem {
     this.markerGroup = new THREE.Group();
     scene.add(this.markerGroup);
 
-    this.ui = createNightCleaningUi((toolId) => this.selectTool(toolId));
+    this.ui = createNightCleaningUi();
 
     document.addEventListener('keydown', this.onKeyDown);
     document.addEventListener('keyup', this.onKeyUp);
@@ -240,7 +258,6 @@ export class VehicleNightCleaningSystem {
     setFadeOpacity(this.ui, 0);
     this.playerData.state = 'empty-handed';
     this.playerController.setInputEnabled(true);
-    showToolBar(this.ui);
     this.state = 'cleaning';
   }
 
@@ -277,18 +294,32 @@ export class VehicleNightCleaningSystem {
   }
 
   /** Placeholder light (spec八: "小型發光球...玩家可以清楚看到這裡就是要清潔
-   * 的位置...完成後該光點消失") — one small emissive sphere per active point,
-   * positioned by adding the point's own LOCAL offset to the vehicle's real
-   * world position (vehicle-cleaning-data.ts's own documented convention). */
+   * 的位置...完成後該光點消失") plus its own SEPARATE, larger invisible hitbox
+   * ("清潔點附著＋互動修正" follow-up spec二/七) — both positioned by adding
+   * the point's own LOCAL offset to the vehicle's real world position
+   * (vehicle-cleaning-data.ts's own documented convention), so the hitbox
+   * always stays exactly co-located with its own visible marker regardless
+   * of which vehicle/point it belongs to. */
   private spawnMarkersForVehicle(vehicleId: string, vehicleSystem: VehicleSystem, points: CleaningPointDefinition[]): void {
+    const worldPos = vehicleSystem.position;
     for (const point of points) {
       const geo = new THREE.SphereGeometry(MARKER_RADIUS, 12, 12);
       const mat = new THREE.MeshStandardMaterial({ color: 0xffe27a, emissive: 0xffcc33, emissiveIntensity: 1.1 });
       const mesh = new THREE.Mesh(geo, mat);
-      const worldPos = vehicleSystem.position;
       mesh.position.set(worldPos.x + point.position.x, worldPos.y + point.position.y, worldPos.z + point.position.z);
       this.markerGroup.add(mesh);
-      this.markers.push({ mesh, pointId: point.id, vehicleId });
+
+      // Invisible, larger hit VOLUME the raycast actually targets (spec二:
+      // "互動區應該比視覺光點稍大...Raycast可以穩定命中") — never rendered
+      // (MeshBasicMaterial with opacity 0, depthWrite off), mirrors
+      // AfterWorkStorySystem's own npcHitboxMesh convention exactly.
+      const hitboxGeo = new THREE.BoxGeometry(HITBOX_HALF_EXTENT * 2, HITBOX_HALF_EXTENT * 2, HITBOX_HALF_EXTENT * 2);
+      const hitboxMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+      const hitboxMesh = new THREE.Mesh(hitboxGeo, hitboxMat);
+      hitboxMesh.position.copy(mesh.position);
+      this.markerGroup.add(hitboxMesh);
+
+      this.markers.push({ mesh, hitboxMesh, pointId: point.id, vehicleId });
     }
   }
 
@@ -299,28 +330,35 @@ export class VehicleNightCleaningSystem {
     this.markerGroup.remove(marker.mesh);
     marker.mesh.geometry.dispose();
     (marker.mesh.material as THREE.Material).dispose();
+    this.markerGroup.remove(marker.hitboxMesh);
+    marker.hitboxMesh.geometry.dispose();
+    (marker.hitboxMesh.material as THREE.Material).dispose();
     this.markers.splice(idx, 1);
   }
 
-  // --- Tool selection (spec五/十) ---
+  // --- Cleaning (spec十/十一) ---
 
-  private selectTool(toolId: CleaningToolId): void {
-    if (this.state !== 'cleaning') return;
-    this.selectedToolId = toolId;
-    highlightSelectedTool(this.ui, toolId);
-  }
-
-  // --- Cleaning (spec十) ---
-
+  /** Raycasts against each marker's own SEPARATE, larger hitboxMesh — never
+   * the small visible glow sphere itself ("清潔點附著＋互動修正" follow-up
+   * spec二/七) — so aiming doesn't require pixel-precise precision against a
+   * tiny sphere, while SCENE_CONFIG.interactionDistance (unchanged) still
+   * caps how far away it can be triggered from. */
   private getAimedMarker(): CleaningMarker | null {
     if (this.markers.length === 0) return null;
     this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
-    const hits = this.raycaster.intersectObjects(this.markers.map((m) => m.mesh), false);
+    const hits = this.raycaster.intersectObjects(this.markers.map((m) => m.hitboxMesh), false);
     if (hits.length === 0) return null;
     if (hits[0].distance > SCENE_CONFIG.interactionDistance) return null;
-    return this.markers.find((m) => m.mesh === hits[0].object) ?? null;
+    return this.markers.find((m) => m.hitboxMesh === hits[0].object) ?? null;
   }
 
+  /** "清潔點附著＋互動修正" follow-up spec五/六: the player never picks a
+   * tool at all any more — whichever tool a point actually needs is resolved
+   * silently here (tryStartCharge below) from the aimed point's own
+   * vehicleId, so there is no "wrong tool" outcome reachable from the
+   * player's side; the prompt text is always the same generic "按住 E 清潔"
+   * regardless of which vehicle/point is aimed at (spec四: 不要顯示任何工具
+   * 資訊). */
   private updateCleaning(deltaTime: number): void {
     if (this.chargingPointId) {
       const marker = this.markers.find((m) => m.pointId === this.chargingPointId);
@@ -342,13 +380,7 @@ export class VehicleNightCleaningSystem {
       return;
     }
     const def = getVehicleCleaningDefinition(aimed.vehicleId);
-    if (!def) return;
-    const toolLabel = CLEANING_TOOL_LABELS[def.toolId];
-    const holdingCorrectTool = this.selectedToolId === def.toolId;
-    this.hud.showInteractionPrompt(
-      def.cleaningTarget,
-      holdingCorrectTool ? `按住 E 使用${toolLabel}清潔` : `需要${toolLabel}才能清潔`
-    );
+    this.hud.showInteractionPrompt(def?.cleaningTarget ?? '', '按住 E 清潔');
   }
 
   private cancelCharge(): void {
@@ -379,7 +411,6 @@ export class VehicleNightCleaningSystem {
 
     this.playerData.state = 'stamping-minigame';
     this.playerController.setInputEnabled(false);
-    hideToolBar(this.ui);
 
     const vs = vehicle.vehicleSystem as VehicleSystem;
     this.dialogueBubble = createStoryBubble(vs.config.height + 0.6);
@@ -429,7 +460,6 @@ export class VehicleNightCleaningSystem {
       return;
     }
 
-    showToolBar(this.ui);
     this.state = 'cleaning';
   }
 
@@ -440,8 +470,6 @@ export class VehicleNightCleaningSystem {
     for (const marker of [...this.markers]) this.removeMarker(marker.pointId);
     for (const vehicle of this.vehicles) (vehicle.vehicleSystem as VehicleSystem).dispose();
     this.vehicles = [];
-    hideToolBar(this.ui);
-    this.selectedToolId = null;
     this.state = 'waitingForStory';
   }
 
@@ -452,12 +480,6 @@ export class VehicleNightCleaningSystem {
     if (!this.playerController.isLocked) return; // safe here — this feature only ever fires mid-session, well after the player has already engaged Pointer Lock at least once (unlike DreamComicSystem's own Day1-from-boot edge case)
 
     if (this.state === 'cleaning') {
-      const digitIndex = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6'].indexOf(event.code);
-      if (digitIndex >= 0) {
-        const toolIds = Object.keys(CLEANING_TOOL_LABELS) as CleaningToolId[];
-        if (toolIds[digitIndex]) this.selectTool(toolIds[digitIndex]);
-        return;
-      }
       const bindings = this.settingsManager.inputBindings;
       if (bindings.matches('interact', event.code)) {
         this.tryStartCharge();
@@ -479,12 +501,18 @@ export class VehicleNightCleaningSystem {
     if (this.settingsManager.inputBindings.matches('interact', event.code)) this.cancelCharge();
   };
 
+  /** "清潔點附著＋互動修正" follow-up spec五/六: the required tool is
+   * resolved SILENTLY here from the aimed point's own vehicle (never
+   * compared against anything the player picked, since the player never
+   * picks one) — `getVehicleCleaningDefinition` is only a defensive
+   * "this point genuinely belongs to a real vehicle definition" check, not a
+   * correctness gate the player can fail. */
   private tryStartCharge(): void {
     if (this.chargingPointId) return;
     const aimed = this.getAimedMarker();
     if (!aimed) return;
     const def = getVehicleCleaningDefinition(aimed.vehicleId);
-    if (!def || this.selectedToolId !== def.toolId) return; // spec十: 錯誤工具不能清潔
+    if (!def) return;
     this.chargingPointId = aimed.pointId;
     this.chargeElapsed = 0;
   }
