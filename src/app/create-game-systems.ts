@@ -39,6 +39,7 @@ import { EnvelopeVacuumSystem } from '../systems/envelope-vacuum-system';
 // "Add day one dock story event" round.
 import { AfterWorkStorySystem } from '../systems/story/after-work-story-system';
 import { DreamComicSystem } from '../systems/dream-comic/dream-comic-system';
+import { VehicleNightCleaningSystem } from '../systems/vehicle-night-cleaning/vehicle-night-cleaning-system';
 // "Add complete day testing cheat button" round.
 import { CompleteDayCheatSystem } from '../systems/cheat/complete-day-cheat-system';
 // "Add main menu and return player after dock story" round.
@@ -109,6 +110,8 @@ export interface GameSystems {
   afterWorkStorySystem: AfterWorkStorySystem;
   /** "每日起床＋夢境漫畫" round. */
   dreamComicSystem: DreamComicSystem;
+  /** "載具夜間清潔互動" round. */
+  vehicleNightCleaningSystem: VehicleNightCleaningSystem;
   /** "Add complete day testing cheat button" round. */
   completeDayCheatSystem: CompleteDayCheatSystem;
   /** "Add main menu and return player after dock story" round. */
@@ -409,6 +412,13 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
       // UpgradeSystem.settleDay's own doc comment for the idempotency
       // guard.
       upgradeSystem.settleDay(finishedDay);
+      // "載具夜間清潔互動" round — started BEFORE afterWorkStorySystem.trigger()
+      // below (spec十四: 載具回來/清潔在NPC劇情之前) but not awaited — this
+      // call is fire-and-forget from this callback's own point of view, its
+      // own update() (game-app.ts) drives the black-fade→vehicle-return→
+      // cleaning sequence across many subsequent frames. Both this call and
+      // trigger() below are no-ops on day 8 (see each class's own guard).
+      vehicleNightCleaningSystem.startNight(finishedDay);
       // "Add day one dock story event" round — the ONE trigger point. By
       // the time this fires, DailyFlowSystem has ALREADY synchronously
       // advanced currentDay/state to day 2 internally (see
@@ -416,6 +426,12 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
       // PLAYER's own experience of that already-completed transition until
       // the story finishes; trigger() itself is a no-op for any day without
       // a story entry, or one already played (this session or a past one).
+      // "載具夜間清潔互動" round: this still fires immediately (unchanged
+      // timing) so the NPC spawns and walks toward its own wait spot IN
+      // PARALLEL with the player's night-cleaning (spec十四) — what stops it
+      // from starting actual dialogue early is a new guard inside
+      // AfterWorkStorySystem.startStory() itself (spec十五), not a delay
+      // here.
       afterWorkStorySystem.trigger(finishedDay);
       // "Add main menu and return player after dock story" round 四: the
       // ONE write point for hp_run_state_v1's own currentDay (spec: "日結／
@@ -484,9 +500,22 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // update() is called UNCONDITIONALLY from game-app.ts (never gated behind
   // pauseManager.isPaused), matching cargoHookSystem/spraySystem/
   // envelopeVacuumSystem's own established self-guarding convention.
+  // "載具夜間清潔互動" round — constructed BEFORE afterWorkStorySystem so that
+  // class can take it as a read-only constructor dependency (its own
+  // startStory() gates on this system's `allVehiclesCleaned` getter — spec
+  // 十五: "NPC不會提前開始劇情...必須等待所有載具清潔完成"). Needs the same
+  // scene/physics/camera/playerController/playerData/settingsManager set
+  // every other locked-input narrative system already takes, plus hud (for
+  // the shared showChargeBar/showInteractionPrompt HUD elements
+  // lost-found-cleaning-system.ts's own hold-to-clean precedent already
+  // uses).
+  const vehicleNightCleaningSystem = new VehicleNightCleaningSystem(
+    scene, physics, camera, playerController, playerData, hud, settingsManager
+  );
+
   const afterWorkStorySystem = new AfterWorkStorySystem(
     scene, camera, physics, hud, playerController, playerData, settingsManager, pickupSystem,
-    cargoSystem, dailyFlowSystem
+    cargoSystem, dailyFlowSystem, vehicleNightCleaningSystem
   );
 
   // "每日起床＋夢境漫畫" round — constructed right after afterWorkStorySystem
@@ -771,6 +800,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     upgradeSystem, similarCargoHighlight, mediaPlayerSystem,
     toolSystem, cargoHookSystem, spraySystem,
     ladderSystem, toolStationSystem, envelopeVacuumSystem,
-    afterWorkStorySystem, dreamComicSystem, completeDayCheatSystem, mainMenuSystem, freezerSystem, livingCargoSystem,
+    afterWorkStorySystem, dreamComicSystem, vehicleNightCleaningSystem,
+    completeDayCheatSystem, mainMenuSystem, freezerSystem, livingCargoSystem,
   };
 }

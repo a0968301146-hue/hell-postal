@@ -339,6 +339,12 @@ export class GameApp {
       // overlay still covers the screen at boot (MainMenuSystem pauses via
       // PauseManager the whole time it's shown).
       s.dreamComicSystem.update();
+      // "載具夜間清潔互動" round — same paused-gated placement as
+      // dreamComicSystem.update() just above (no continuous effect needs to
+      // survive an unrelated pause, and this feature is only ever started by
+      // a live gameplay action, never polled while e.g. the main menu is
+      // still up).
+      s.vehicleNightCleaningSystem.update(deltaTime);
     }
 
     s.compassUI.update(camera);

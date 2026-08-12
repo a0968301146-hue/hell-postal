@@ -16,6 +16,11 @@ import { PickupSystem } from '../interaction/pickup-system';
 // one back (confirmed no cycle), same reasoning as pickup-system.ts above.
 import { CargoSystem } from '../cargo/cargo-system';
 import { DailyFlowSystem } from '../daily-flow/daily-flow-system';
+// "載具夜間清潔互動" round — a one-way read-only dependency (this class only
+// ever reads its `allVehiclesCleaned` getter, never calls into it); that
+// file itself only imports from after-work-story-bubble-ui.ts (a lower-level
+// shared UI helper, not this file), so no import cycle.
+import { VehicleNightCleaningSystem } from '../vehicle-night-cleaning/vehicle-night-cleaning-system';
 import { GIANT_CAKE_BOX_PRESET } from '../cargo/cargo-shape-presets';
 import { LocalStorageAdapter } from '../../adapters/local-storage/local-storage-adapter';
 import { LOST_FOUND_ROOM } from '../../data/world/lost-found-layout-data';
@@ -241,6 +246,12 @@ export class AfterWorkStorySystem {
   private pickupSystem: PickupSystem;
   private cargoSystem: CargoSystem;
   private dailyFlowSystem: DailyFlowSystem;
+  /** "載具夜間清潔互動" round — read-only dependency, checked by startStory()/
+   * beginLetterReading()/update()'s own prompt-suppression (spec十五: "NPC不
+   * 會提前開始劇情...必須等待所有載具清潔完成"). This class never calls
+   * anything ON it — purely a one-way "is it safe to start today's story
+   * yet" read. */
+  private vehicleNightCleaningSystem: VehicleNightCleaningSystem;
   private storage = new LocalStorageAdapter();
 
   private state: StoryState = 'inactive';
@@ -311,7 +322,8 @@ export class AfterWorkStorySystem {
   constructor(
     scene: THREE.Scene, camera: THREE.PerspectiveCamera, physics: PhysicsSystem, hud: HUD,
     playerController: PlayerController, playerData: PlayerInteractionData, settingsManager: SettingsManager,
-    pickupSystem: PickupSystem, cargoSystem: CargoSystem, dailyFlowSystem: DailyFlowSystem
+    pickupSystem: PickupSystem, cargoSystem: CargoSystem, dailyFlowSystem: DailyFlowSystem,
+    vehicleNightCleaningSystem: VehicleNightCleaningSystem
   ) {
     this.scene = scene;
     this.camera = camera;
@@ -323,6 +335,7 @@ export class AfterWorkStorySystem {
     this.pickupSystem = pickupSystem;
     this.cargoSystem = cargoSystem;
     this.dailyFlowSystem = dailyFlowSystem;
+    this.vehicleNightCleaningSystem = vehicleNightCleaningSystem;
 
     this.fadeEl = document.createElement('div');
     this.fadeEl.style.cssText = 'position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;transition:opacity ' + FADE_SECONDS + 's ease;z-index:9999;';
@@ -1065,6 +1078,9 @@ export class AfterWorkStorySystem {
 
   private startStory(): void {
     if (this.state !== 'waitingForPlayer') return;
+    // "載具夜間清潔互動" round spec十五 — the actual floor (update()'s own
+    // prompt-suppression above is only a UX nicety on top of this).
+    if (!this.vehicleNightCleaningSystem.allVehiclesCleaned) return;
     this.lockAndFadeToStory();
   }
 
@@ -1078,6 +1094,10 @@ export class AfterWorkStorySystem {
    * every other day. */
   private beginLetterReading(): void {
     if (this.state !== 'waitingForPlayer') return;
+    // "載具夜間清潔互動" round spec十五 — same floor as startStory() above;
+    // Day7's own letter beat is still "today's story trigger" and must wait
+    // the same way every other day's NPC dialogue does.
+    if (!this.vehicleNightCleaningSystem.allVehiclesCleaned) return;
     this.hud.hideInteractionPrompt();
     this.savedActiveTool = this.playerData.activeTool;
     this.pickupSystem.forceDropHeld();
@@ -1492,6 +1512,18 @@ export class AfterWorkStorySystem {
     }
 
     if (this.state === 'waitingForPlayer') {
+      // "載具夜間清潔互動" round spec十五: NPC不會提前開始劇情 — while any of
+      // tonight's returned vehicles still need cleaning, simply show no E
+      // prompt at all (rather than a nagging "先去清潔載具" message, spec
+      // 二十三: "不要加入...NPC催促") — the NPC just stands there quietly
+      // until vehicleNightCleaningSystem reports every vehicle cleaned.
+      // startStory()/beginLetterReading() repeat this same guard as their
+      // own floor, so this is purely a UX nicety, not the only thing
+      // stopping dialogue from starting early.
+      if (!this.vehicleNightCleaningSystem.allVehiclesCleaned) {
+        this.hud.hideInteractionPrompt();
+        return;
+      }
       if (this.isAimingAtNpc()) {
         const name = this.currentSpeakerName();
         if (this.isLetterDay) {
