@@ -117,6 +117,17 @@ export class VehicleSystem {
    * the mismatch for that one vehicle). */
   readonly cleaningAnchors: Record<string, THREE.Vector3> = {};
 
+  /** "夜間載具清潔互動" round follow-up ("UI排查" round) — BACK_AREA.floorY,
+   * exposed so a caller positioning anything ABOVE this vehicle (e.g. a
+   * dialogue bubble) can correctly account for it, the same way this
+   * class's own `label` does two lines below (`floorY + config.height +
+   * 0.6`) — vehicleGroup.position.y is ALWAYS 0 (see constructor), so any
+   * height computed from `config.height` alone, without adding this back
+   * in, lands ~1.5m higher than intended (this round's own root-cause
+   * finding for vehicle-night-cleaning-system.ts's dialogue bubble, which
+   * had exactly this bug — see its own beginDialogue() doc comment). */
+  readonly floorY: number;
+
   private physics: PhysicsSystem;
   private body: RAPIER.RigidBody;
   private label: THREE.Sprite;
@@ -142,6 +153,7 @@ export class VehicleSystem {
     this.physics = physics;
 
     const floorY = BACK_AREA.floorY;
+    this.floorY = floorY;
 
     this.vehicleGroup = new THREE.Group();
     this.vehicleGroup.position.set(spawnAt.x, 0, spawnAt.z);

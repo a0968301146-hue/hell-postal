@@ -58,7 +58,24 @@ const MARKER_RADIUS = 0.09;
  * real distance limiter; this only widens the LATERAL aim tolerance). */
 const HITBOX_HALF_EXTENT = 0.22;
 const DIALOGUE_LINE_POINT = ['……'];
-const DIALOGUE_LINE_THANKYOU = ['謝謝你幫我整理乾淨。'];
+/** Fallback used only if a vehicleId isn't found in VEHICLE_THANKYOU_LINES
+ * below (defensive — every real vehicle has its own entry). */
+const DIALOGUE_LINE_THANKYOU_FALLBACK = ['謝謝你幫我整理乾淨。'];
+
+/** "UI排查" round spec七 — placeholder thank-you lines per vehicle (程序
+ *插槽, not final narrative writing). No existing per-vehicle dialogue data
+ * was found anywhere in the codebase to reuse (searched for these exact
+ * phrases beforehand) — this is a fresh, minimal Record kept local to this
+ * file rather than added to vehicle-cleaning-data.ts, since it's dialogue/
+ * UI-flow data, not physical cleaning-point/geometry data. */
+const VEHICLE_THANKYOU_LINES: Record<string, string[]> = {
+  'land-frog-01': ['呱……謝謝你幫我清潔。', '舒服多了！'],
+  'land-rockgiant-01': ['……', '謝謝。'],
+  'land-snail-01': ['我的殼舒服多了。', '謝謝你。'],
+  'sea-ray-01': ['謝謝你幫我擦乾淨。', '舒服多了。'],
+  'sea-turtle-01': ['謝謝你清理龜殼。', '輕鬆多了。'],
+  'sea-kraken-01': ['……', '謝謝。'],
+};
 
 type DialogueKind = 'point' | 'thankYou';
 
@@ -418,14 +435,24 @@ export class VehicleNightCleaningSystem {
   private beginDialogue(vehicle: VehicleCleaningInstance, kind: DialogueKind): void {
     this.dialogueVehicle = vehicle;
     this.dialogueKind = kind;
-    this.dialogueLines = kind === 'point' ? DIALOGUE_LINE_POINT : DIALOGUE_LINE_THANKYOU;
+    this.dialogueLines = kind === 'point'
+      ? DIALOGUE_LINE_POINT
+      : (VEHICLE_THANKYOU_LINES[vehicle.vehicleId] ?? DIALOGUE_LINE_THANKYOU_FALLBACK);
     this.dialogueLineIndex = 0;
 
     this.playerData.state = 'stamping-minigame';
     this.playerController.setInputEnabled(false);
 
+    // "UI排查" round root-cause fix — vs.vehicleGroup.position.y is ALWAYS
+    // 0 (VehicleSystem constructor), so a height computed from
+    // config.height ALONE (the previous round's own bug) lands the bubble
+    // ~1.5m higher than intended, since every real vehicle mesh actually
+    // spans LOCAL Y = vs.floorY..vs.floorY+config.height, not 0..height.
+    // This mirrors vs's own floating name label, which already gets this
+    // right (vehicle-system.ts: `floorY + config.height + 0.6`) — this is
+    // that exact same convention, just applied to the dialogue bubble too.
     const vs = vehicle.vehicleSystem as VehicleSystem;
-    this.dialogueBubble = createStoryBubble(vs.config.height + 0.6);
+    this.dialogueBubble = createStoryBubble(vs.floorY + vs.config.height + 0.6);
     vs.vehicleGroup.add(this.dialogueBubble);
     showStoryBubbleText(this.dialogueBubble, wrapStoryLine(this.dialogueLines[0]));
 
