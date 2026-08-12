@@ -283,7 +283,12 @@ export class VehicleNightCleaningSystem {
       // path rather than inventing a night-only variant of it.
       vehicleSystem.onArrived();
 
-      const nightlyPoints = pickNightlyCleaningPoints(vehicleId); // spec七: 4-5, no duplicates
+      // "排查碰撞格/Geometry再修正" round — passes this INSTANCE's own live
+      // cleaningAnchors (populated during construction just above, from the
+      // exact same local variables that built the real meshes) so the
+      // minimum-spacing check below operates on genuine geometry, not a
+      // second guessed copy of it.
+      const nightlyPoints = pickNightlyCleaningPoints(vehicleId, vehicleSystem.cleaningAnchors); // spec七: 4-5, no duplicates, spec五: 最小間距
       const instance: VehicleCleaningInstance = {
         vehicleId, vehicleSystem, activePointIds: nightlyPoints.map((p) => p.id),
         completedPointIds: new Set(), thanked: false,
@@ -295,18 +300,25 @@ export class VehicleNightCleaningSystem {
 
   /** Placeholder light (spec八: "小型發光球...玩家可以清楚看到這裡就是要清潔
    * 的位置...完成後該光點消失") plus its own SEPARATE, larger invisible hitbox
-   * ("清潔點附著＋互動修正" follow-up spec二/七) — both positioned by adding
-   * the point's own LOCAL offset to the vehicle's real world position
-   * (vehicle-cleaning-data.ts's own documented convention), so the hitbox
-   * always stays exactly co-located with its own visible marker regardless
-   * of which vehicle/point it belongs to. */
+   * ("清潔點附著＋互動修正" follow-up spec二/七) — both positioned via
+   * VehicleSystem.getSurfacePoint(), which resolves the point's own named
+   * `cleaningAnchors` entry through Object3D.localToWorld() ("排查碰撞格/
+   * Geometry再修正" round — replaces the previous round's own naive
+   * "vehicle world position + hand-computed local offset" addition, which
+   * silently ignored both BACK_AREA.floorY and any vehicle rotation; see
+   * vehicle-cleaning-data.ts's own top-of-file doc comment for the full
+   * root-cause writeup), so the hitbox always stays exactly co-located
+   * with its own visible marker regardless of which vehicle/point it
+   * belongs to. */
   private spawnMarkersForVehicle(vehicleId: string, vehicleSystem: VehicleSystem, points: CleaningPointDefinition[]): void {
-    const worldPos = vehicleSystem.position;
     for (const point of points) {
+      const anchor = vehicleSystem.cleaningAnchors[point.anchorName];
+      if (!anchor) continue; // defensive — vehicle-cleaning-data.ts's own load-time check already guards against a typo'd anchorName
+      const worldPos = vehicleSystem.getSurfacePoint(anchor);
       const geo = new THREE.SphereGeometry(MARKER_RADIUS, 12, 12);
       const mat = new THREE.MeshStandardMaterial({ color: 0xffe27a, emissive: 0xffcc33, emissiveIntensity: 1.1 });
       const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(worldPos.x + point.position.x, worldPos.y + point.position.y, worldPos.z + point.position.z);
+      mesh.position.copy(worldPos);
       this.markerGroup.add(mesh);
 
       // Invisible, larger hit VOLUME the raycast actually targets (spec二:

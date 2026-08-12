@@ -97,6 +97,26 @@ export class VehicleSystem {
   cargoBedTopMesh!: THREE.Mesh;
   cargoBayBounds!: CargoBayBounds;
 
+  /** "清潔點附著＋互動修正" round follow-up ("排查碰撞格/Geometry再修正" round)
+   * — named, LOCAL-space (vehicleGroup-relative) cleaning-surface anchors,
+   * populated at the END of buildGenericBoxVehicle/buildFrogVehicle from the
+   * EXACT SAME local variables already used to build the real visible
+   * meshes (chassis/bed/wall extents, floorY, basin/body geometry) — never
+   * a second, independently-guessed copy of the vehicle's dimensions. This
+   * is the single source of truth vehicle-cleaning-data.ts's candidate
+   * points reference by name (`anchorName`), and vehicle-night-cleaning-
+   * system.ts resolves via getSurfacePoint() below — so a cleaning point
+   * can never drift out of sync with the actual rendered geometry the way
+   * a hand-duplicated formula in a separate file silently did before this
+   * round (root cause: see this round's own investigation — floorY was
+   * never applied, since vehicleGroup.position.y is always 0 while every
+   * real mesh is positioned at LOCAL Y = BACK_AREA.floorY + something, so
+   * every previous cleaning point sat ~1.5m above the real body; the
+   * frog's own 180° dock-facing rotation was also never applied when
+   * converting a point's local offset to world position, only compounding
+   * the mismatch for that one vehicle). */
+  readonly cleaningAnchors: Record<string, THREE.Vector3> = {};
+
   private physics: PhysicsSystem;
   private body: RAPIER.RigidBody;
   private label: THREE.Sprite;
@@ -218,6 +238,53 @@ export class VehicleSystem {
       halfX,
       halfZ,
     };
+
+    // cleaningAnchors ("排查碰撞格/Geometry再修正" round) — built from the
+    // EXACT same local extents/heights just used above for the real
+    // chassis/bed/wall meshes (chassisSX/SZ, alongHalf/acrossHalf, floorY,
+    // chassisHeight, bedWallHeight), never re-derived from config.width/
+    // length/height alone the way the previous (buggy) round's separate
+    // data file did. `across`/`along` below mean the same thing
+    // addBedWall's own comment above already established for this method
+    // ("across" = left-right, "along" = front-back, open cargo front at
+    // -along) — `axisPoint` just re-applies the identical isXAxis swap
+    // addBedWall/chassisSX/chassisSZ use, inline, so anchors land on
+    // whichever local X/Z axis the real geometry actually occupies.
+    const NUDGE = 0.05; // small outward push off the exact surface (spec: "0.03~0.08m")
+    const axisPoint = (across: number, along: number, y: number): THREE.Vector3 =>
+      isXAxis ? new THREE.Vector3(along, y, across) : new THREE.Vector3(across, y, along);
+    const chassisAcrossHalf = isXAxis ? chassisSZ / 2 : chassisSX / 2;
+    const chassisAlongHalf = isXAxis ? chassisSX / 2 : chassisSZ / 2;
+    const topY = floorY + config.height + NUDGE; // true top of the bed walls — the real roof, not a guessed height
+    const upperMidY = bedFloorY + FLOOR_THICKNESS + bedWallHeight * 0.55; // mid-height of the UPPER (bed-wall) band
+    const lowY = floorY + chassisHeight * 0.55; // mid-height of the LOWER (chassis) band, near the ground
+    const bedAcrossOut = acrossHalf + NUDGE;
+    const bedAlongOut = alongHalf + NUDGE;
+    const chassisAcrossOut = chassisAcrossHalf + NUDGE;
+    const chassisAlongOut = chassisAlongHalf + NUDGE;
+    this.cleaningAnchors.topFrontLeft = axisPoint(-acrossHalf * 0.6, -alongHalf * 0.6, topY);
+    this.cleaningAnchors.topFrontRight = axisPoint(acrossHalf * 0.6, -alongHalf * 0.6, topY);
+    this.cleaningAnchors.topBackLeft = axisPoint(-acrossHalf * 0.6, alongHalf * 0.6, topY);
+    this.cleaningAnchors.topBackRight = axisPoint(acrossHalf * 0.6, alongHalf * 0.6, topY);
+    this.cleaningAnchors.topCenter = axisPoint(0, 0, topY);
+    this.cleaningAnchors.sideLeftFront = axisPoint(-bedAcrossOut, -alongHalf * 0.5, upperMidY);
+    this.cleaningAnchors.sideLeftBack = axisPoint(-bedAcrossOut, alongHalf * 0.5, upperMidY);
+    this.cleaningAnchors.sideRightFront = axisPoint(bedAcrossOut, -alongHalf * 0.5, upperMidY);
+    this.cleaningAnchors.sideRightBack = axisPoint(bedAcrossOut, alongHalf * 0.5, upperMidY);
+    this.cleaningAnchors.frontUpper = axisPoint(0, -bedAlongOut, upperMidY);
+    this.cleaningAnchors.backUpper = axisPoint(0, bedAlongOut, upperMidY);
+    this.cleaningAnchors.chassisFrontLeft = axisPoint(-chassisAcrossHalf * 0.6, -chassisAlongOut, lowY);
+    this.cleaningAnchors.chassisFrontRight = axisPoint(chassisAcrossHalf * 0.6, -chassisAlongOut, lowY);
+    this.cleaningAnchors.chassisBackLeft = axisPoint(-chassisAcrossHalf * 0.6, chassisAlongOut, lowY);
+    this.cleaningAnchors.chassisBackRight = axisPoint(chassisAcrossHalf * 0.6, chassisAlongOut, lowY);
+    this.cleaningAnchors.chassisFrontCenter = axisPoint(0, -chassisAlongOut, lowY);
+    this.cleaningAnchors.chassisBackCenter = axisPoint(0, chassisAlongOut, lowY);
+    this.cleaningAnchors.chassisLeftMid = axisPoint(-chassisAcrossOut, 0, lowY);
+    this.cleaningAnchors.chassisRightMid = axisPoint(chassisAcrossOut, 0, lowY);
+    this.cleaningAnchors.chassisLeftFront = axisPoint(-chassisAcrossOut, -chassisAlongHalf * 0.5, lowY);
+    this.cleaningAnchors.chassisLeftBack = axisPoint(-chassisAcrossOut, chassisAlongHalf * 0.5, lowY);
+    this.cleaningAnchors.chassisRightFront = axisPoint(chassisAcrossOut, -chassisAlongHalf * 0.5, lowY);
+    this.cleaningAnchors.chassisRightBack = axisPoint(chassisAcrossOut, chassisAlongHalf * 0.5, lowY);
   }
 
   /** "Rebuild frog vehicle from concept sketch" round — a from-scratch
@@ -461,6 +528,60 @@ export class VehicleSystem {
       halfZ: mouthHalfZ,
     };
 
+    // cleaningAnchors ("排查碰撞格/Geometry再修正" round) — deliberately
+    // attached ONLY to the STATIC rim (frontLip + sideBackWall) and
+    // fixedBody, never to upperHeadShell (the one part that actually
+    // rotates open/closed): markers are spawned once, synchronously, right
+    // after onArrived() sets the mouth's TARGET angle but before update()
+    // has advanced it any real distance — a point anchored to the still-
+    // closed dome's current transform would be stale forever once the mouth
+    // finished animating open a moment later. The rim itself never moves,
+    // so points on it stay correct regardless of animation timing, and
+    // still read as "on the mouth" since the rim IS the mouth's visible
+    // opening. rimPoint's (x,z) trace the exact same elliptical arc
+    // frontLip/sideBackWall's own CylinderGeometry scale (mouthHalfX,
+    // mouthHalfZ) renders at unit radius, nudged ~5% outward; its Y is
+    // measured within whichever band (frontLipHeight, the thin low front
+    // threshold, vs sideBackHeight, the tall wraparound rim) the given
+    // angle actually falls in — using the WRONG band here was the
+    // (already-fixed) previous round's own remaining Y bug for any point
+    // whose angle sat in the front lip's much shorter band.
+    const rimNudge = 1.05;
+    const rimXZ = (angleDeg: number): { x: number; z: number } => {
+      const rad = (angleDeg * Math.PI) / 180;
+      return { x: Math.sin(rad) * mouthHalfX * rimNudge, z: Math.cos(rad) * mouthHalfZ * rimNudge };
+    };
+    const frontRimPoint = (angleDeg: number, heightFrac01: number): THREE.Vector3 => {
+      const { x, z } = rimXZ(angleDeg);
+      return new THREE.Vector3(x, basinFloorY + heightFrac01 * frontLipHeight, z);
+    };
+    const sideRimPoint = (angleDeg: number, heightFrac01: number): THREE.Vector3 => {
+      const { x, z } = rimXZ(angleDeg);
+      return new THREE.Vector3(x, basinFloorY + heightFrac01 * sideBackHeight, z);
+    };
+    const bodyPoint = (dx: number, dy: number, dz: number): THREE.Vector3 => {
+      const len = Math.hypot(dx, dy, dz) || 1;
+      const scale = 1.08;
+      return new THREE.Vector3(
+        (dx / len) * bodyScale.x * scale,
+        bodyCenterY + (dy / len) * bodyScale.y * scale,
+        bodyCenterZ + (dz / len) * bodyScale.z * scale,
+      );
+    };
+    this.cleaningAnchors.mouthLeft = frontRimPoint(-35, 0.55);
+    this.cleaningAnchors.mouthRight = frontRimPoint(35, 0.55);
+    this.cleaningAnchors.mouthCenter = frontRimPoint(0, 0.7);
+    this.cleaningAnchors.chin = frontRimPoint(5, 0.15);
+    this.cleaningAnchors.cheekLeft = sideRimPoint(-70, 0.28);
+    this.cleaningAnchors.cheekRight = sideRimPoint(70, 0.28);
+    this.cleaningAnchors.templeLeft = sideRimPoint(-120, 0.55);
+    this.cleaningAnchors.templeRight = sideRimPoint(120, 0.55);
+    this.cleaningAnchors.crownBack = sideRimPoint(180, 0.85);
+    this.cleaningAnchors.bodyLeft = bodyPoint(1, 0.2, 0.1);
+    this.cleaningAnchors.bodyRight = bodyPoint(-1, 0.2, 0.1);
+    this.cleaningAnchors.bodyBack = bodyPoint(0, 0.6, -1);
+    this.cleaningAnchors.bodyBelly = bodyPoint(0, -0.7, 0.3);
+
     // Starts closed, facing its known fixed arrival heading immediately —
     // avoids a one-frame flash of the default (unrotated) orientation
     // before the first moveToward() call corrects it.
@@ -489,6 +610,23 @@ export class VehicleSystem {
 
   get position(): THREE.Vector3 {
     return this.vehicleGroup.position;
+  }
+
+  /** Converts a LOCAL (vehicleGroup-relative) point — normally one of this
+   * instance's own `cleaningAnchors` — into a world-space position, via
+   * THREE's own Object3D.localToWorld() (the same method
+   * getSafeExitPointIfPlayerInside() below already uses) rather than a
+   * naive per-axis addition onto `position`. This is what actually honors
+   * the vehicle's current rotation (only the frog rotates today, at dock-
+   * facing time, but this makes the conversion correct in general) —
+   * addition alone silently ignores rotation entirely. `updateMatrixWorld`
+   * is forced first since localToWorld reads the cached matrixWorld, which
+   * three.js only refreshes during a render pass; without this, a caller
+   * that queries a point immediately after this vehicle is constructed or
+   * moved (before the next render) would read a stale transform. */
+  getSurfacePoint(local: { x: number; y: number; z: number }): THREE.Vector3 {
+    this.vehicleGroup.updateMatrixWorld(true);
+    return this.vehicleGroup.localToWorld(new THREE.Vector3(local.x, local.y, local.z));
   }
 
   isInCargoBay(pos: THREE.Vector3): boolean {
