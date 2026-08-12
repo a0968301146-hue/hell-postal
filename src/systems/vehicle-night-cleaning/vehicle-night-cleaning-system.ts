@@ -17,6 +17,9 @@ import {
 } from '../story/after-work-story-bubble-ui';
 import { createNightCleaningUi, setFadeOpacity, NightCleaningUiHandle } from './vehicle-night-cleaning-ui';
 import { NightCleaningState, VehicleCleaningInstance } from './vehicle-night-cleaning-types';
+import {
+  VEHICLE_RETURN_LINES, VEHICLE_THANKYOU_LINES, DIALOGUE_LINE_RETURN_FALLBACK, DIALOGUE_LINE_THANKYOU_FALLBACK,
+} from '../../data/vehicle/vehicle-night-dialogue-data';
 
 const ALL_VEHICLE_CONFIGS: VehicleConfig[] = [...LAND_VEHICLE_CONFIGS, ...SEA_VEHICLE_CONFIGS];
 
@@ -58,26 +61,8 @@ const MARKER_RADIUS = 0.09;
  * real distance limiter; this only widens the LATERAL aim tolerance). */
 const HITBOX_HALF_EXTENT = 0.22;
 const DIALOGUE_LINE_POINT = ['……'];
-/** Fallback used only if a vehicleId isn't found in VEHICLE_THANKYOU_LINES
- * below (defensive — every real vehicle has its own entry). */
-const DIALOGUE_LINE_THANKYOU_FALLBACK = ['謝謝你幫我整理乾淨。'];
 
-/** "UI排查" round spec七 — placeholder thank-you lines per vehicle (程序
- *插槽, not final narrative writing). No existing per-vehicle dialogue data
- * was found anywhere in the codebase to reuse (searched for these exact
- * phrases beforehand) — this is a fresh, minimal Record kept local to this
- * file rather than added to vehicle-cleaning-data.ts, since it's dialogue/
- * UI-flow data, not physical cleaning-point/geometry data. */
-const VEHICLE_THANKYOU_LINES: Record<string, string[]> = {
-  'land-frog-01': ['呱……謝謝你幫我清潔。', '舒服多了！'],
-  'land-rockgiant-01': ['……', '謝謝。'],
-  'land-snail-01': ['我的殼舒服多了。', '謝謝你。'],
-  'sea-ray-01': ['謝謝你幫我擦乾淨。', '舒服多了。'],
-  'sea-turtle-01': ['謝謝你清理龜殼。', '輕鬆多了。'],
-  'sea-kraken-01': ['……', '謝謝。'],
-};
-
-type DialogueKind = 'point' | 'thankYou';
+type DialogueKind = 'return' | 'point' | 'thankYou';
 
 /**
  * "載具夜間清潔互動" round — the new 白天出貨→夜晚載具回來→玩家清潔→載具道謝→
@@ -170,6 +155,17 @@ export class VehicleNightCleaningSystem {
   private dialogueLineIndex = 0;
   private dialogueVehicle: VehicleCleaningInstance | null = null;
 
+  /** "回歸對話＋離開表演" round — the ONE vehicle currently driving itself
+   * out toward its own config.exitPosition (VehicleSystem.moveToward,
+   * reused unchanged from the same movement logic VehicleControlSystem's
+   * own daytime departure already uses — see updateVehicleDeparting()).
+   * Only ever one at a time by construction (a vehicle only starts
+   * departing once its OWN thank-you dialogue ends, and the whole system
+   * stays in the single 'vehicleDeparting' state — never 'cleaning' — until
+   * this one finishes), so a single nullable field is enough; no need for a
+   * list. */
+  private departingVehicle: VehicleCleaningInstance | null = null;
+
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, camera: THREE.PerspectiveCamera,
     playerController: PlayerController, playerData: PlayerInteractionData, hud: HUD, settingsManager: SettingsManager
@@ -243,10 +239,11 @@ export class VehicleNightCleaningSystem {
 
     switch (this.state) {
       case 'idle':
+      case 'vehicleReturnDialogue':
       case 'cleaningDialogue':
       case 'vehicleThankYou':
       case 'waitingForStory':
-        return; // no continuous per-frame work — driven entirely by onKeyDown
+        return; // no continuous per-frame work — driven entirely by onKeyDown (spec三: 對話絕不自動消失/自動推進)
       case 'nightTransition':
         this.updateNightTransition(deltaTime);
         return;
@@ -255,6 +252,9 @@ export class VehicleNightCleaningSystem {
         return;
       case 'cleaning':
         this.updateCleaning(deltaTime);
+        return;
+      case 'vehicleDeparting':
+        this.updateVehicleDeparting(deltaTime);
         return;
     }
   }
@@ -273,9 +273,33 @@ export class VehicleNightCleaningSystem {
     this.fadeTimer += deltaTime;
     if (this.fadeTimer < NIGHT_FADE_HOLD_SECONDS) return;
     setFadeOpacity(this.ui, 0);
-    this.playerData.state = 'empty-handed';
-    this.playerController.setInputEnabled(true);
-    this.state = 'cleaning';
+    // "回歸對話＋離開表演" round spec一: the player is NOT unlocked into
+    // free cleaning yet — every returned vehicle gets to say its own
+    // automatic greeting FIRST (chained sequentially by
+    // beginNextReturnDialogue below), still fully locked the entire time.
+    this.beginNextReturnDialogue();
+  }
+
+  // --- Return dialogue (spec一/二/十) ---
+
+  /** Finds the next returned vehicle that hasn't greeted the player yet and
+   * starts its dialogue; once every vehicle has (base case), finally
+   * unlocks the player into free cleaning. Called both right after the
+   * night-return fade clears (for the FIRST vehicle) and from endDialogue()
+   * when one 'return' dialogue finishes (chaining to the next) — the
+   * player's input stays disabled across the entire chain, only re-enabled
+   * once this reaches the base case (spec十: "一次處理一台", never letting
+   * the player act until every returned vehicle has had its say). */
+  private beginNextReturnDialogue(): void {
+    const nextVehicle = this.vehicles.find((v) => !v.greeted);
+    if (!nextVehicle) {
+      this.playerData.state = 'empty-handed';
+      this.playerController.setInputEnabled(true);
+      this.state = 'cleaning';
+      return;
+    }
+    nextVehicle.greeted = true;
+    this.beginDialogue(nextVehicle, 'return');
   }
 
   // --- Vehicle + marker spawning (spec四/六/七/八) ---
@@ -308,7 +332,7 @@ export class VehicleNightCleaningSystem {
       const nightlyPoints = pickNightlyCleaningPoints(vehicleId, vehicleSystem.cleaningAnchors); // spec七: 4-5, no duplicates, spec五: 最小間距
       const instance: VehicleCleaningInstance = {
         vehicleId, vehicleSystem, activePointIds: nightlyPoints.map((p) => p.id),
-        completedPointIds: new Set(), thanked: false,
+        completedPointIds: new Set(), greeted: false, thanked: false,
       };
       this.vehicles.push(instance);
       this.spawnMarkersForVehicle(vehicleId, vehicleSystem, nightlyPoints);
@@ -435,8 +459,8 @@ export class VehicleNightCleaningSystem {
   private beginDialogue(vehicle: VehicleCleaningInstance, kind: DialogueKind): void {
     this.dialogueVehicle = vehicle;
     this.dialogueKind = kind;
-    this.dialogueLines = kind === 'point'
-      ? DIALOGUE_LINE_POINT
+    this.dialogueLines = kind === 'point' ? DIALOGUE_LINE_POINT
+      : kind === 'return' ? (VEHICLE_RETURN_LINES[vehicle.vehicleId] ?? DIALOGUE_LINE_RETURN_FALLBACK)
       : (VEHICLE_THANKYOU_LINES[vehicle.vehicleId] ?? DIALOGUE_LINE_THANKYOU_FALLBACK);
     this.dialogueLineIndex = 0;
 
@@ -456,7 +480,7 @@ export class VehicleNightCleaningSystem {
     vs.vehicleGroup.add(this.dialogueBubble);
     showStoryBubbleText(this.dialogueBubble, wrapStoryLine(this.dialogueLines[0]));
 
-    this.state = kind === 'point' ? 'cleaningDialogue' : 'vehicleThankYou';
+    this.state = kind === 'point' ? 'cleaningDialogue' : kind === 'return' ? 'vehicleReturnDialogue' : 'vehicleThankYou';
   }
 
   private advanceDialogue(): void {
@@ -479,8 +503,23 @@ export class VehicleNightCleaningSystem {
     const kind = this.dialogueKind;
     this.dialogueVehicle = null;
 
+    if (kind === 'return') {
+      // "回歸對話＋離開表演" round — still fully player-locked: chain
+      // straight to the NEXT returned vehicle's own greeting, or (base
+      // case) finally unlock free cleaning once every vehicle has spoken.
+      // Never re-enables input in between (spec三/十: the player can't act
+      // until every returned vehicle has had its say).
+      this.beginNextReturnDialogue();
+      return;
+    }
+
     if (kind === 'thankYou' && vehicle) {
       vehicle.thanked = true;
+      // "回歸對話＋離開表演" round spec六/七 — still locked: this vehicle now
+      // performs its own departure (a "watch it leave" beat, not a free
+      // moment) before anything is unlocked again.
+      this.beginDeparture(vehicle);
+      return;
     }
 
     this.playerData.state = 'empty-handed';
@@ -494,22 +533,52 @@ export class VehicleNightCleaningSystem {
       return;
     }
 
-    if (this.vehicles.length > 0 && this.vehicles.every((v) => v.thanked)) {
-      this.finishNight();
-      return;
-    }
-
     this.state = 'cleaning';
   }
 
-  /** Every returned vehicle has been thanked (spec十三/十四) — tears down
-   * the parked vehicle meshes/markers and hands control to
-   * AfterWorkStorySystem's own (already-walking-in) NPC. */
-  private finishNight(): void {
-    for (const marker of [...this.markers]) this.removeMarker(marker.pointId);
-    for (const vehicle of this.vehicles) (vehicle.vehicleSystem as VehicleSystem).dispose();
-    this.vehicles = [];
-    this.state = 'waitingForStory';
+  // --- Departure performance (spec六/七/八) ---
+
+  /** Starts the just-thanked vehicle driving itself out — reuses
+   * VehicleSystem.onDeparting()/moveToward() UNCHANGED (the exact same
+   * methods VehicleControlSystem's own daytime departure calls), never a
+   * second movement system. Player input stays disabled straight through
+   * from the thank-you dialogue (spec八: "玩家不能再次清潔該載具...不可以
+   * 重複觸發離開" — with input locked and this vehicle's own markers
+   * already all gone by this point, none of those are reachable anyway). */
+  private beginDeparture(vehicle: VehicleCleaningInstance): void {
+    this.departingVehicle = vehicle;
+    (vehicle.vehicleSystem as VehicleSystem).onDeparting([]);
+    this.state = 'vehicleDeparting';
+  }
+
+  /** Drives the departing vehicle toward its own config.exitPosition every
+   * frame via the SAME moveToward() VehicleControlSystem's daytime
+   * departure already uses (spec七: "不要複製一套新的載具移動邏輯") — this
+   * also means the frog's own existing "won't move until its mouth has
+   * fully closed" gate (moveToward's own internal check) applies for free,
+   * with zero extra code here. Only once actually arrived (never a
+   * teleport — spec七: "不要瞬間teleport消失") is the vehicle disposed and
+   * dropped from `this.vehicles`; `waitingForStory` (spec十一: AND
+   * allVehiclesDeparted) is only reachable here, once every vehicle is
+   * gone. */
+  private updateVehicleDeparting(deltaTime: number): void {
+    const vehicle = this.departingVehicle;
+    if (!vehicle) { this.state = 'cleaning'; return; } // defensive — unreachable in practice
+    const vs = vehicle.vehicleSystem as VehicleSystem;
+    const arrived = vs.moveToward(vs.config.exitPosition, deltaTime, []);
+    if (!arrived) return;
+
+    vs.dispose();
+    this.vehicles = this.vehicles.filter((v) => v !== vehicle);
+    this.departingVehicle = null;
+
+    if (this.vehicles.length === 0) {
+      this.state = 'waitingForStory';
+      return;
+    }
+    this.playerData.state = 'empty-handed';
+    this.playerController.setInputEnabled(true);
+    this.state = 'cleaning';
   }
 
   // --- Input (spec十/十一) ---
@@ -526,7 +595,7 @@ export class VehicleNightCleaningSystem {
       return;
     }
 
-    if (this.state === 'cleaningDialogue' || this.state === 'vehicleThankYou') {
+    if (this.state === 'vehicleReturnDialogue' || this.state === 'cleaningDialogue' || this.state === 'vehicleThankYou') {
       const bindings = this.settingsManager.inputBindings;
       if (event.code === 'Space' || bindings.matches('interact', event.code) || bindings.matches('pickupPlace', event.code)) {
         event.preventDefault();
