@@ -170,9 +170,10 @@ export class DreamComicSystem {
     if (this.triggeredForDay === day) return;
     if (this.hasPlayedDream(day)) return;
     const config = DREAM_COMICS[day];
-    // No entry yet (currently just day 7 — see dream-comic-data.ts's own
-    // doc comment) — no-op entirely, the day simply begins without a room/
-    // dream beat rather than guessing at content (spec六: "不要直接亂寫").
+    // Every day 1-7 currently has an entry (dream-comic-data.ts) — this
+    // guard stays as a defensive no-op (rather than a non-null assertion)
+    // so a day accidentally missing its own slot simply begins without a
+    // room/dream beat instead of throwing.
     if (!config) return;
 
     this.triggeredForDay = day;
