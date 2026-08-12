@@ -415,27 +415,16 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
       // UpgradeSystem.settleDay's own doc comment for the idempotency
       // guard.
       upgradeSystem.settleDay(finishedDay);
-      // "載具夜間清潔互動" round — started BEFORE afterWorkStorySystem.trigger()
-      // below (spec十四: 載具回來/清潔在NPC劇情之前) but not awaited — this
-      // call is fire-and-forget from this callback's own point of view, its
-      // own update() (game-app.ts) drives the black-fade→vehicle-return→
-      // cleaning sequence across many subsequent frames. Both this call and
-      // trigger() below are no-ops on day 8 (see each class's own guard).
-      vehicleNightCleaningSystem.startNight(finishedDay);
-      // "Add day one dock story event" round — the ONE trigger point. By
-      // the time this fires, DailyFlowSystem has ALREADY synchronously
-      // advanced currentDay/state to day 2 internally (see
-      // daily-flow-system.ts's own advanceToNextDay) — this only gates the
-      // PLAYER's own experience of that already-completed transition until
-      // the story finishes; trigger() itself is a no-op for any day without
-      // a story entry, or one already played (this session or a past one).
-      // "載具夜間清潔互動" round: this still fires immediately (unchanged
-      // timing) so the NPC spawns and walks toward its own wait spot IN
-      // PARALLEL with the player's night-cleaning (spec十四) — what stops it
-      // from starting actual dialogue early is a new guard inside
-      // AfterWorkStorySystem.startStory() itself (spec十五), not a delay
-      // here.
-      afterWorkStorySystem.trigger(finishedDay);
+      // "每日結算流程調整" round — vehicleNightCleaningSystem.startNight()/
+      // afterWorkStorySystem.trigger() used to fire from right here, but
+      // this callback now only runs once the settlement panel AND item-
+      // reward popup have ALREADY been shown and dismissed (this round's
+      // whole point: 結算移到晚上流程之後), which is far too late to still
+      // start the night sequence from. Both now fire instead from
+      // vehicleControlSystem's own new onAllVehiclesDeparted hook below —
+      // the exact same moment settlement used to appear immediately, now
+      // repurposed to kick off the night sequence instead. See that hook's
+      // own doc comment for the full timing rationale.
       // "Add main menu and return player after dock story" round 四: the
       // ONE write point for hp_run_state_v1's own currentDay (spec: "日結／
       // 進入下一天後更新currentDay" — never per-frame, only here, once per
@@ -572,7 +561,24 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     // confirm→day-advance callback chain, never a second day-transition
     // system: itemRewardSystem.show() itself calls `proceed`
     // (=advanceToNextDay) immediately if today has nothing to show.
-    (finishedDay, proceed) => itemRewardSystem.show(finishedDay, proceed)
+    (finishedDay, proceed) => itemRewardSystem.show(finishedDay, proceed),
+    // "每日結算流程調整" round — fires the moment today's vehicles finish
+    // departing (the SAME moment settlement used to appear immediately);
+    // now kicks off the night sequence instead (moved here from
+    // DailyFlowSystem's own onDayCompleted callback above, which now fires
+    // far too late for this — see that callback's own doc comment). Both
+    // calls are no-ops on day 8 (each class's own guard), and
+    // vehicleNightCleaningSystem/afterWorkStorySystem are both already
+    // constructed above this point.
+    (finishedDay) => {
+      vehicleNightCleaningSystem.startNight(finishedDay);
+      afterWorkStorySystem.trigger(finishedDay);
+    },
+    // Polled from VehicleControlSystem's own update() while the settlement
+    // panel is deliberately withheld (spec: "不可以讓玩家在載具清潔或載具離
+    // 開表演期間提前進入結算") — true only once every returned vehicle has
+    // been cleaned, thanked, AND has actually departed.
+    () => vehicleNightCleaningSystem.allVehiclesCleaned
   );
 
   const unloadingSystem = new UnloadingSystem(

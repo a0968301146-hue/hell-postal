@@ -39,16 +39,18 @@ export function createItemRewardUi(): ItemRewardUiHandle {
   title.style.cssText = 'color:#e8e2d0;font-size:20px;letter-spacing:0.2em;margin-bottom:22px;';
   root.appendChild(title);
 
-  // Image placeholder box — spec三/四: "[道具圖片／placeholder]", always the
-  // generic box this round since every NewItemReward.image is null; a
-  // future round filling in real art only needs to edit the data file, see
-  // updateItemRewardCard below.
+  // Image box — today always renders the item's own emoji large (this
+  // codebase's real, non-placeholder tool-icon convention — see
+  // daily-item-reward-data.ts's own top doc comment); updateItemRewardCard
+  // below switches to an actual background-image instead the moment a
+  // future item's `image` looks like a real URL, with no other code
+  // needing to change.
   const imageBox = document.createElement('div');
   imageBox.style.cssText = [
     'width:160px', 'height:160px',
     'background:#2a2a2a', 'border:1px solid #555', 'border-radius:6px',
     'display:flex', 'align-items:center', 'justify-content:center',
-    'color:#777', 'font-size:13px', 'letter-spacing:0.1em',
+    'font-size:72px', 'line-height:1',
   ].join(';');
   root.appendChild(imageBox);
 
@@ -83,21 +85,27 @@ export function hideItemRewardUi(handle: ItemRewardUiHandle): void {
   handle.root.style.pointerEvents = 'none';
 }
 
-/** `item.image` is always null this round (daily-item-reward-data.ts's own
- * doc comment) — the generic placeholder box always shows. Once a real
- * image URL is supplied there, this switches the box to render it as a
- * background-image instead, with no other code needing to change (same
- * pattern dream-comic-ui.ts's own updateDreamComicPanel already
- * establishes for panel art). */
+/** `item.image` is an emoji string for every item defined today
+ * (daily-item-reward-data.ts) — rendered as large text filling the box,
+ * this codebase's own real tool-icon convention (see that file's top doc
+ * comment), not a stand-in for missing art. If a future item's `image`
+ * looks like an actual URL (starts with '/', 'http', or 'data:' — the same
+ * heuristic dream-comic-ui.ts's own updateDreamComicPanel uses for real
+ * panel art), this switches the box to a real background-image instead,
+ * with no other code needing to change. */
+function looksLikeImageUrl(value: string): boolean {
+  return value.startsWith('/') || value.startsWith('http') || value.startsWith('data:');
+}
+
 export function updateItemRewardCard(handle: ItemRewardUiHandle, item: NewItemReward): void {
-  if (item.image) {
+  if (looksLikeImageUrl(item.image)) {
     handle.imageBoxEl.textContent = '';
     handle.imageBoxEl.style.backgroundImage = `url(${item.image})`;
     handle.imageBoxEl.style.backgroundSize = 'cover';
     handle.imageBoxEl.style.backgroundPosition = 'center';
   } else {
     handle.imageBoxEl.style.backgroundImage = 'none';
-    handle.imageBoxEl.textContent = '道具圖片';
+    handle.imageBoxEl.textContent = item.image;
   }
   handle.nameEl.textContent = item.name;
   handle.descriptionEl.textContent = item.description;

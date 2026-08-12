@@ -177,6 +177,14 @@ export class VehicleControlSystem {
    * lost-found state itself. */
   private onShippingStarted?: () => LostFoundSettlementInput;
   private onDayCompleteContinue?: (finishedDay: number, proceed: () => void) => void;
+  private onAllVehiclesDeparted?: (finishedDay: number) => void;
+  private isNightCleaningComplete?: () => boolean;
+  /** "每日結算流程調整" round — true between beginDayCompleteSequence()
+   * kicking off the night sequence and this class's own update() detecting
+   * isNightCleaningComplete() finally returning true; while true, the
+   * settlement panel is deliberately NOT yet shown (spec: "不可以讓玩家在載
+   * 具清潔或載具離開表演期間提前進入結算"). */
+  private waitingForNightCleaning = false;
   /** MailSystem/MailBagSystem — narrow read/write surface ("Add modular
    * envelope stamping and regional mail bag system" round 九/十一): this
    * class is the ONE place a bag's region is checked against a vehicle's
@@ -206,8 +214,17 @@ export class VehicleControlSystem {
 
   private dayCompleteShown = false;
   /** Computed once at pressDepartButton() time, consumed once by
-   * showDayCompleteSummary() once all six slots finish departing. */
+   * captureSettlementAndClearMap() once all six slots finish departing. */
   private pendingSettlement: DepartureSettlement | null = null;
+  /** "每日結算流程調整" round — the settlement snapshot moved OUT of
+   * `pendingSettlement` by captureSettlementAndClearMap() (fired the moment
+   * departure completes, unchanged timing from before), held here until
+   * presentDayCompleteSummary() actually shows the panel (now much later —
+   * only once the whole night sequence finishes). Kept as a SEPARATE field
+   * from `pendingSettlement` rather than reusing it, so a defensive re-read
+   * of `pendingSettlement` elsewhere can never accidentally see stale data
+   * from a settlement that's already been captured but not yet presented. */
+  private settlementSnapshot: DepartureSettlement | null = null;
 
   /** Per-item stability timers for the shipment scan ("至少 0.5 秒") —
    * separate from PalletSystem's own timers (different map, different
@@ -247,7 +264,22 @@ export class VehicleControlSystem {
     // itself calls it (immediately, if it has nothing to show for
     // `finishedDay`). Omitted (or absent) falls back to the exact previous
     // behavior of advancing immediately.
-    onDayCompleteContinue?: (finishedDay: number, proceed: () => void) => void
+    onDayCompleteContinue?: (finishedDay: number, proceed: () => void) => void,
+    // "每日結算流程調整" round — fired the moment TODAY's vehicles finish
+    // departing (same moment settlement used to appear immediately), now
+    // used to kick off the night sequence instead (create-game-systems.ts
+    // wires this to `vehicleNightCleaningSystem.startNight(finishedDay)` +
+    // `afterWorkStorySystem.trigger(finishedDay)`). Plain callback, not a
+    // direct system-object dependency — same shape as every other onXxx?
+    // hook above.
+    onAllVehiclesDeparted?: (finishedDay: number) => void,
+    // Polled from this class's own update() while waiting (see
+    // beginDayCompleteSequence/update below) — true once every returned
+    // vehicle has been cleaned, thanked, AND has actually departed
+    // (VehicleNightCleaningSystem.allVehiclesCleaned). Omitted falls back
+    // to showing the settlement panel immediately, matching the exact
+    // previous behavior (defensive — in practice always wired).
+    isNightCleaningComplete?: () => boolean
   ) {
     this.scene = scene;
     this.physics = physics;
@@ -267,6 +299,8 @@ export class VehicleControlSystem {
     this.onVehicleDeparted = onVehicleDeparted;
     this.onShippingStarted = onShippingStarted;
     this.onDayCompleteContinue = onDayCompleteContinue;
+    this.onAllVehiclesDeparted = onAllVehiclesDeparted;
+    this.isNightCleaningComplete = isNightCleaningComplete;
 
     // Initial roster — Day 1's own unlocked vehicles (same derivation
     // resetForNewDay() below reuses on every later day transition). Reads
@@ -681,6 +715,17 @@ export class VehicleControlSystem {
   update(deltaTime: number): void {
     for (const slot of this.slots) this.updateSlot(slot, deltaTime);
     this.scanCargoForShipment(deltaTime);
+
+    // "每日結算流程調整" round — same "poll another system's public getter
+    // from update()" pattern AfterWorkStorySystem's own NPC-gating already
+    // established (vehicle-night-cleaning-system.ts's own doc comment).
+    // `state` only ever advances inside VehicleNightCleaningSystem's own
+    // update(), which itself only runs while unpaused — polling here every
+    // unpaused frame cannot miss the moment it becomes true.
+    if (this.waitingForNightCleaning && this.isNightCleaningComplete?.()) {
+      this.waitingForNightCleaning = false;
+      this.presentDayCompleteSummary(() => this.continueAfterSettlement());
+    }
   }
 
   /** Drives one slot's vehicle along its VEHICLE_ROUTES waypoint list one
@@ -863,31 +908,53 @@ export class VehicleControlSystem {
 
   /** Only fires once every one of TODAY's slots has independently finished
    * departing — `dayCompleteShown` guards against any slot's transition
-   * re-firing this after the panel is already up (every slot stays
-   * 'departed' the whole time the panel is open). "船運載具規格重製" round:
-   * `this.slots` already IS exactly today's roster, so no separate unlock
-   * filter is needed here anymore (compare the old isSlotUnlockedToday-based
-   * filtering this replaced).
-   *
-   * "每日結算流程修改" round spec一: this is now the ONLY place a normal day
-   * actually settles — there is no more player-facing 結束今天 button, so the
-   * moment the player dismisses this summary panel the day must advance on
-   * its own (see the showDayCompleteSummary(onSummaryClosed) call below,
-   * same wiring the test cheat's forceSettleDayForTesting already used). */
+   * re-firing this after the sequence is already under way (every slot
+   * stays 'departed' the whole time). "船運載具規格重製" round: `this.slots`
+   * already IS exactly today's roster, so no separate unlock filter is
+   * needed here anymore (compare the old isSlotUnlockedToday-based
+   * filtering this replaced). */
   private checkAllDeparted(): void {
     if (this.slots.every((s) => s.state === 'departed') && !this.dayCompleteShown) {
-      this.dayCompleteShown = true;
-      this.showDayCompleteSummary(() => this.continueAfterSettlement());
+      this.beginDayCompleteSequence();
     }
   }
 
-  /** "每日獲得道具" round — the ONE place both real callers (checkAllDeparted
-   * above, forceSettleDayForTesting below) route through once the
-   * settlement summary is dismissed, so the optional reward-popup hook
-   * (onDayCompleteContinue) and the fallback direct-advance behavior never
-   * drift apart between the two call sites. `dailyFlowSystem.currentDay` is
-   * read HERE, before advanceToNextDay() has run, so it's still the day
-   * that just finished — the exact day any reward is keyed to. */
+  /** "每日結算流程調整" round — the ONE place both real callers
+   * (checkAllDeparted above, forceSettleDayForTesting below) route through
+   * the moment today's vehicles finish departing, so the settlement/night-
+   * cleaning wiring never drifts apart between the two call sites.
+   *
+   * Previously this is where the settlement panel appeared immediately.
+   * Now it instead captures the settlement snapshot (unchanged timing —
+   * see captureSettlementAndClearMap) and hands off to the night sequence
+   * via onAllVehiclesDeparted (spec一: "白天送出載具→黑幕進入晚上"); the
+   * settlement panel itself is deferred to presentDayCompleteSummary(),
+   * only actually shown once this class's own update() detects
+   * isNightCleaningComplete() finally returning true (spec: "確認所有載具
+   * 都已離開→顯示每日結算") — never shown while cleaning/thank-you/departure
+   * are still in progress, since nothing calls presentDayCompleteSummary()
+   * until that poll succeeds. If isNightCleaningComplete isn't wired at all
+   * (defensive — in practice always is), falls back to the exact previous
+   * immediate-settlement behavior so this class never silently hangs. */
+  private beginDayCompleteSequence(): void {
+    this.dayCompleteShown = true;
+    this.captureSettlementAndClearMap();
+    const finishedDay = this.dailyFlowSystem.currentDay;
+    if (this.isNightCleaningComplete) {
+      this.waitingForNightCleaning = true;
+      this.onAllVehiclesDeparted?.(finishedDay);
+    } else {
+      this.presentDayCompleteSummary(() => this.continueAfterSettlement());
+    }
+  }
+
+  /** "每日獲得道具" round — the ONE place both real callers of
+   * presentDayCompleteSummary route through once the settlement summary is
+   * dismissed, so the optional reward-popup hook (onDayCompleteContinue)
+   * and the fallback direct-advance behavior never drift apart between the
+   * two call sites. `dailyFlowSystem.currentDay` is read HERE, before
+   * advanceToNextDay() has run, so it's still the day that just finished —
+   * the exact day any reward is keyed to. */
   private continueAfterSettlement(): void {
     const finishedDay = this.dailyFlowSystem.currentDay;
     const proceed = () => this.dailyFlowSystem.advanceToNextDay();
@@ -895,27 +962,19 @@ export class VehicleControlSystem {
     else proceed();
   }
 
-  /** Completion screen — reads the settlement snapshot computed back at
-   * pressDepartButton() press time (total/success/unshipped/penalty/
-   * finalScore), rather than re-deriving anything from CargoData (which is
-   * no longer meaningful here — every daily cargo item, shipped or not, has
-   * been destroyed by now: shipped ones via finishSlotDeparture above,
-   * never-shipped ones will be swept up by DailyFlowSystem.advanceToNextDay's
-   * own next-day cleanup, fired automatically once this panel closes — see
-   * `onSummaryClosed` below). Falls back to an all-zero snapshot only
-   * defensively (pendingSettlement is always set by pressDepartButton before
-   * departure can even begin).
-   *
-   * `onSummaryClosed` fires AFTER the normal 繼續 handling, i.e. once the
-   * summary panel is actually gone and the game is unpaused again — never
-   * before, so anything it triggers (the day-1 dock-story NPC, the next
-   * day's own cargo/vehicle/tool regeneration) can't fire hidden behind the
-   * still-open panel/pause lock. Both real callers (checkAllDeparted above
-   * for normal play, forceSettleDayForTesting below for the test cheat) pass
-   * the SAME dailyFlowSystem.advanceToNextDay callback — there is no
-   * cheat-only day-advance path to keep in sync. */
-  private showDayCompleteSummary(onSummaryClosed?: () => void): void {
-    const settlement = this.pendingSettlement ?? {
+  /** "每日結算流程調整" round — split off the FIRST half of what used to be
+   * a single showDayCompleteSummary(): snapshotting the settlement
+   * (total/success/unshipped/penalty/finalScore, computed back at
+   * pressDepartButton() press time) into `settlementSnapshot` (falling back
+   * to an all-zero object only defensively — pendingSettlement is always
+   * set by pressDepartButton before departure can even begin), and firing
+   * `dailyFlowSystem.notifyDayComplete()` (clears leftover unshipped map
+   * objects) — deliberately kept at this SAME early moment as before this
+   * round (immediately once departure completes), even though the summary
+   * PANEL itself now only appears much later, so map cleanup timing is
+   * unaffected by this round's own scope (spec六: "只調整結算觸發時機"). */
+  private captureSettlementAndClearMap(): void {
+    this.settlementSnapshot = this.pendingSettlement ?? {
       total: this.dailyFlowSystem.totalCargoCount, shipped: 0, unshipped: 0, penalty: 0,
       lostFoundMissedCount: 0, lostFoundPenalty: 0,
       lostItemTotal: 0, lostItemHandedOver: 0, lostItemStoredCount: 0, lostItemUnstoredCount: 0, lostItemPenalty: 0,
@@ -929,8 +988,37 @@ export class VehicleControlSystem {
       finalScore: 0,
     };
     this.pendingSettlement = null;
-
     this.dailyFlowSystem.notifyDayComplete();
+  }
+
+  /** "每日結算流程調整" round — the SECOND half of the old
+   * showDayCompleteSummary(): actually pausing and showing the HUD panel,
+   * using the snapshot captureSettlementAndClearMap() already took. Now
+   * only ever called once the whole night sequence has genuinely finished
+   * (from update()'s own isNightCleaningComplete() poll) or, for the
+   * defensive isNightCleaningComplete-not-wired fallback, immediately from
+   * beginDayCompleteSequence().
+   *
+   * `onSummaryClosed` fires AFTER the normal 繼續 handling, i.e. once the
+   * summary panel is actually gone and the game is unpaused again — never
+   * before, so anything it triggers (the item-reward popup, the next day's
+   * own cargo/vehicle/tool regeneration) can't fire hidden behind the
+   * still-open panel/pause lock. Both real callers (beginDayCompleteSequence
+   * for normal play AND the test cheat) pass the SAME
+   * dailyFlowSystem.advanceToNextDay callback via continueAfterSettlement —
+   * there is no cheat-only day-advance path to keep in sync. */
+  private presentDayCompleteSummary(onSummaryClosed?: () => void): void {
+    const settlement = this.settlementSnapshot ?? {
+      total: this.dailyFlowSystem.totalCargoCount, shipped: 0, unshipped: 0, penalty: 0,
+      lostFoundMissedCount: 0, lostFoundPenalty: 0,
+      lostItemTotal: 0, lostItemHandedOver: 0, lostItemStoredCount: 0, lostItemUnstoredCount: 0, lostItemPenalty: 0,
+      mailTotal: 0, mailShipped: 0, mailUnshipped: 0, mailPenalty: 0,
+      frozenTotal: 0, frozenTier100: 0, frozenTier75: 0, frozenTier50: 0, frozenTier25: 0, frozenPenalty: 0,
+      liveTotal: 0, liveComfortableCount: 0, liveAnxiousCount: 0, liveScaredCount: 0, liveBonus: 0,
+      finalScore: 0,
+    };
+    this.settlementSnapshot = null;
+
     this.onPauseChange(true);
     this.hud.showDayCompleteSummary({
       ...settlement,
@@ -978,6 +1066,6 @@ export class VehicleControlSystem {
     live: LiveSettlementInput
   ): void {
     this.pendingSettlement = this.scoringSystem.settleDeparture(cargoTotal, cargoTotal, 0, lostFound, mail, frozen, live);
-    this.showDayCompleteSummary(() => this.continueAfterSettlement());
+    if (!this.dayCompleteShown) this.beginDayCompleteSequence();
   }
 }
