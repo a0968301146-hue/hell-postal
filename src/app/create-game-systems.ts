@@ -38,6 +38,7 @@ import { ToolStationSystem } from '../systems/tool-station-system';
 import { EnvelopeVacuumSystem } from '../systems/envelope-vacuum-system';
 // "Add day one dock story event" round.
 import { AfterWorkStorySystem } from '../systems/story/after-work-story-system';
+import { DreamComicSystem } from '../systems/dream-comic/dream-comic-system';
 // "Add complete day testing cheat button" round.
 import { CompleteDayCheatSystem } from '../systems/cheat/complete-day-cheat-system';
 // "Add main menu and return player after dock story" round.
@@ -106,6 +107,8 @@ export interface GameSystems {
   envelopeVacuumSystem: EnvelopeVacuumSystem;
   /** "Add day one dock story event" round. */
   afterWorkStorySystem: AfterWorkStorySystem;
+  /** "每日起床＋夢境漫畫" round. */
+  dreamComicSystem: DreamComicSystem;
   /** "Add complete day testing cheat button" round. */
   completeDayCheatSystem: CompleteDayCheatSystem;
   /** "Add main menu and return player after dock story" round. */
@@ -486,6 +489,17 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     cargoSystem, dailyFlowSystem
   );
 
+  // "每日起床＋夢境漫畫" round — constructed right after afterWorkStorySystem
+  // (needs its own `isActive` getter as a read-only dependency, same
+  // established "read another system's public state, never reach into its
+  // internals" convention every other cross-system reference in this file
+  // already follows) and dailyFlowSystem (reads currentDay/state every idle
+  // frame to detect a fresh day starting — see DreamComicSystem's own class
+  // doc comment for the full trigger-timing reasoning).
+  const dreamComicSystem = new DreamComicSystem(
+    camera, physics, playerController, playerData, settingsManager, dailyFlowSystem, afterWorkStorySystem
+  );
+
   // Vehicle spawn/depart control (hall center) — re-enabled this round
   // (see feature-flags.ts ENABLE_VEHICLE_LOADING_FLOW). Needs
   // pickupSystem to register/deregister the cargo bed surface as vehicles
@@ -721,6 +735,12 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     // 故事完成狀態" — clears the persisted completedDays flag so the next
     // playthrough's own day-1-end genuinely re-triggers the story.
     afterWorkStorySystem.resetStoryProgress();
+    // "每日起床＋夢境漫畫" round — same "新周目重置" reasoning as
+    // afterWorkStorySystem.resetStoryProgress() immediately above: clears the
+    // persisted hp_dream_comic_v1 flag so the next playthrough's own Day1
+    // genuinely replays its dream instead of being silently suppressed by a
+    // stale completedDays entry from a previous run.
+    dreamComicSystem.resetDreamProgress();
     window.location.reload();
   };
 
@@ -751,6 +771,6 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     upgradeSystem, similarCargoHighlight, mediaPlayerSystem,
     toolSystem, cargoHookSystem, spraySystem,
     ladderSystem, toolStationSystem, envelopeVacuumSystem,
-    afterWorkStorySystem, completeDayCheatSystem, mainMenuSystem, freezerSystem, livingCargoSystem,
+    afterWorkStorySystem, dreamComicSystem, completeDayCheatSystem, mainMenuSystem, freezerSystem, livingCargoSystem,
   };
 }

@@ -83,3 +83,25 @@ export const PLAYER_CHAIR = new THREE.Vector3(8.8, PLAYER_ROOM.floorY, 5.0);
 export const PLAYER_ROOM_LABEL_POS = new THREE.Vector3(
   roomCx, PLAYER_ROOM.floorY + PLAYER_ROOM.ceilingHeight - 0.5, roomCz
 );
+
+/** "每日起床＋夢境漫畫" round — where the player teleports to at the start of
+ * each day (spec二: "玩家出生在床的旁邊、面向房間內部、確保角色碰撞體不會與
+ * 床、牆、家具重疊"). East of the bed's own footprint (PLAYER_BED spans x
+ * 4.3..5.7) with real clearance (bed's east edge 5.7, this spot's x 6.2 — a
+ * 0.5m gap), well clear of every other piece of furniture (PLAYER_WARDROBE
+ * x 4.2..4.8/z 6.8..7.8, PLAYER_DESK x 9.2..9.8/z 4.4..5.6) and every wall
+ * (PLAYER_ROOM spans x 4..10/z 4..10). `facingYaw` follows the same
+ * convention MAIN_ROOM_CENTER_SPAWN (logistics-layout-data.ts) already
+ * documents — THREE's own rotation.y, 0 = local -Z = Compass North — so
+ * Math.PI faces south, toward the room's own open floor and door
+ * (PLAYER_ROOM_DOOR sits on the south wall), i.e. "面向房間內部" (spec). `y`
+ * is FLOOR-space (mirrors PLAYER_CHAIR/fishingSeatAnchorA's own convention,
+ * not a baked-in eye-height) — the teleport code applies the same
+ * body/camera Y offsets AfterWorkStorySystem.teleportToMainRoomCenter()
+ * already uses (floorY + 0.9 body, +0.6 more for camera) for consistency. */
+export const PLAYER_ROOM_BEDSIDE_SPAWN = {
+  x: PLAYER_BED.centerX + PLAYER_BED.sizeX / 2 + 0.5,
+  y: PLAYER_ROOM.floorY,
+  z: PLAYER_BED.centerZ,
+  facingYaw: Math.PI,
+};

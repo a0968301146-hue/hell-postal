@@ -331,6 +331,14 @@ export class GameApp {
         bannerText,
       });
       hud.updateHeldCount(s.pickupSystem.heldCount, s.pickupSystem.maxCarryCapacity);
+      // "每日起床＋夢境漫畫" round — deliberately INSIDE this paused-gated
+      // block, unlike afterWorkStorySystem.update() below (see
+      // DreamComicSystem's own class doc comment for why): this class polls
+      // dailyFlowSystem.currentDay/state every idle frame to detect a fresh
+      // day starting, and must not be able to do so while e.g. the main menu
+      // overlay still covers the screen at boot (MainMenuSystem pauses via
+      // PauseManager the whole time it's shown).
+      s.dreamComicSystem.update();
     }
 
     s.compassUI.update(camera);
