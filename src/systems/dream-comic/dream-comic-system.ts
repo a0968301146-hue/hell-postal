@@ -105,6 +105,14 @@ export class DreamComicSystem {
   private triggeredForDay: number | null = null;
   private activeDay = 0;
   private panelIndex = 0;
+  /** "結算搶跑於NPC劇情之前" round spec E — tracks which day's own
+   * dailyFlowSystem.displayDay sync has already fired, so checkDreamStart()
+   * (polled every idle frame) calls DailyFlowSystem.syncDisplayDay() exactly
+   * ONCE per real day transition rather than every frame. See
+   * checkDreamStart()'s own doc comment for why this class (rather than
+   * DailyFlowSystem itself) is the one deciding WHEN the player-visible day
+   * number catches up to the real currentDay. */
+  private displaySyncedForDay = 1;
 
   constructor(
     camera: THREE.PerspectiveCamera, physics: PhysicsSystem, playerController: PlayerController,
@@ -162,8 +170,26 @@ export class DreamComicSystem {
     if (this.state === 'inactive') this.checkDreamStart();
   }
 
+  /** "結算搶跑於NPC劇情之前" round spec E — the top-right HUD's own displayed
+   * day number is deliberately held back at the OLD value (see
+   * DailyFlowSystem.displayDay's own doc comment) all the way through
+   * settlement/item-reward, only catching up here, the FIRST time this
+   * method runs for a NEW currentDay — whether that call goes on to actually
+   * show a dream (days 1-7, the common case: sync and beginDream() fire in
+   * the very same synchronous call, so the stale number is never visibly
+   * painted before the dream's own full-screen overlay already covers it)
+   * or hits Day8's own `day > 7` early-return just below (no dream ever
+   * plays for Day8, so THIS is the only moment left to catch the display
+   * up — spec F: "Day8不得受到影響" means Day8's own flow stays untouched,
+   * but its displayDay still needs to reach 8 somehow). `displaySyncedForDay`
+   * guards this to fire exactly once per real day transition, not every
+   * idle frame this method is polled. */
   private checkDreamStart(): void {
     const day = this.dailyFlowSystem.currentDay;
+    if (day !== this.displaySyncedForDay) {
+      this.displaySyncedForDay = day;
+      this.dailyFlowSystem.syncDisplayDay();
+    }
     if (day < 1 || day > 7) return; // Day8 never gets a dream this round (spec十).
     if (this.dailyFlowSystem.state !== 'ready') return;
     if (this.afterWorkStorySystem.isActive) return;

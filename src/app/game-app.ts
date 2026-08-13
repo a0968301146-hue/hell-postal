@@ -325,7 +325,13 @@ export class GameApp {
         : (flowState === 'dayComplete' && s.dailyFlowSystem.dayCompleteBannerVisible) ? '今日貨物已全部送出'
         : null;
       hud.updateDailyFlow({
-        day: s.dailyFlowSystem.currentDay,
+        // "結算搶跑於NPC劇情之前" round spec E — the player-visible day number
+        // deliberately reads displayDay, not currentDay itself (see that
+        // field's own doc comment on DailyFlowSystem) — every OTHER read of
+        // currentDay elsewhere in this codebase (unlock gating, cargo/vehicle
+        // regeneration, upgrade settlement, etc.) is untouched and keeps
+        // reading the real, immediately-advancing currentDay.
+        day: s.dailyFlowSystem.displayDay,
         stateLabel: this.dailyStateLabel(flowState),
         total: s.dailyFlowSystem.totalCargoCount,
         unorganized: s.dailyFlowSystem.unorganizedCount,

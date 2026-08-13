@@ -35,6 +35,19 @@ export type DailyState =
  */
 export class DailyFlowSystem {
   currentDay = 1;
+  /** "結算搶跑於NPC劇情之前" round spec E — the top-right HUD's own "第 N 天"
+   * text reads THIS, never `currentDay` directly. `currentDay` still
+   * advances the instant advanceToNextDay() runs (every OTHER system —
+   * cargo/vehicle/tool unlock gating, upgrade settlement, etc. — keeps
+   * reading the real `currentDay`, unchanged); only the number the PLAYER
+   * actually sees on screen is deliberately held back at the OLD value until
+   * DreamComicSystem's own checkDreamStart() calls syncDisplayDay() — the
+   * moment the new day's dream begins playing (or, on a day with no dream at
+   * all, the moment that's been determined nothing further is gating the
+   * display, e.g. Day8's own transition). Initialized equal to `currentDay`
+   * so a fresh page load never shows a mismatched number before the very
+   * first sync ever needs to run. */
+  displayDay = 1;
   state: DailyState = 'ready';
   dailyCargoIds: Set<string> = new Set();
   totalCargoCount = 0;
@@ -190,6 +203,19 @@ export class DailyFlowSystem {
    * clears. */
   hideDayCompleteBanner(): void {
     this.dayCompleteBannerVisible = false;
+  }
+
+  /** "結算搶跑於NPC劇情之前" round spec E — the ONE place `displayDay` ever
+   * changes, called from DreamComicSystem's own checkDreamStart() the moment
+   * it resolves whether the new day's dream will play (or determines there's
+   * nothing left gating the display, e.g. Day8 which has no dream at all) —
+   * see that method's own doc comment for the exact timing. Public rather
+   * than folded into a callback purely because DreamComicSystem already
+   * holds a live `dailyFlowSystem` reference (constructor dependency), the
+   * same "call a plain public method on another system's own live instance"
+   * convention every other cross-system hook in this file already uses. */
+  syncDisplayDay(): void {
+    this.displayDay = this.currentDay;
   }
 
   /** "每日結算流程修改" round — the ONE place a day actually advances, now

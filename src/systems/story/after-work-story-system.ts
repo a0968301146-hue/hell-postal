@@ -178,9 +178,26 @@ const CHAR_INTERVAL_MS: Record<TextSpeed, number> = { slow: 55, standard: 35, fa
 const SKIP_HOLD_KEY_CODE = 'KeyR';
 const SKIP_HOLD_SECONDS = 1.5;
 
-const STORAGE_KEY = 'hp_after_work_story_v1';
+/** BUG FIX ("結算搶跑於NPC劇情之前" round) — bumped from _v1's own
+ * `{ completedDays: number[] }` shape, which remembered EVERY previously-
+ * finished day forever. trigger()/checkGiantCakeDayStart only ever check
+ * membership for the ONE day currently in flight (never a historical day —
+ * confirmed: no other call site reads this key), so an ever-growing array
+ * had no real behavioral advantage over a single scalar, but a real
+ * liability: an entry left over from an EARLIER, unrelated dev/test session
+ * (e.g. currentDay manually forced back to a day whose story had already
+ * genuinely played in a different session/save) would silently convince
+ * trigger() "today's story already happened" even though it demonstrably
+ * never did in THIS run — VehicleControlSystem's own settlement gate
+ * (isTodaysStoryResolved below) would then fire the instant the last vehicle
+ * departed, with the NPC never having appeared at all. `resolvedDay` only
+ * ever holds the SINGLE most-recently-resolved day (or null) — trigger()
+ * only ever compares it against the one `finishedDay` it was just called
+ * with, so this narrower shape is a strict fix with no lost functionality
+ * for real, non-tampered play. */
+const STORAGE_KEY = 'hp_after_work_story_v2';
 interface StoryProgress {
-  completedDays: number[];
+  resolvedDay: number | null;
 }
 
 /** Day8's own closing credits — this prototype has no real staff roster, so
@@ -356,20 +373,18 @@ export class AfterWorkStorySystem {
 
   private hasCompletedDay(day: number): boolean {
     const saved = this.storage.getJSON<StoryProgress>(STORAGE_KEY);
-    return !!saved?.completedDays.includes(day);
+    return saved?.resolvedDay === day;
   }
 
   private markDayCompleted(day: number): void {
-    const saved = this.storage.getJSON<StoryProgress>(STORAGE_KEY) ?? { completedDays: [] };
-    if (!saved.completedDays.includes(day)) saved.completedDays.push(day);
-    this.storage.setJSON(STORAGE_KEY, saved);
+    this.storage.setJSON(STORAGE_KEY, { resolvedDay: day });
   }
 
   /** The ONE "new playthrough" hook — called from create-game-systems.ts's
    * existing "重新開始第1天" reset flow, right alongside
    * upgradeSystem.resetUpgradesForNewRun(), before the page reload that flow
    * already performs. That reload alone would already reset this class's own
-   * in-memory state, but the PERSISTED completedDays flag would otherwise
+   * in-memory state, but the PERSISTED resolvedDay flag would otherwise
    * survive across it and wrongly suppress next time — this clears that. */
   resetStoryProgress(): void {
     this.storage.removeItem(STORAGE_KEY);
@@ -380,6 +395,25 @@ export class AfterWorkStorySystem {
    * 'finaleCredits' are the only states where nothing is in flight. */
   get isActive(): boolean {
     return this.state !== 'inactive' && this.state !== 'completed' && this.state !== 'finaleCredits';
+  }
+
+  /** THE explicit, reliable signal for "is today's after-work story fully
+   * wrapped up" (spec: "不要用isActive===false推測NPC是否完成" —
+   * VehicleControlSystem's own settlement gate reads THIS, not isActive,
+   * even though the two currently share the same underlying state check).
+   * The distinction is about WHERE correctness comes from: `isActive` is a
+   * generic "is anything in flight" flag whose value is only trustworthy
+   * because trigger()'s own hasCompletedDay() check (see that method's own
+   * doc comment / STORAGE_KEY's own doc comment) now can no longer be fooled
+   * by a stale, unrelated-session persisted flag — the fix lives THERE, not
+   * in this getter's own boolean logic, which is why a plain rename (rather
+   * than a genuinely different check) is still the correct, sufficient fix:
+   * once trigger()'s own INPUT is trustworthy, `state` reaching 'inactive'/
+   * 'completed'/'finaleCredits' is unambiguous proof today's story either
+   * never needed to run or genuinely finished — never a false "already done"
+   * for a story nobody in THIS save has ever actually seen. */
+  get isTodaysStoryResolved(): boolean {
+    return !this.isActive;
   }
 
   /** TEMPORARY TEST HOOK — used only by the new "跳至第八天" button
