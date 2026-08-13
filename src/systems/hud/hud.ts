@@ -118,23 +118,42 @@ export class HUD {
 
     // "NPC劇情→結算" round — the black-fade bridging "NPC story just ended,
     // player free in the hall" to "settlement panel appears" (spec一/二:
-    // "NPC劇情結束與結算之間要有黑幕轉場"), mirrors vehicle-night-cleaning-
-    // ui.ts's/dream-comic-ui.ts's own exact full-screen fade CSS shape
-    // (appended to document.body directly, not nested under #hud, for the
-    // same reason those two are — a true `inset:0` overlay independent of
-    // #hud's own stacking context). Deliberately NOT the same element as
-    // AfterWorkStorySystem's own fadeEl (that one is scoped to the "return
-    // to hall" transition and stays owned there) — this one's lifecycle
-    // spans settlement→item-reward→next-day-dream, cleared back to 0 by
-    // DreamComicSystem.beginDream() once the dream's own full-screen overlay
-    // is up (see that method's own doc comment), well before it ever fades
-    // ITSELF out and would otherwise reveal this element still sitting at
-    // opacity 1 underneath.
+    // "NPC劇情結束與結算之間要有黑幕轉場"). Deliberately NOT the same element
+    // as AfterWorkStorySystem's own fadeEl (that one is scoped to the
+    // "return to hall" transition and stays owned there) — this one's
+    // lifecycle spans settlement→item-reward→next-day-dream, cleared back to
+    // 0 by DreamComicSystem.beginDream() once the dream's own full-screen
+    // overlay is up (see that method's own doc comment).
+    //
+    // BUG FIX ("NPC劇情完成後黑幕卡住" round) — root cause: this originally
+    // shared vehicle-night-cleaning-ui.ts's/dream-comic-ui.ts's own z-index
+    // convention (9500-9700, picked purely by copying their exact CSS shape
+    // without re-checking what it would sit ON TOP of) — but unlike those
+    // two, THIS fade's whole purpose is to have interactive UI show ON TOP
+    // of it (#shipment-summary), and #shipment-summary lives INSIDE #hud,
+    // whose OWN z-index is only 100 — so at 9600 this fade rendered above
+    // #hud's entire stacking context, visually burying the settlement panel
+    // completely (confirmed live: getComputedStyle showed the panel
+    // genuinely `display:block`/`.visible`, and — because pointer-events:
+    // none makes this fade transparent to hit-testing — its own Continue
+    // button was still genuinely clickable via a direct .click() call, so
+    // this was never a real state-machine or input-lock deadlock, purely an
+    // invisible-but-technically-there UI). Deliberately kept BELOW every
+    // #hud-scoped z-index in this file (#hud itself is 100, the lowest
+    // HUD-tier value elsewhere in this codebase is #lost-found-status's 90)
+    // rather than raised above them — the fade only ever needs to darken the
+    // 3D world behind the HUD, never the HUD/settlement panel itself, and a
+    // low, HUD-relative value here is far less likely to blindly bury some
+    // FUTURE popup the same way, unlike copying a very high number without
+    // checking against it first. z-index 9500-9700 elsewhere in this file
+    // (vehicle-night-cleaning-ui.ts's own night-transition fade, item-reward/
+    // dream-comic's own full-screen overlays) is unaffected by this change —
+    // none of those needs anything to show on top of THEM.
     this.dayEndFadeEl = document.createElement('div');
     this.dayEndFadeEl.id = 'day-end-fade';
     this.dayEndFadeEl.style.cssText = [
       'position:fixed', 'inset:0', 'background:#000', 'opacity:0', 'pointer-events:none',
-      'transition:opacity 0.6s ease', 'z-index:9600',
+      'transition:opacity 0.6s ease', 'z-index:50',
     ].join(';');
     document.body.appendChild(this.dayEndFadeEl);
 
