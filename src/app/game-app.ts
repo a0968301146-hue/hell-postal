@@ -317,8 +317,12 @@ export class GameApp {
       // alongside every other gameplay system while paused).
       s.envelopeDispatchMachineSystem.update(deltaTime);
       const flowState = s.dailyFlowSystem.state;
+      // "Banner貫穿夜晚" round — the 'dayComplete' banner has its own display
+      // flag now (dayCompleteBannerVisible), separate from `state` itself,
+      // since `state` stays 'dayComplete' for the whole night sequence (see
+      // that flag's own doc comment on DailyFlowSystem).
       const bannerText = flowState === 'completed' ? '今日貨物已全部裝載'
-        : flowState === 'dayComplete' ? '今日貨物已全部送出'
+        : (flowState === 'dayComplete' && s.dailyFlowSystem.dayCompleteBannerVisible) ? '今日貨物已全部送出'
         : null;
       hud.updateDailyFlow({
         day: s.dailyFlowSystem.currentDay,

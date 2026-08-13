@@ -26,7 +26,7 @@ export type NightCleaningState =
   | 'vehicleReturnDialogue' // "回歸對話＋離開表演" round — one returned vehicle greeting the player, BEFORE cleaning unlocks; chains sequentially through every returned vehicle
   | 'cleaning'              // player free to walk between vehicles/points — completing an ordinary (non-final) point never leaves this state ("清潔光點完成後無法移動" round: the previous per-point "……" popup/lock was removed entirely, see completePoint()'s own doc comment)
   | 'vehicleThankYou'       // popup after a WHOLE vehicle's points all complete, player locked — the ONE place completing a point still locks
-  | 'vehicleDeparting'      // "回歸對話＋離開表演" round — the just-thanked vehicle is driving itself out (VehicleSystem.moveToward toward its own exitPosition), player locked, before it's finally removed
+  | 'vehicleDeparting'      // the just-thanked vehicle is driving itself out (VehicleSystem.moveToward toward its own exitPosition) before it's finally removed — player free to walk (input restored the moment this starts, "載具離開時玩家無法移動" round), just can't start charging another point until this vehicle is fully gone
   | 'waitingForStory';      // every vehicle cleaned+thanked+departed — AfterWorkStorySystem's own NPC may now start dialogue
 
 /** One returned vehicle's own overnight cleaning progress — `vehicleSystem`

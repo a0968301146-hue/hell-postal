@@ -554,14 +554,26 @@ export class VehicleNightCleaningSystem {
   /** Starts the just-thanked vehicle driving itself out — reuses
    * VehicleSystem.onDeparting()/moveToward() UNCHANGED (the exact same
    * methods VehicleControlSystem's own daytime departure calls), never a
-   * second movement system. Player input stays disabled straight through
-   * from the thank-you dialogue (spec八: "玩家不能再次清潔該載具...不可以
-   * 重複觸發離開" — with input locked and this vehicle's own markers
-   * already all gone by this point, none of those are reachable anyway). */
+   * second movement system.
+   *
+   * BUG FIX ("載具離開時玩家無法移動" round) — root cause: player input used
+   * to stay disabled straight through from the thank-you dialogue until
+   * updateVehicleDeparting() below detected `arrived`, i.e. the player was
+   * forced to stand still and watch the whole departure animation for EVERY
+   * vehicle, not just the last one. Restoring input right here instead (the
+   * moment departure STARTS, not once it finishes) is the actual fix — the
+   * vehicle still drives itself away for real over the following frames
+   * (moveToward, unchanged below), it just no longer requires the player to
+   * stand and watch it happen. `this.state` stays 'vehicleDeparting' (not
+   * 'cleaning') the whole time regardless — the player can walk around
+   * freely, but can't start charging another point until THIS vehicle's own
+   * departure is fully done (onKeyDown's own 'cleaning'-only gate below). */
   private beginDeparture(vehicle: VehicleCleaningInstance): void {
     this.departingVehicle = vehicle;
     (vehicle.vehicleSystem as VehicleSystem).onDeparting([]);
     this.state = 'vehicleDeparting';
+    this.playerData.state = 'empty-handed';
+    this.playerController.setInputEnabled(true);
   }
 
   /** Drives the departing vehicle toward its own config.exitPosition every
@@ -573,25 +585,9 @@ export class VehicleNightCleaningSystem {
    * teleport — spec七: "不要瞬間teleport消失") is the vehicle disposed and
    * dropped from `this.vehicles`; `waitingForStory` (spec十一: AND
    * allVehiclesDeparted) is only reachable here, once every vehicle is
-   * gone.
-   *
-   * BUG FIX ("清潔完成後玩家無法移動" round) — root cause: this method used
-   * to only re-enable player input in the `this.vehicles.length > 0`
-   * branch (more vehicles still to clean), never in the `=== 0` branch
-   * (every vehicle done, heading into 'waitingForStory'). Since nothing
-   * else in the whole night-cleaning→NPC handoff ever calls
-   * setInputEnabled(true) again — AfterWorkStorySystem deliberately leaves
-   * player input alone while its own NPC is merely walking in/waiting
-   * ('npcWalking'/'waitingForPlayer'; it only locks input itself once the
-   * player actively presses E to start dialogue, in startStory()/
-   * beginLetterReading()) — the player was left permanently stuck at
-   * playerData.state='stamping-minigame' with input disabled the instant
-   * the LAST vehicle of the night finished departing, with no system left
-   * to ever restore it. Re-enabling unconditionally, before branching on
-   * vehicle count, is the actual fix — the player must always be free to
-   * walk around (including over to the waiting NPC) once every vehicle has
-   * cleaned+thanked+departed, exactly as they already are while mid-way
-   * through the night with vehicles still remaining. */
+   * gone. Player input is no longer this method's concern at all — see
+   * beginDeparture()'s own doc comment, it's already been restored the
+   * moment departure started. */
   private updateVehicleDeparting(deltaTime: number): void {
     const vehicle = this.departingVehicle;
     if (!vehicle) { this.state = 'cleaning'; return; } // defensive — unreachable in practice
@@ -603,17 +599,29 @@ export class VehicleNightCleaningSystem {
     this.vehicles = this.vehicles.filter((v) => v !== vehicle);
     this.departingVehicle = null;
 
-    this.playerData.state = 'empty-handed';
-    this.playerController.setInputEnabled(true);
-
     this.state = this.vehicles.length === 0 ? 'waitingForStory' : 'cleaning';
   }
 
   // --- Input (spec十/十一) ---
 
+  /** BUG FIX ("進入黑夜卡死風險" round) — no longer gates on
+   * playerController.isLocked, matching DreamComicSystem's/ItemRewardSystem's
+   * own established fix for the exact same class of bug ("夢境卡死修正" round
+   * — see DreamComicSystem.onKeyDown's own doc comment for the full root-
+   * cause writeup): Pointer Lock is a browser-level concept this feature's
+   * own dialogue advance/interact keys have no real reason to depend on — if
+   * real Pointer Lock is ever lost for any reason (window blur, Escape, a
+   * browser quirk) while the player is mid-dialogue here, gating on isLocked
+   * would silently drop every subsequent E press, leaving the player
+   * permanently stuck at playerData.state='stamping-minigame' with no way to
+   * ever advance/end the dialogue that's the ONLY thing still holding that
+   * lock. `this.state` alone is the correct, sufficient guard — this class is
+   * its own exclusive input owner while state is 'cleaning'/
+   * 'vehicleReturnDialogue'/'vehicleThankYou' (movement is separately gated
+   * via playerData.state/inputEnabled, so nothing else meaningfully competes
+   * for E/Space here regardless of Pointer Lock status). */
   private onKeyDown = (event: KeyboardEvent): void => {
     if (event.repeat) return;
-    if (!this.playerController.isLocked) return; // safe here — this feature only ever fires mid-session, well after the player has already engaged Pointer Lock at least once (unlike DreamComicSystem's own Day1-from-boot edge case)
 
     if (this.state === 'cleaning') {
       const bindings = this.settingsManager.inputBindings;

@@ -573,12 +573,29 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     (finishedDay) => {
       vehicleNightCleaningSystem.startNight(finishedDay);
       afterWorkStorySystem.trigger(finishedDay);
+      // "Banner貫穿夜晚" round — the "今日貨物已全部送出" banner's own job is
+      // done the instant the night sequence actually takes over; `state`
+      // itself stays 'dayComplete' the whole night (still gates
+      // advanceToNextDay etc., untouched), only the banner's own display
+      // flag clears here.
+      dailyFlowSystem.hideDayCompleteBanner();
     },
     // Polled from VehicleControlSystem's own update() while the settlement
     // panel is deliberately withheld (spec: "不可以讓玩家在載具清潔或載具離
     // 開表演期間提前進入結算") — true only once every returned vehicle has
-    // been cleaned, thanked, AND has actually departed.
-    () => vehicleNightCleaningSystem.allVehiclesCleaned
+    // been cleaned, thanked, AND has actually departed, AND
+    // afterWorkStorySystem is no longer active (spec follow-up "每日結算不能
+    // 搶在NPC劇情之前": allVehiclesCleaned alone only covers 清潔+感謝+離開,
+    // not the NPC beat that's supposed to follow it — `trigger()` above
+    // already flips afterWorkStorySystem out of 'inactive' synchronously,
+    // long before a real night's cleaning could finish, so by the time
+    // allVehiclesCleaned first turns true, isActive reliably reflects
+    // whether TODAY has a story to wait for at all: still true while the NPC
+    // is walking in/waiting/mid-dialogue, back to false once finishStory()'s
+    // own fade back in completes (state 'completed') — or was never true to
+    // begin with on a day with no AFTER_WORK_STORIES entry, so settlement
+    // still isn't held up on those days).
+    () => vehicleNightCleaningSystem.allVehiclesCleaned && !afterWorkStorySystem.isActive
   );
 
   const unloadingSystem = new UnloadingSystem(

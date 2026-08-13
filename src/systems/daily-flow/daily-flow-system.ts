@@ -39,6 +39,20 @@ export class DailyFlowSystem {
   dailyCargoIds: Set<string> = new Set();
   totalCargoCount = 0;
   hasUnloadedToday = false;
+  /** "Banner貫穿夜晚" round — split off from `state === 'dayComplete'` itself
+   * (game-app.ts's own bannerText used to read that directly), because
+   * `state` now stays 'dayComplete' for the ENTIRE night sequence (清潔/感謝/
+   * 離開/NPC劇情), not just the brief instant it originally meant before the
+   * "每日結算流程調整" round deferred the settlement panel. The "今日貨物已
+   * 全部送出" banner itself should still only flash briefly right as the day
+   * ends, not the whole night through — set true here in notifyDayComplete()
+   * (unchanged trigger), cleared by hideDayCompleteBanner() the moment the
+   * night sequence actually begins (create-game-systems.ts's own
+   * onAllVehiclesDeparted hook, right alongside starting it) — a display-only
+   * flag, never read by any other flow-control check (dayCompleteShown/
+   * advanceToNextDay's own `state !== 'dayComplete'` guard etc. all still
+   * read `state` itself, untouched). */
+  dayCompleteBannerVisible = false;
 
   private cargoSystem: CargoSystem;
   private hud: HUD;
@@ -163,7 +177,19 @@ export class DailyFlowSystem {
    * even clicks "continue". */
   notifyDayComplete(): void {
     this.state = 'dayComplete';
+    this.dayCompleteBannerVisible = true;
     this.onSettlementShown?.();
+  }
+
+  /** Called once the night sequence actually begins (create-game-systems.ts's
+   * own onAllVehiclesDeparted hook, alongside starting
+   * VehicleNightCleaningSystem/AfterWorkStorySystem) — the banner's own
+   * "已全部送出" flash is done its job by then; `state` itself stays
+   * 'dayComplete' for the rest of the night (unchanged, still gates
+   * advanceToNextDay/dayCompleteShown etc.), only the banner's display flag
+   * clears. */
+  hideDayCompleteBanner(): void {
+    this.dayCompleteBannerVisible = false;
   }
 
   /** "每日結算流程修改" round — the ONE place a day actually advances, now
@@ -211,6 +237,10 @@ export class DailyFlowSystem {
     this.dailyCargoIds = new Set();
     this.totalCargoCount = 0;
     this.hasUnloadedToday = false;
+    // Already cleared by hideDayCompleteBanner() well before this point in
+    // every real path — reasserted here defensively so a stray true can
+    // never survive into the new day's own 'ready' state.
+    this.dayCompleteBannerVisible = false;
     this.resetTools();
 
     this.state = 'ready';
