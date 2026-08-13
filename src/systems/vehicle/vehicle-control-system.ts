@@ -969,12 +969,38 @@ export class VehicleControlSystem {
    * are still in progress, since nothing calls presentDayCompleteSummary()
    * until that poll succeeds. If isNightCleaningComplete isn't wired at all
    * (defensive — in practice always is), falls back to the exact previous
-   * immediate-settlement behavior so this class never silently hangs. */
-  private beginDayCompleteSequence(): void {
+   * immediate-settlement behavior so this class never silently hangs.
+   *
+   * "跳過當天" bug fix — `skipNightSequence` (only ever passed true by
+   * forceSettleDayForTesting) takes a THIRD branch that reuses the exact
+   * same black-fade-then-settlement machinery the real flow's
+   * `waitingForNightCleaning && isNightCleaningComplete()` transition
+   * drives (update()'s own pendingSummaryFadeElapsed poll below), but
+   * without ever calling onAllVehiclesDeparted — so
+   * vehicleNightCleaningSystem.startNight()/afterWorkStorySystem.trigger()
+   * (create-game-systems.ts's own onAllVehiclesDeparted hook) never fire at
+   * all: no vehicle spawns, no cleaning points, no thank-you dialogue, no
+   * departure animation, no NPC walk-to-find. Root cause this fixes: before
+   * this branch existed, `skipNightSequence` didn't exist and EVERY caller
+   * (including the test cheat) always took the `isNightCleaningComplete`
+   * branch above, which is why pressing "跳過當天" visibly dropped the
+   * player straight into vehicle-night-cleaning instead of settlement —
+   * `isNightCleaningComplete()` itself can only ever become true once
+   * VehicleNightCleaningSystem.allVehiclesCleaned (`state ===
+   * 'waitingForStory'`) — a state ONLY reached by actually running that
+   * whole night sequence — so simply skipping the onAllVehiclesDeparted call
+   * without this dedicated branch would have left `waitingForNightCleaning`
+   * stuck true forever (a genuine deadlock, not just a UX mismatch) rather
+   * than fixing anything. */
+  private beginDayCompleteSequence(skipNightSequence = false): void {
     this.dayCompleteShown = true;
     this.captureSettlementAndClearMap();
     const finishedDay = this.dailyFlowSystem.currentDay;
-    if (this.isNightCleaningComplete) {
+    if (skipNightSequence) {
+      this.dailyFlowSystem.hideDayCompleteBanner();
+      this.pendingSummaryFadeElapsed = 0;
+      this.hud.setDayEndFadeOpacity(1);
+    } else if (this.isNightCleaningComplete) {
       this.waitingForNightCleaning = true;
       this.onAllVehiclesDeparted?.(finishedDay);
     } else {
@@ -1074,32 +1100,45 @@ export class VehicleControlSystem {
   }
 
   /** TEMPORARY TEST CHEAT — remove before public demo. The settlement half
-   * of the "完成當日" cheat button (complete-day-cheat-system.ts) — bypasses
-   * the real six-vehicle dock/load/depart animation sequence entirely, but
-   * still computes the settlement via the SAME ScoringSystem.settleDeparture()
-   * the real departure flow uses (never touches CargoData.correctlyShipped
-   * or fabricates a score directly) and opens the SAME real day-complete
-   * summary screen via the exact private showDayCompleteSummary() the real
-   * flow itself calls from checkAllDeparted(). The caller (the cheat system)
-   * has already marked every daily cargo/envelope/NPC as complete via each
-   * system's own real API before calling this — `cargoTotal`/`lostFound`/
-   * `mail` are those already-computed real tallies, not fabricated here.
+   * of the "完成當日" (跳過當天) cheat button (complete-day-cheat-system.ts) —
+   * bypasses the real six-vehicle dock/load/depart animation sequence
+   * entirely, but still computes the settlement via the SAME
+   * ScoringSystem.settleDeparture() the real departure flow uses (never
+   * touches CargoData.correctlyShipped or fabricates a score directly) and
+   * opens the SAME real day-complete summary screen via the exact private
+   * showDayCompleteSummary() the real flow itself calls from
+   * checkAllDeparted(). The caller (the cheat system) has already marked
+   * every daily cargo/envelope/NPC as complete via each system's own real
+   * API before calling this — `cargoTotal`/`lostFound`/`mail` are those
+   * already-computed real tallies, not fabricated here.
    *
-   * "Trigger day one story after cheat completion" round: once the player
-   * dismisses this summary panel, also calls the SAME real day-advance entry
-   * point (DailyFlowSystem.advanceToNextDay) normal play uses — never a
-   * second/parallel day-completion path, never a direct currentDay mutation.
-   * That real function itself captures `finishedDay` BEFORE incrementing
-   * currentDay and fires the pre-existing onDayCompleted(finishedDay) hook
-   * (create-game-systems.ts), which already unconditionally calls
-   * afterWorkStorySystem.trigger(finishedDay) — a no-op for any day without
-   * a story entry, or one already played, so day-1-only and play-once-only
-   * are both enforced by that existing code, not duplicated here. */
+   * "跳過當天" bug fix — beginDayCompleteSequence(true) (skipNightSequence)
+   * is what makes this a genuine SHORTCUT rather than "jump into vehicle
+   * night cleaning": it deliberately never calls onAllVehiclesDeparted, so
+   * VehicleNightCleaningSystem.startNight()/AfterWorkStorySystem.trigger()
+   * (create-game-systems.ts's own onAllVehiclesDeparted hook) never fire —
+   * no vehicles spawn/return, no cleaning points, no thank-you dialogue, no
+   * departure animation, and the player is never sent to go find the NPC.
+   * Today's after-work story (if any) is treated as already resolved simply
+   * by never being triggered at all — AfterWorkStorySystem.isTodaysStoryResolved
+   * (`!isActive`) is true by construction whenever trigger() was never
+   * called for a still-'inactive'/'completed' state, exactly the "NPC劇情
+   * 視為已完成" semantics asked for, with no separate "mark resolved" call
+   * needed. See beginDayCompleteSequence's own doc comment for why this
+   * still reaches the real black-fade-then-settlement flow (reusing
+   * pendingSummaryFadeElapsed/update()'s poll) rather than a fabricated
+   * timeout.
+   *
+   * "Trigger day one story after cheat completion" round (still true): once
+   * the player dismisses this summary panel, also calls the SAME real
+   * day-advance entry point (DailyFlowSystem.advanceToNextDay) normal play
+   * uses — never a second/parallel day-completion path, never a direct
+   * currentDay mutation. */
   forceSettleDayForTesting(
     cargoTotal: number, lostFound: LostFoundSettlementInput, mail: MailSettlementInput, frozen: FrozenSettlementInput,
     live: LiveSettlementInput
   ): void {
     this.pendingSettlement = this.scoringSystem.settleDeparture(cargoTotal, cargoTotal, 0, lostFound, mail, frozen, live);
-    if (!this.dayCompleteShown) this.beginDayCompleteSequence();
+    if (!this.dayCompleteShown) this.beginDayCompleteSequence(true);
   }
 }
