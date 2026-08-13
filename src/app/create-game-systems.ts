@@ -518,7 +518,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // frame to detect a fresh day starting — see DreamComicSystem's own class
   // doc comment for the full trigger-timing reasoning).
   const dreamComicSystem = new DreamComicSystem(
-    camera, physics, playerController, playerData, settingsManager, dailyFlowSystem, afterWorkStorySystem
+    camera, physics, playerController, playerData, settingsManager, dailyFlowSystem, afterWorkStorySystem, hud
   );
 
   // Vehicle spawn/depart control (hall center) — re-enabled this round

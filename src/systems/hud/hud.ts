@@ -17,6 +17,7 @@ export class HUD {
   private toastTimer: number | null = null;
   private dayTransitionEl: HTMLElement;
   private dayTransitionTimer: number | null = null;
+  private dayEndFadeEl: HTMLElement;
   private heldCountEl: HTMLElement;
   private envelopeStackEl: HTMLElement;
   private coldValuePanelEl: HTMLElement;
@@ -114,6 +115,28 @@ export class HUD {
     this.dayTransitionEl = document.createElement('div');
     this.dayTransitionEl.id = 'day-transition';
     hud.appendChild(this.dayTransitionEl);
+
+    // "NPC劇情→結算" round — the black-fade bridging "NPC story just ended,
+    // player free in the hall" to "settlement panel appears" (spec一/二:
+    // "NPC劇情結束與結算之間要有黑幕轉場"), mirrors vehicle-night-cleaning-
+    // ui.ts's/dream-comic-ui.ts's own exact full-screen fade CSS shape
+    // (appended to document.body directly, not nested under #hud, for the
+    // same reason those two are — a true `inset:0` overlay independent of
+    // #hud's own stacking context). Deliberately NOT the same element as
+    // AfterWorkStorySystem's own fadeEl (that one is scoped to the "return
+    // to hall" transition and stays owned there) — this one's lifecycle
+    // spans settlement→item-reward→next-day-dream, cleared back to 0 by
+    // DreamComicSystem.beginDream() once the dream's own full-screen overlay
+    // is up (see that method's own doc comment), well before it ever fades
+    // ITSELF out and would otherwise reveal this element still sitting at
+    // opacity 1 underneath.
+    this.dayEndFadeEl = document.createElement('div');
+    this.dayEndFadeEl.id = 'day-end-fade';
+    this.dayEndFadeEl.style.cssText = [
+      'position:fixed', 'inset:0', 'background:#000', 'opacity:0', 'pointer-events:none',
+      'transition:opacity 0.6s ease', 'z-index:9600',
+    ].join(';');
+    document.body.appendChild(this.dayEndFadeEl);
 
     // "多件搬運" held-count indicator ("Add bulletin board upgrade system"
     // round spec五A: "HUD顯示『持有 2/3』") — persistent, not just folded
@@ -261,6 +284,15 @@ export class HUD {
 
   showInstructions(): void { this.instructionsEl.classList.remove('hidden'); }
   hideInstructions(): void { this.instructionsEl.classList.add('hidden'); }
+
+  /** "NPC劇情→結算" round — see dayEndFadeEl's own doc comment for the full
+   * lifecycle this bridges (NPC-story-end through settlement/item-reward,
+   * cleared once the next day's dream overlay is up). Plain opacity set,
+   * same "instantaneous state flip, cosmetic CSS transition animates it"
+   * shape every other fade in this codebase already uses. */
+  setDayEndFadeOpacity(opacity: 0 | 1): void {
+    this.dayEndFadeEl.style.opacity = String(opacity);
+  }
 
   /** Only shown once `max` > 1 (i.e. 多件搬運 has actually been purchased)
    * — Lv.0's own max of 1 stays visually identical to before this round. */

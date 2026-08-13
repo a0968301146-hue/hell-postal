@@ -126,6 +126,16 @@ const FINALE_DAY_TEXT = '今天是特別的一天\n不需要進行載具作業';
 const SHIP_STABLE_THRESHOLD = 0.5;
 const SHIP_VELOCITY_THRESHOLD = 0.4;
 
+/** "NPC劇情→結算" round spec一/二 — the black-fade hold between the NPC story
+ * genuinely finishing and the settlement panel actually appearing (spec:
+ * "NPC劇情結束與結算之間要有黑幕轉場"), matching NIGHT_FADE_HOLD_SECONDS's
+ * own precedent in vehicle-night-cleaning-system.ts (same 0.7s hold this
+ * codebase already uses for every other "fade to black, then reveal
+ * something new" beat). HUD.setDayEndFadeOpacity(1) fires the CSS opacity
+ * transition itself; this is purely how long update() waits before actually
+ * calling presentDayCompleteSummary() underneath the now-opaque overlay. */
+const DAY_END_FADE_HOLD_SECONDS = 0.7;
+
 
 /** One of the six FIXED docking slots ("Add six fixed vehicle docking
  * slots" round) — every slot always uses the exact same VehicleConfig (no
@@ -185,6 +195,16 @@ export class VehicleControlSystem {
    * settlement panel is deliberately NOT yet shown (spec: "不可以讓玩家在載
    * 具清潔或載具離開表演期間提前進入結算"). */
   private waitingForNightCleaning = false;
+  /** "NPC劇情→結算" round — true for exactly DAY_END_FADE_HOLD_SECONDS between
+   * isNightCleaningComplete() first returning true and the settlement panel
+   * actually appearing (spec一/二: "NPC劇情完成後不要直接跳結算畫面...NPC劇情
+   * 結束與結算之間要有黑幕轉場"). Set (and the fade-in kicked off) the SAME
+   * frame waitingForNightCleaning flips false, so the two flags are never
+   * simultaneously true — this poll's own `if` guard below can only ever
+   * fire presentDayCompleteSummary() once per night, exactly like the flag
+   * it replaces (spec七: "不要讓每日流程因為多次callback或update polling而重
+   * 複觸發"). */
+  private pendingSummaryFadeElapsed: number | null = null;
   /** MailSystem/MailBagSystem — narrow read/write surface ("Add modular
    * envelope stamping and regional mail bag system" round 九/十一): this
    * class is the ONE place a bag's region is checked against a vehicle's
@@ -722,9 +742,23 @@ export class VehicleControlSystem {
     // `state` only ever advances inside VehicleNightCleaningSystem's own
     // update(), which itself only runs while unpaused — polling here every
     // unpaused frame cannot miss the moment it becomes true.
+    //
+    // "NPC劇情→結算" round — no longer calls presentDayCompleteSummary()
+    // immediately: isNightCleaningComplete() becoming true now only starts
+    // the black-fade hold (pendingSummaryFadeElapsed=0, fade-in kicked off
+    // below); the summary panel itself only appears once that hold has
+    // genuinely elapsed (spec一/二: "NPC劇情結束與結算之間要有黑幕轉場").
     if (this.waitingForNightCleaning && this.isNightCleaningComplete?.()) {
       this.waitingForNightCleaning = false;
-      this.presentDayCompleteSummary(() => this.continueAfterSettlement());
+      this.pendingSummaryFadeElapsed = 0;
+      this.hud.setDayEndFadeOpacity(1);
+    }
+    if (this.pendingSummaryFadeElapsed !== null) {
+      this.pendingSummaryFadeElapsed += deltaTime;
+      if (this.pendingSummaryFadeElapsed >= DAY_END_FADE_HOLD_SECONDS) {
+        this.pendingSummaryFadeElapsed = null;
+        this.presentDayCompleteSummary(() => this.continueAfterSettlement());
+      }
     }
   }
 

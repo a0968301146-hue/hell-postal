@@ -5,6 +5,7 @@ import { PlayerInteractionData } from '../../core/game-state';
 import { SettingsManager } from '../settings';
 import { DailyFlowSystem } from '../daily-flow/daily-flow-system';
 import { AfterWorkStorySystem } from '../story/after-work-story-system';
+import { HUD } from '../hud';
 import { LocalStorageAdapter } from '../../adapters/local-storage/local-storage-adapter';
 import { PLAYER_ROOM_BEDSIDE_SPAWN } from '../../data/world/player-room-layout-data';
 import { DREAM_COMICS } from '../../data/story/dream-comic-data';
@@ -93,6 +94,7 @@ export class DreamComicSystem {
   private settingsManager: SettingsManager;
   private dailyFlowSystem: DailyFlowSystem;
   private afterWorkStorySystem: AfterWorkStorySystem;
+  private hud: HUD;
   private storage = new LocalStorageAdapter();
   private ui: DreamComicUiHandle;
 
@@ -117,7 +119,7 @@ export class DreamComicSystem {
   constructor(
     camera: THREE.PerspectiveCamera, physics: PhysicsSystem, playerController: PlayerController,
     playerData: PlayerInteractionData, settingsManager: SettingsManager,
-    dailyFlowSystem: DailyFlowSystem, afterWorkStorySystem: AfterWorkStorySystem
+    dailyFlowSystem: DailyFlowSystem, afterWorkStorySystem: AfterWorkStorySystem, hud: HUD
   ) {
     this.camera = camera;
     this.physics = physics;
@@ -126,6 +128,7 @@ export class DreamComicSystem {
     this.settingsManager = settingsManager;
     this.dailyFlowSystem = dailyFlowSystem;
     this.afterWorkStorySystem = afterWorkStorySystem;
+    this.hud = hud;
 
     this.ui = createDreamComicUi();
 
@@ -181,14 +184,27 @@ export class DreamComicSystem {
    * or hits Day8's own `day > 7` early-return just below (no dream ever
    * plays for Day8, so THIS is the only moment left to catch the display
    * up — spec F: "Day8不得受到影響" means Day8's own flow stays untouched,
-   * but its displayDay still needs to reach 8 somehow). `displaySyncedForDay`
-   * guards this to fire exactly once per real day transition, not every
-   * idle frame this method is polled. */
+   * but its displayDay still needs to reach 8 somehow).
+   *
+   * "NPC劇情→結算" round — the SAME guard also clears HUD's day-end black-
+   * fade (see HUD.setDayEndFadeOpacity's own doc comment) here rather than
+   * inside beginDream() specifically, for the exact same "days 1-7 vs Day8"
+   * reason as displayDay just above: on a day WITH a dream, clearing here
+   * and beginDream() showing its own full-screen overlay both still happen
+   * in this same synchronous call, so there's no visible gap; on Day8 (no
+   * dream ever plays), this is the ONLY place left to fade the black
+   * screen back out at all — without it, the day-end fade would stay at
+   * opacity 1 forever once a run reaches Day8, since nothing else ever
+   * clears it on that path.
+   *
+   * `displaySyncedForDay` guards this whole block to fire exactly once per
+   * real day transition, not every idle frame this method is polled. */
   private checkDreamStart(): void {
     const day = this.dailyFlowSystem.currentDay;
     if (day !== this.displaySyncedForDay) {
       this.displaySyncedForDay = day;
       this.dailyFlowSystem.syncDisplayDay();
+      this.hud.setDayEndFadeOpacity(0);
     }
     if (day < 1 || day > 7) return; // Day8 never gets a dream this round (spec十).
     if (this.dailyFlowSystem.state !== 'ready') return;
