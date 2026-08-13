@@ -28,7 +28,26 @@ export const VEHICLE_THANKYOU_LINES: Record<string, string[]> = {
   'sea-kraken-01': ['……', '謝謝。'],
 };
 
+/** "光點完成即時反應" round — a SHORT (single-line, never two) reaction shown
+ * after each ORDINARY (non-final) point completes, distinct from
+ * VEHICLE_THANKYOU_LINES's own two-line send-off reserved for that vehicle's
+ * TRUE last point (spec: "每個光點都必須觸發一次載具反應...不能只有最後一個
+ * 光點才說話", but "最後一個光點的感謝對話則維持目前完整流程" — the two never
+ * overlap, completePoint() picks exactly one of them per point). Kept
+ * deliberately terser than the return/thank-you lines — this fires
+ * potentially 3-4 times per vehicle per night, so a long line here would get
+ * repetitive fast. */
+export const VEHICLE_POINT_LINES: Record<string, string[]> = {
+  'land-frog-01': ['呱！這裡乾淨多了。'],
+  'land-rockgiant-01': ['……舒服。'],
+  'land-snail-01': ['謝謝，這裡亮多了。'],
+  'sea-ray-01': ['這邊擦得真乾淨。'],
+  'sea-turtle-01': ['這一塊清爽多了。'],
+  'sea-kraken-01': ['……嗯。'],
+};
+
 /** Fallback used only if a vehicleId isn't found in the maps above
  * (defensive — every real vehicle has its own entry). */
 export const DIALOGUE_LINE_RETURN_FALLBACK = ['回來了。'];
+export const DIALOGUE_LINE_POINT_FALLBACK = ['乾淨多了。'];
 export const DIALOGUE_LINE_THANKYOU_FALLBACK = ['謝謝你幫我整理乾淨。'];
