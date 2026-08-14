@@ -138,26 +138,24 @@ const worldAnchor = new THREE.Vector3();
 const cameraForward = new THREE.Vector3();
 const toAnchor = new THREE.Vector3();
 
-/** "載具對話框跟隨載具" round — the ONE place the dialogue box's screen
- * position is computed, called every frame while a dialogue is showing
- * (vehicle-night-cleaning-system.ts's own update(), plus once synchronously
- * from beginDialogue() so there's no stale-position flash on the very first
- * frame). Deliberately derives "front" from the VEHICLE's own dock→exit
- * direction (a real, static, per-vehicle-slot property already sitting in
- * VehicleConfig — never the player's position or camera facing, per spec:
- * "『正前方』請以載具自身朝向為基準，不要用玩家位置猜測"). This is necessary
- * rather than reading `vehicleGroup.rotation.y` because that field is only
- * ever animated for the frog (see VehicleSystem.moveToward's own `if
- * (this.isFrog)` block) — every other vehicle's rotation.y sits frozen at
- * whatever the constructor left it (0, since only the frog's build path
- * ever touches it), which would silently point "front" the same fixed
- * direction for every non-frog vehicle regardless of which way its own dock
- * actually faces. dockPosition→exitPosition is genuinely static and vehicle-
- * specific, and true for the entire dialogue window too (vehicles spawned
- * for the night sit motionless at their own dock position throughout
- * return/point/thank-you dialogue — movement only starts once
- * beginDeparture() fires, well after any dialogue this function is ever
- * called during has already ended). */
+/** "載具對話框互動邏輯修正" round — the dialogue box's own lifecycle
+ * (display:block/none) is OWNED ENTIRELY by showVehicleDialogueText/
+ * hideVehicleDialogueBox, both only ever called from
+ * vehicle-night-cleaning-system.ts's own beginDialogue()/endDialogue() —
+ * themselves only ever reachable from a real E press (advanceDialogue/
+ * onKeyDown). This function must NEVER be the thing that makes the box
+ * appear or disappear (spec: "只有玩家按E...才可以讓UI消失...不要出現玩家沒
+ * 有任何操作、UI自動消失") — it only ever adjusts WHERE the box sits while
+ * it's already showing. This is a deliberate reversal of an earlier
+ * attempt at this same function, which hid the box via
+ * `visibility:hidden` whenever the vehicle wasn't in front of the camera —
+ * that seemed reasonable in isolation, but dialogue only disables
+ * WALKING (playerData.state/setInputEnabled(false)), not mouse-look
+ * (PlayerController.onMouseMoveCustom only checks `_isLocked`, not
+ * `_inputEnabled` — see that method's own code), so a player free to look
+ * around mid-dialogue could turn the camera away from the vehicle and
+ * watch the box vanish with no key press at all, which is exactly the
+ * "auto-dismiss without E" this round explicitly prohibits. */
 export function updateVehicleDialoguePosition(handle: NightCleaningUiHandle, camera: THREE.Camera, vehicle: VehicleSystem): void {
   const pos = vehicle.position;
   const { dockPosition, exitPosition, height } = vehicle.config;
@@ -172,16 +170,18 @@ export function updateVehicleDialoguePosition(handle: NightCleaningUiHandle, cam
     pos.z + fz * DIALOGUE_FORWARD_OFFSET
   );
 
-  // "如果載具暫時不在鏡頭內，可以隱藏UI" — checked via a genuine in-front-of-
-  // camera dot product (NOT the projected NDC z alone, which stays
-  // deceptively "in range" for some behind-camera cases with a perspective
-  // projection) rather than a fabricated timeout/guess.
+  // Behind the camera — a raw project() here would produce a nonsensical
+  // (often wildly off-screen or mirrored) result, but per this function's
+  // own doc comment the box must never disappear for this reason alone.
+  // Simplest correct behavior: leave left/top exactly where they already
+  // are (the last genuinely-in-view position) rather than jumping to
+  // garbage coordinates or hiding — the box stays fully visible and
+  // legible, it just stops tracking until the vehicle is back in front of
+  // the camera (or the player presses E, which is the only thing allowed
+  // to end this dialogue).
   camera.getWorldDirection(cameraForward);
   toAnchor.copy(worldAnchor).sub(camera.position);
-  if (toAnchor.dot(cameraForward) <= 0) {
-    handle.dialogueEl.style.visibility = 'hidden';
-    return;
-  }
+  if (toAnchor.dot(cameraForward) <= 0) return;
 
   const ndc = worldAnchor.clone().project(camera);
   const w = window.innerWidth;
@@ -195,7 +195,6 @@ export function updateVehicleDialoguePosition(handle: NightCleaningUiHandle, cam
   sx = THREE.MathUtils.clamp(sx, SCREEN_EDGE_MARGIN + halfW, w - SCREEN_EDGE_MARGIN - halfW);
   sy = THREE.MathUtils.clamp(sy, SCREEN_EDGE_MARGIN + boxH, h - SCREEN_EDGE_MARGIN);
 
-  handle.dialogueEl.style.visibility = 'visible';
   handle.dialogueEl.style.left = `${sx}px`;
   handle.dialogueEl.style.top = `${sy}px`;
 }
