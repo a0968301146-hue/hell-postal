@@ -502,8 +502,23 @@ export class VehicleNightCleaningSystem {
       : (VEHICLE_THANKYOU_LINES[vehicle.vehicleId] ?? DIALOGUE_LINE_THANKYOU_FALLBACK);
     this.dialogueLineIndex = 0;
 
-    this.playerData.state = 'stamping-minigame';
-    this.playerController.setInputEnabled(false);
+    // "載具對話不鎖玩家" round — dialogue must NEVER lock movement (spec:
+    // "載具對話≠玩家控制鎖定"). playerData.state still switches to its own
+    // dedicated 'vehicle-dialogue' value (never 'stamping-minigame') so
+    // every OTHER E-driven interaction system (pickup/NPC/cheat buttons —
+    // all gated on this same field, see interaction-system.ts) correctly
+    // stays out of the way while this box owns the E key, but movement is
+    // explicitly ENSURED enabled here rather than left disabled — this
+    // matters for the FIRST vehicle's own return dialogue specifically,
+    // which starts immediately after startNight()'s own nightTransition/
+    // vehicleReturn black-fade phase (that phase's own
+    // setInputEnabled(false) is unrelated to dialogue and stays untouched —
+    // the player genuinely can't see anything behind a fully opaque fade —
+    // but by the time the fade clears and the first line shows, movement
+    // must already be free, not still inherited-locked from before). Never
+    // calls setInputEnabled(false) anywhere in this class any more.
+    this.playerData.state = 'vehicle-dialogue';
+    this.playerController.setInputEnabled(true);
 
     showVehicleDialogueText(this.ui, this.dialogueLines[0]);
     // Synchronous first-position sync — avoids a one-frame flash at

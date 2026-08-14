@@ -2,7 +2,18 @@
  * Interaction, Pickup, Pallet, Dolly, and Lost Found systems alike, so it
  * lives in core rather than under any single system. Exactly one instance
  * is created per game session (see app/game-context.ts). */
-export type PlayerInteractionState = 'empty-handed' | 'holding-item' | 'placement-preview' | 'stamping-minigame' | 'vehicle-settlement' | 'pushing-dolly';
+/** 'vehicle-dialogue' ("載具對話不鎖玩家" round) — a returned/cleaned
+ * vehicle's own return/point/thank-you dialogue box is showing. Unlike
+ * every OTHER non-'empty-handed' value here, this one is deliberately NEVER
+ * paired with playerController.setInputEnabled(false) — the player stays
+ * free to walk and look around while the box is up (spec: "載具對話 ≠ 玩家
+ * 控制鎖定"); it still exists as its own distinct value (not reusing
+ * 'stamping-minigame') purely so every OTHER E-driven interaction system
+ * that already gates itself on this field (pickup, NPC, cheat buttons —
+ * see interaction-system.ts) continues to correctly stay out of the way
+ * while a vehicle dialogue box owns the E key, without those systems
+ * needing to assume "non-empty-handed" also means "movement-locked". */
+export type PlayerInteractionState = 'empty-handed' | 'holding-item' | 'placement-preview' | 'stamping-minigame' | 'vehicle-settlement' | 'pushing-dolly' | 'vehicle-dialogue';
 
 /** "Add tool hotbar and cargo hook" round: which bottom-hotbar tool is
  * currently selected — 'powerGloves' added by "Add power gloves and refine

@@ -333,7 +333,15 @@ export class InteractionSystem {
     // handler's own game logic below gets to act on it.
     event.preventDefault();
 
-    if (this.playerData.state === 'placement-preview' || this.playerData.state === 'stamping-minigame') {
+    // "載具對話不鎖玩家" round — 'vehicle-dialogue' joins this block for the
+    // exact same reason 'stamping-minigame' already does: a vehicle
+    // dialogue box owns the E key while it's up (next line / end dialogue
+    // only), so this system's own generic pickup/NPC/cheat-button E-actions
+    // must stay out of the way — unlike 'stamping-minigame', this state is
+    // deliberately never paired with setInputEnabled(false), so the player
+    // can still walk/look around freely; only E-driven interactions are
+    // blocked here.
+    if (this.playerData.state === 'placement-preview' || this.playerData.state === 'stamping-minigame' || this.playerData.state === 'vehicle-dialogue') {
       stopNpcTrace(`state blocks: ${this.playerData.state}`);
       return;
     }
@@ -867,7 +875,15 @@ export class InteractionSystem {
 
   update(): void {
     if (!this.isLocked()) return;
-    if (this.playerData.state === 'stamping-minigame') return;
+    // "載具對話不鎖玩家" round — also skips this system's own per-frame
+    // crosshair-highlight/prompt raycast while a vehicle dialogue box is
+    // up: E is reserved for advancing/ending that dialogue, so showing an
+    // unrelated "按 E 撿起"-style prompt for whatever the free-roaming
+    // player happens to be looking at right now would be actively
+    // misleading. Movement itself is untouched by this (see
+    // VehicleNightCleaningSystem.beginDialogue's own doc comment — this
+    // state is never paired with setInputEnabled(false)).
+    if (this.playerData.state === 'stamping-minigame' || this.playerData.state === 'vehicle-dialogue') return;
 
     if (this.playerData.state === 'placement-preview') {
       if (this.currentTarget) { this.clearHighlight(this.currentTarget); this.currentTarget = null; }
