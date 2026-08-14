@@ -61,6 +61,9 @@ const MARKER_RADIUS = 0.09;
  * interactionDistance's own existing range check, unchanged, is still the
  * real distance limiter; this only widens the LATERAL aim tolerance). */
 const HITBOX_HALF_EXTENT = 0.22;
+/** Purely a bookkeeping label on `dialogueVehicle` now (see that field's own
+ * doc comment) — 'return'/'point' no longer drive any E-handling branch at
+ * all; only 'thankYou' does. */
 type DialogueKind = 'return' | 'point' | 'thankYou';
 
 /**
@@ -92,10 +95,6 @@ type DialogueKind = 'return' | 'point' | 'thankYou';
  *     doc comment for why this is deliberately NOT the same world-space
  *     sprite mechanism after-work-story-bubble-ui.ts's NPC dialogue still
  *     uses, "載具對話框位置" round).
- *   - The player lock during any popup reuses the SAME playerData.state=
- *     'stamping-minigame' + playerController.setInputEnabled(false)
- *     combination AfterWorkStorySystem/DreamComicSystem already established
- *     (spec十八).
  *   - "Which tool is required" ("清潔點附著＋互動修正" follow-up round spec
  *     五/六: "玩家不選工具...requiredTool不應該顯示給玩家") is now PURELY an
  *     internal correctness field — tryStartCharge() below resolves it itself
@@ -105,6 +104,29 @@ type DialogueKind = 'return' | 'point' | 'thankYou';
  *     builds one), and this stays deliberately NOT wired into
  *     core/game-state.ts's ActiveTool union or ToolSystem's hotbar/day-unlock
  *     gating either way.
+ *
+ * "載具對話事件化" round — the CORE architectural change (spec一至十): vehicle
+ * dialogue (return greeting / per-point reaction / thank-you) is now driven
+ * ENTIRELY by GAME EVENTS, never by the player pressing E:
+ *   - A vehicle's greeting shows the moment it's relevant (arrival, for the
+ *     first vehicle; the player first aiming at one of its markers, for
+ *     every other one) — see showGreeting(), called from updateVehicleReturn()
+ *     and from updateCleaning()'s own per-frame aim check.
+ *   - A point's reaction shows the instant completePoint() fires — the SAME
+ *     event that finishes the charge, not a later, separate E press. See
+ *     completePoint()/showPointReaction().
+ *   - The final point's thank-you shows the same way (completePoint() ->
+ *     showThankYou()).
+ *   - The ONE remaining place E does anything dialogue-related is dismissing
+ *     the vehicle's OWN final thank-you message once the player is actually
+ *     done reading it (advanceThankYou()/endThankYou()) — and even that is
+ *     only reachable when the player ISN'T currently aiming at a cleanable
+ *     marker (see onKeyDown's own aim-priority doc comment for why this
+ *     resolves the exact "same E" conflation bug this round fixes).
+ * `this.state` no longer has separate 'vehicleReturnDialogue'/
+ * 'cleaningPointDialogue'/'vehicleThankYou'/'vehicleDeparting' values that
+ * block cleaning while active — see vehicle-night-cleaning-types.ts's own
+ * doc comment on NightCleaningState for the full root-cause writeup.
  *
  * NPC gating (spec十四/十五): this class does NOT call
  * AfterWorkStorySystem.trigger() itself and has no reference to that class
@@ -148,21 +170,49 @@ export class VehicleNightCleaningSystem {
   private fadeTimer = 0;
   private pendingVehicleIds: string[] = [];
 
+  /** The dialogue box's CURRENT content — which vehicle it belongs to, what
+   * "kind" of message it is (bookkeeping only now — see DialogueKind's own
+   * doc comment), and (for 'thankYou' specifically, the only kind with any
+   * E-driven navigation left) which line is currently showing. For
+   * 'return'/'point' these are set once and never advanced by E; only
+   * completePoint()/showGreeting() ever change them again by overwriting
+   * with a NEWER message. */
   private dialogueKind: DialogueKind = 'return';
   private dialogueLines: string[] = [];
   private dialogueLineIndex = 0;
   private dialogueVehicle: VehicleCleaningInstance | null = null;
+  /** "載具對話事件化" round spec八/九 — if vehicle B's own last point
+   * completes while vehicle A's thank-you is STILL showing (awaiting the
+   * player's E to dismiss it), vehicle B's thank-you must not silently
+   * overwrite/lose vehicle A's (spec: "不得互相串話") — it queues here
+   * instead, and starts displaying the moment vehicle A's is dismissed (see
+   * endThankYou()). Point reactions and greetings never queue — they're
+   * purely cosmetic with no pending E action of their own, so they just
+   * skip displaying (self-healing: greetings retry every frame via the aim
+   * check; a skipped point reaction has no user-visible consequence beyond
+   * one missed caption, since the underlying completedPointIds/marker-
+   * removal state always applies regardless). */
+  private pendingThankYouQueue: VehicleCleaningInstance[] = [];
 
   /** "回歸對話＋離開表演" round — the ONE vehicle currently driving itself
    * out toward its own config.exitPosition (VehicleSystem.moveToward,
    * reused unchanged from the same movement logic VehicleControlSystem's
-   * own daytime departure already uses — see updateVehicleDeparting()).
-   * Only ever one at a time by construction (a vehicle only starts
-   * departing once its OWN thank-you dialogue ends, and the whole system
-   * stays in the single 'vehicleDeparting' state — never 'cleaning' — until
-   * this one finishes), so a single nullable field is enough; no need for a
-   * list. */
+   * own daytime departure already uses — see updateDeparture()). Only ever
+   * one at a time by construction (this single nullable field IS the
+   * capacity limit — unchanged from before this round, since "不要修改...
+   * 載具離場" means the departure ANIMATION mechanism itself stays exactly
+   * as it was), so a genuinely NEW vehicle that becomes ready to depart
+   * while this slot is occupied queues instead — see requestDeparture()/
+   * departureQueue below. */
   private departingVehicle: VehicleCleaningInstance | null = null;
+  /** "載具對話事件化" round spec八/九 — vehicles awaiting their turn in the
+   * single `departingVehicle` slot (see that field's own doc comment). This
+   * can only ever become non-empty once cleaning/dialogue is fully
+   * decoupled from departure (multiple vehicles CAN finish their own
+   * thank-you and become ready to leave at close to the same real moment,
+   * unlike the old design where only one vehicle's dialogue could ever be
+   * active at all). */
+  private departureQueue: VehicleCleaningInstance[] = [];
 
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, camera: THREE.PerspectiveCamera,
@@ -219,6 +269,11 @@ export class VehicleNightCleaningSystem {
     this.state = 'nightTransition';
     this.fadeTimer = 0;
     setFadeOpacity(this.ui, 1);
+    // This lock is NOT about dialogue (see this class's own doc comment) —
+    // it's purely so the player can't wander around behind a fully opaque
+    // black screen while vehicles are spawning. Cleared the moment the
+    // fade clears in updateVehicleReturn() below, well before any dialogue
+    // box shows.
     this.playerData.state = 'stamping-minigame';
     this.playerController.setInputEnabled(false);
   }
@@ -230,30 +285,26 @@ export class VehicleNightCleaningSystem {
     // (VehicleSystem.update() is a no-op for every other vehicle, see its
     // own doc comment); without this the mouth's own angle would never
     // animate away from closed, permanently sealing the mouth-area cleaning
-    // points behind it (a real bug found during this round's own testing —
-    // see spawnReturnedVehicles' own onArrived() doc comment for the other
-    // half of this fix).
+    // points behind it (a real bug found during an earlier round's own
+    // testing — see spawnReturnedVehicles' own onArrived() doc comment for
+    // the other half of this fix).
     for (const vehicle of this.vehicles) (vehicle.vehicleSystem as VehicleSystem).update(deltaTime);
 
     // "載具對話框跟隨載具" round — re-projects the dialogue box's screen
-    // position every frame while ANY dialogue is showing (all three kinds:
-    // return/point/thankYou), so it stays pinned above whichever vehicle is
-    // actually talking even though nothing else about that vehicle moves
-    // during dialogue (see updateVehicleDialoguePosition's own doc comment
-    // for why this still needs to run every frame regardless — the camera
-    // itself keeps moving as the player looks around, so a screen-space
-    // position computed once at dialogue-start would drift stale otherwise).
+    // position every frame while ANY dialogue is showing, so it stays
+    // pinned above whichever vehicle the box currently belongs to even
+    // though nothing else about that vehicle moves while its dialogue is
+    // up (see updateVehicleDialoguePosition's own doc comment for why this
+    // still needs to run every frame regardless — the camera itself keeps
+    // moving as the player looks around).
     if (this.dialogueVehicle) {
       updateVehicleDialoguePosition(this.ui, this.camera, this.dialogueVehicle.vehicleSystem as VehicleSystem);
     }
 
     switch (this.state) {
       case 'idle':
-      case 'vehicleReturnDialogue':
-      case 'cleaningPointDialogue':
-      case 'vehicleThankYou':
       case 'waitingForStory':
-        return; // no continuous per-frame work — driven entirely by onKeyDown (spec三: 對話絕不自動消失/自動推進)
+        return;
       case 'nightTransition':
         this.updateNightTransition(deltaTime);
         return;
@@ -261,10 +312,14 @@ export class VehicleNightCleaningSystem {
         this.updateVehicleReturn(deltaTime);
         return;
       case 'cleaning':
+        // "載具對話事件化" round — these three now run together, every
+        // frame, for the entire rest of the night: aiming/charging a point
+        // for ANY vehicle, driving whichever vehicle is currently in the
+        // single departingVehicle slot, and checking whether the whole
+        // night is finally done. None of them gate each other any more.
         this.updateCleaning(deltaTime);
-        return;
-      case 'vehicleDeparting':
-        this.updateVehicleDeparting(deltaTime);
+        this.updateDeparture(deltaTime);
+        this.checkAllDone();
         return;
     }
   }
@@ -279,37 +334,24 @@ export class VehicleNightCleaningSystem {
     this.state = 'vehicleReturn';
   }
 
+  /** "載具對話事件化" round — once the return fade clears, cleaning is
+   * available IMMEDIATELY (spec: "不需要按E才能開始對話", "完成光點1→自動顯示
+   * 載具1下一句" — both only make sense if the player can start charging a
+   * point the moment they arrive, not after first clicking through however
+   * many vehicles' own greeting chains). The first vehicle's own greeting
+   * shows automatically right here; every OTHER vehicle's greeting shows
+   * the moment the player first aims at one of ITS markers (see
+   * updateCleaning()'s own aim-triggered showGreeting() call) — a genuine
+   * game event (the player noticing/approaching that vehicle), never an
+   * artificial timer and never gated behind E. */
   private updateVehicleReturn(deltaTime: number): void {
     this.fadeTimer += deltaTime;
     if (this.fadeTimer < NIGHT_FADE_HOLD_SECONDS) return;
     setFadeOpacity(this.ui, 0);
-    // "回歸對話＋離開表演" round spec一: the player is NOT unlocked into
-    // free cleaning yet — every returned vehicle gets to say its own
-    // automatic greeting FIRST (chained sequentially by
-    // beginNextReturnDialogue below), still fully locked the entire time.
-    this.beginNextReturnDialogue();
-  }
-
-  // --- Return dialogue (spec一/二/十) ---
-
-  /** Finds the next returned vehicle that hasn't greeted the player yet and
-   * starts its dialogue; once every vehicle has (base case), finally
-   * unlocks the player into free cleaning. Called both right after the
-   * night-return fade clears (for the FIRST vehicle) and from endDialogue()
-   * when one 'return' dialogue finishes (chaining to the next) — the
-   * player's input stays disabled across the entire chain, only re-enabled
-   * once this reaches the base case (spec十: "一次處理一台", never letting
-   * the player act until every returned vehicle has had its say). */
-  private beginNextReturnDialogue(): void {
-    const nextVehicle = this.vehicles.find((v) => !v.greeted);
-    if (!nextVehicle) {
-      this.playerData.state = 'empty-handed';
-      this.playerController.setInputEnabled(true);
-      this.state = 'cleaning';
-      return;
-    }
-    nextVehicle.greeted = true;
-    this.beginDialogue(nextVehicle, 'return');
+    this.playerData.state = 'empty-handed';
+    this.playerController.setInputEnabled(true);
+    if (this.vehicles.length > 0) this.showGreeting(this.vehicles[0]);
+    this.state = 'cleaning';
   }
 
   // --- Vehicle + marker spawning (spec四/六/七/八) ---
@@ -323,8 +365,8 @@ export class VehicleNightCleaningSystem {
       const vehicleSystem = new VehicleSystem(this.scene, this.physics, config, dock);
       // The frog's mouth/basin stays fully sealed under its closed upper
       // shell by default (vehicle-system.ts's own buildFrogVehicle) — a
-      // real bug found during this round's own testing: several of frog's
-      // own "嘴巴" cleaning points sit inside that basin, genuinely
+      // real bug found during an earlier round's own testing: several of
+      // frog's own "嘴巴" cleaning points sit inside that basin, genuinely
       // unreachable from any exterior angle while closed. onArrived() is
       // the EXACT existing method VehicleControlSystem already calls the
       // moment a frog docks during the day (swings the mouth open, reveals
@@ -415,13 +457,19 @@ export class VehicleNightCleaningSystem {
     return this.markers.find((m) => m.hitboxMesh === hits[0].object) ?? null;
   }
 
-  /** "清潔點附著＋互動修正" follow-up spec五/六: the player never picks a
-   * tool at all any more — whichever tool a point actually needs is resolved
-   * silently here (tryStartCharge below) from the aimed point's own
+  /** "清潔點附著＋互動修正" follow-up spec五/六: the required tool is resolved
+   * SILENTLY here (tryStartCharge below) from the aimed point's own
    * vehicleId, so there is no "wrong tool" outcome reachable from the
    * player's side; the prompt text is always the same generic "按住 E 清潔"
    * regardless of which vehicle/point is aimed at (spec四: 不要顯示任何工具
-   * 資訊). */
+   * 資訊).
+   *
+   * "載具對話事件化" round — also the one place a vehicle's own greeting
+   * gets shown via the player simply LOOKING at it (a real game event —
+   * aiming a marker — never an E press, never a timer): the moment the
+   * crosshair lands on any of vehicle X's markers and X hasn't greeted yet,
+   * showGreeting(X) fires right here, before the interaction prompt itself
+   * is computed. */
   private updateCleaning(deltaTime: number): void {
     if (this.chargingPointId) {
       const marker = this.markers.find((m) => m.pointId === this.chargingPointId);
@@ -442,6 +490,8 @@ export class VehicleNightCleaningSystem {
       this.hud.hideInteractionPrompt();
       return;
     }
+    const vehicle = this.vehicles.find((v) => v.vehicleId === aimed.vehicleId);
+    if (vehicle && !vehicle.greeted) this.showGreeting(vehicle);
     const def = getVehicleCleaningDefinition(aimed.vehicleId);
     this.hud.showInteractionPrompt(def?.cleaningTarget ?? '', '按住 E 清潔');
   }
@@ -452,22 +502,20 @@ export class VehicleNightCleaningSystem {
     this.hud.hideChargeBar();
   }
 
-  /** "光點完成即時反應" round — root cause of "完成光點後載具沒有再說話": an
-   * EARLIER round ("清潔光點完成後無法移動") removed per-point dialogue
-   * entirely, because the old implementation locked player input for a
-   * barely-visible "……" popup and required a second, easy-to-miss E press
-   * before the player could move again. That earlier fix over-corrected —
-   * it also matches this round's own explicit spec ("每個光點都必須觸發一次
-   * 載具反應...不能只有最後一個光點才說話") that a reaction is WANTED after
-   * every ordinary point too, just implemented correctly this time: a
-   * SHORT, single-line 'point' dialogue (VEHICLE_POINT_LINES, distinct from
-   * the two-line return/thank-you sets) that still locks briefly (same
-   * playerData.state/setInputEnabled combo every other dialogue kind here
-   * uses) but reliably restores control the instant it's dismissed — see
-   * endDialogue()'s own 'point' branch, which drops straight back to
-   * 'cleaning' rather than chaining anywhere else. Only this vehicle's own
-   * TRUE LAST point skips the 'point' reaction entirely and goes straight
-   * to 'thankYou' (spec: "最後一個光點的感謝對話則維持目前完整流程"). */
+  /** "載具對話事件化" round — THE fix for the "same E" conflation bug this
+   * round's spec二/四/七 describe in full: completePoint() (called directly
+   * from updateCleaning() the instant a charge finishes — the SAME event,
+   * not a later separate one) now shows the vehicle's own next message
+   * ITSELF, synchronously, and — critically — `this.state` NEVER changes
+   * away from 'cleaning' to do it. There is no longer any intermediate
+   * dialogue-only state for the player's still-held E key to get stuck
+   * behind: the very next charge (on this point or any other) can start
+   * the instant the player next aims-and-presses-E, with zero dismiss step
+   * required in between (spec: "不應該要求玩家再額外按一次E才能推進"). Only
+   * the TRUE LAST point routes to showThankYou() instead of
+   * showPointReaction() — thank-you is the one message that DOES still need
+   * an explicit player-driven "I'm done reading this" moment (spec十一/
+   *十三), since after it the vehicle actually leaves. */
   private completePoint(pointId: string): void {
     const vehicle = this.vehicles.find((v) => v.activePointIds.includes(pointId));
     if (!vehicle) return;
@@ -479,130 +527,130 @@ export class VehicleNightCleaningSystem {
     this.removeMarker(pointId);
 
     if (vehicle.completedPointIds.size >= vehicle.activePointIds.length) {
-      // Every one of THIS vehicle's own nightly points is done — go
-      // straight into its thank-you popup (spec十二/十三), skipping the
-      // ordinary per-point reaction entirely for this last one.
-      this.beginDialogue(vehicle, 'thankYou');
+      this.showThankYou(vehicle);
     } else {
-      // An ordinary point completion — brief single-line reaction, see this
-      // method's own doc comment.
-      this.beginDialogue(vehicle, 'point');
+      this.showPointReaction(vehicle);
     }
   }
 
-  // --- Dialogue popups (spec十一/十二/十三) ---
+  // --- Dialogue display (event-driven — spec一至十) ---
 
-  private beginDialogue(vehicle: VehicleCleaningInstance, kind: DialogueKind): void {
+  /** Vehicle arrival (the first vehicle, from updateVehicleReturn) or the
+   * player first aiming at one of this vehicle's markers (from
+   * updateCleaning) — never E. Both of VEHICLE_RETURN_LINES's own lines are
+   * shown TOGETHER (joined, not navigated one-at-a-time via E — there is no
+   * "advance the return greeting" event in this design, matching this
+   * round's own spec五 API sketch, which has no such function) so no
+   * existing dialogue content is dropped. Skips (retries next frame) while
+   * a thank-you is currently occupying the box, so a pending thank-you can
+   * never be silently overwritten/lost (spec: "不得互相串話"). */
+  private showGreeting(vehicle: VehicleCleaningInstance): void {
+    if (vehicle.greeted) return;
+    if (this.dialogueVehicle && this.dialogueKind === 'thankYou') return;
+    vehicle.greeted = true;
+    const lines = VEHICLE_RETURN_LINES[vehicle.vehicleId] ?? DIALOGUE_LINE_RETURN_FALLBACK;
     this.dialogueVehicle = vehicle;
-    this.dialogueKind = kind;
-    this.dialogueLines = kind === 'return'
-      ? (VEHICLE_RETURN_LINES[vehicle.vehicleId] ?? DIALOGUE_LINE_RETURN_FALLBACK)
-      : kind === 'point'
-      ? (VEHICLE_POINT_LINES[vehicle.vehicleId] ?? DIALOGUE_LINE_POINT_FALLBACK)
-      : (VEHICLE_THANKYOU_LINES[vehicle.vehicleId] ?? DIALOGUE_LINE_THANKYOU_FALLBACK);
-    this.dialogueLineIndex = 0;
-
-    // "載具對話不鎖玩家" round — dialogue must NEVER lock movement (spec:
-    // "載具對話≠玩家控制鎖定"). playerData.state still switches to its own
-    // dedicated 'vehicle-dialogue' value (never 'stamping-minigame') so
-    // every OTHER E-driven interaction system (pickup/NPC/cheat buttons —
-    // all gated on this same field, see interaction-system.ts) correctly
-    // stays out of the way while this box owns the E key, but movement is
-    // explicitly ENSURED enabled here rather than left disabled — this
-    // matters for the FIRST vehicle's own return dialogue specifically,
-    // which starts immediately after startNight()'s own nightTransition/
-    // vehicleReturn black-fade phase (that phase's own
-    // setInputEnabled(false) is unrelated to dialogue and stays untouched —
-    // the player genuinely can't see anything behind a fully opaque fade —
-    // but by the time the fade clears and the first line shows, movement
-    // must already be free, not still inherited-locked from before). Never
-    // calls setInputEnabled(false) anywhere in this class any more.
-    this.playerData.state = 'vehicle-dialogue';
-    this.playerController.setInputEnabled(true);
-
-    showVehicleDialogueText(this.ui, this.dialogueLines[0]);
-    // Synchronous first-position sync — avoids a one-frame flash at
-    // whatever left/top the box last had (either its CSS default, or the
-    // PREVIOUS vehicle's own position) before update()'s own per-frame call
-    // below gets a chance to run.
+    this.dialogueKind = 'return';
+    this.dialogueLines = lines;
+    this.dialogueLineIndex = lines.length - 1; // fully shown already, nothing left for E to advance
+    showVehicleDialogueText(this.ui, lines.join('\n'));
     updateVehicleDialoguePosition(this.ui, this.camera, vehicle.vehicleSystem as VehicleSystem);
-
-    this.state = kind === 'return' ? 'vehicleReturnDialogue' : kind === 'point' ? 'cleaningPointDialogue' : 'vehicleThankYou';
   }
 
-  private advanceDialogue(): void {
+  /** completePoint()'s own direct call for an ORDINARY (non-final) point —
+   * single-line by design (VEHICLE_POINT_LINES), nothing for E to navigate.
+   * Same "don't clobber a pending thank-you" skip as showGreeting above. */
+  private showPointReaction(vehicle: VehicleCleaningInstance): void {
+    if (this.dialogueVehicle && this.dialogueKind === 'thankYou') return;
+    const lines = VEHICLE_POINT_LINES[vehicle.vehicleId] ?? DIALOGUE_LINE_POINT_FALLBACK;
+    this.dialogueVehicle = vehicle;
+    this.dialogueKind = 'point';
+    this.dialogueLines = lines;
+    this.dialogueLineIndex = lines.length - 1;
+    showVehicleDialogueText(this.ui, lines[0]);
+    updateVehicleDialoguePosition(this.ui, this.camera, vehicle.vehicleSystem as VehicleSystem);
+  }
+
+  /** completePoint()'s own direct call for the TRUE LAST point. Unlike
+   * return/point, this DOES queue (rather than skip) if another vehicle's
+   * own thank-you is currently showing — this message has a real pending
+   * player action (dismiss it) that must never be dropped. */
+  private showThankYou(vehicle: VehicleCleaningInstance): void {
+    if (this.dialogueVehicle && this.dialogueKind === 'thankYou') {
+      this.pendingThankYouQueue.push(vehicle);
+      return;
+    }
+    const lines = VEHICLE_THANKYOU_LINES[vehicle.vehicleId] ?? DIALOGUE_LINE_THANKYOU_FALLBACK;
+    this.dialogueVehicle = vehicle;
+    this.dialogueKind = 'thankYou';
+    this.dialogueLines = lines;
+    this.dialogueLineIndex = 0;
+    // "同一個E" bug fix, other half — while a thank-you is genuinely
+    // pending the player's own dismiss action, OTHER E-driven systems
+    // (pickup/NPC/cheat buttons — see interaction-system.ts's own
+    // 'vehicle-dialogue' check) must stay out of the way of an E press
+    // that isn't aimed at any marker, exactly like before this round.
+    // Aiming at a marker still always wins regardless (see onKeyDown).
+    this.playerData.state = 'vehicle-dialogue';
+    showVehicleDialogueText(this.ui, lines[0]);
+    updateVehicleDialoguePosition(this.ui, this.camera, vehicle.vehicleSystem as VehicleSystem);
+  }
+
+  /** E-driven (onKeyDown, only reachable when NOT aiming at any marker) —
+   * advances to thank-you's own next line, or ends it on the last one. */
+  private advanceThankYou(): void {
     this.dialogueLineIndex++;
     if (this.dialogueLineIndex >= this.dialogueLines.length) {
-      this.endDialogue();
+      this.endThankYou();
       return;
     }
     showVehicleDialogueText(this.ui, this.dialogueLines[this.dialogueLineIndex]);
   }
 
-  private endDialogue(): void {
+  private endThankYou(): void {
     hideVehicleDialogueBox(this.ui);
     const vehicle = this.dialogueVehicle;
-    const kind = this.dialogueKind;
     this.dialogueVehicle = null;
-
-    if (kind === 'return') {
-      // "回歸對話＋離開表演" round — still fully player-locked: chain
-      // straight to the NEXT returned vehicle's own greeting, or (base
-      // case) finally unlock free cleaning once every vehicle has spoken.
-      // Never re-enables input in between (spec三/十: the player can't act
-      // until every returned vehicle has had its say).
-      this.beginNextReturnDialogue();
-      return;
-    }
-
-    if (kind === 'point') {
-      // "光點完成即時反應" round — the ONE place this brief lock is meant to
-      // release immediately, straight back into free cleaning (spec: "對話
-      // 結束後必須立即恢復玩家移動"). Deliberately does NOT chain into
-      // anything else — a 'point' dialogue can only ever have been started
-      // from an ORDINARY (non-final) point completion (completePoint()
-      // routes the true last point to 'thankYou' directly instead), so
-      // there is never a thank-you/departure beat waiting behind it.
-      this.playerData.state = 'empty-handed';
-      this.playerController.setInputEnabled(true);
-      this.state = 'cleaning';
-      return;
-    }
-
-    // kind === 'thankYou' — still locked: this vehicle now performs its own
-    // departure (a "watch it leave" beat, not a free moment) before
-    // anything is unlocked again (beginDeparture keeps input disabled;
-    // updateVehicleDeparting() is what finally re-enables it — see that
-    // method's own doc comment).
+    this.playerData.state = 'empty-handed';
     if (vehicle) {
       vehicle.thanked = true;
-      this.beginDeparture(vehicle);
+      this.requestDeparture(vehicle);
     }
+    // Another vehicle's thank-you was queued behind this one — show it now
+    // that the box is free (spec: "不得互相串話" — it gets its own full
+    // turn, never merged/skipped).
+    const next = this.pendingThankYouQueue.shift();
+    if (next) this.showThankYou(next);
   }
 
   // --- Departure performance (spec六/七/八) ---
 
+  /** "載具對話事件化" round — the single `departingVehicle` slot (unchanged
+   * capacity/animation mechanism, per spec's own "不要修改...載具離場") is
+   * now reachable from MULTIPLE vehicles finishing their own thank-you at
+   * close to the same time (previously structurally impossible, since only
+   * one vehicle's dialogue could ever be active at all) — queues rather
+   * than starting a second departure on top of the first. */
+  private requestDeparture(vehicle: VehicleCleaningInstance): void {
+    if (this.departingVehicle) {
+      this.departureQueue.push(vehicle);
+      return;
+    }
+    this.beginDeparture(vehicle);
+  }
+
   /** Starts the just-thanked vehicle driving itself out — reuses
    * VehicleSystem.onDeparting()/moveToward() UNCHANGED (the exact same
    * methods VehicleControlSystem's own daytime departure calls), never a
-   * second movement system.
-   *
-   * BUG FIX ("載具離開時玩家無法移動" round) — root cause: player input used
-   * to stay disabled straight through from the thank-you dialogue until
-   * updateVehicleDeparting() below detected `arrived`, i.e. the player was
-   * forced to stand still and watch the whole departure animation for EVERY
-   * vehicle, not just the last one. Restoring input right here instead (the
-   * moment departure STARTS, not once it finishes) is the actual fix — the
-   * vehicle still drives itself away for real over the following frames
-   * (moveToward, unchanged below), it just no longer requires the player to
-   * stand and watch it happen. `this.state` stays 'vehicleDeparting' (not
-   * 'cleaning') the whole time regardless — the player can walk around
-   * freely, but can't start charging another point until THIS vehicle's own
-   * departure is fully done (onKeyDown's own 'cleaning'-only gate below). */
+   * second movement system. Player input was never disabled for dialogue in
+   * the first place any more (see this class's own doc comment), so the
+   * playerData.state/setInputEnabled calls below are now simply a defensive
+   * re-assertion rather than an actual unlock — kept unchanged from the
+   * "載具離開時玩家無法移動" round's own fix rather than removed, per this
+   * round's own "不要修改...載具離場" instruction. */
   private beginDeparture(vehicle: VehicleCleaningInstance): void {
     this.departingVehicle = vehicle;
     (vehicle.vehicleSystem as VehicleSystem).onDeparting([]);
-    this.state = 'vehicleDeparting';
     this.playerData.state = 'empty-handed';
     this.playerController.setInputEnabled(true);
   }
@@ -614,14 +662,14 @@ export class VehicleNightCleaningSystem {
    * fully closed" gate (moveToward's own internal check) applies for free,
    * with zero extra code here. Only once actually arrived (never a
    * teleport — spec七: "不要瞬間teleport消失") is the vehicle disposed and
-   * dropped from `this.vehicles`; `waitingForStory` (spec十一: AND
-   * allVehiclesDeparted) is only reachable here, once every vehicle is
-   * gone. Player input is no longer this method's concern at all — see
-   * beginDeparture()'s own doc comment, it's already been restored the
-   * moment departure started. */
-  private updateVehicleDeparting(deltaTime: number): void {
+   * dropped from `this.vehicles`, and the next queued departure (if any)
+   * takes the now-free slot. A no-op whenever nothing is currently
+   * departing (called unconditionally from update()'s 'cleaning' case
+   * every frame, alongside updateCleaning — see that switch case's own doc
+   * comment). */
+  private updateDeparture(deltaTime: number): void {
     const vehicle = this.departingVehicle;
-    if (!vehicle) { this.state = 'cleaning'; return; } // defensive — unreachable in practice
+    if (!vehicle) return;
     const vs = vehicle.vehicleSystem as VehicleSystem;
     const arrived = vs.moveToward(vs.config.exitPosition, deltaTime, []);
     if (!arrived) return;
@@ -630,44 +678,58 @@ export class VehicleNightCleaningSystem {
     this.vehicles = this.vehicles.filter((v) => v !== vehicle);
     this.departingVehicle = null;
 
-    this.state = this.vehicles.length === 0 ? 'waitingForStory' : 'cleaning';
+    const next = this.departureQueue.shift();
+    if (next) this.beginDeparture(next);
   }
 
-  // --- Input (spec十/十一) ---
+  /** "載具對話事件化" round — replaces the old inline "state = vehicles.
+   * length===0 ? waitingForStory : cleaning" check that used to live at the
+   * end of updateVehicleDeparting (departure was the ONLY way to leave
+   * 'cleaning' before). Called every frame from update()'s 'cleaning' case:
+   * the night is only genuinely finished once every vehicle is gone AND
+   * nothing is mid-departure AND nothing is queued to depart next. */
+  private checkAllDone(): void {
+    if (this.vehicles.length === 0 && !this.departingVehicle && this.departureQueue.length === 0) {
+      this.state = 'waitingForStory';
+    }
+  }
 
-  /** BUG FIX ("進入黑夜卡死風險" round) — no longer gates on
-   * playerController.isLocked, matching DreamComicSystem's/ItemRewardSystem's
-   * own established fix for the exact same class of bug ("夢境卡死修正" round
-   * — see DreamComicSystem.onKeyDown's own doc comment for the full root-
-   * cause writeup): Pointer Lock is a browser-level concept this feature's
-   * own dialogue advance/interact keys have no real reason to depend on — if
-   * real Pointer Lock is ever lost for any reason (window blur, Escape, a
-   * browser quirk) while the player is mid-dialogue here, gating on isLocked
-   * would silently drop every subsequent E press, leaving the player
-   * permanently stuck at playerData.state='stamping-minigame' with no way to
-   * ever advance/end the dialogue that's the ONLY thing still holding that
-   * lock. `this.state` alone is the correct, sufficient guard — this class is
-   * its own exclusive input owner while state is 'cleaning'/
-   * 'vehicleReturnDialogue'/'cleaningPointDialogue'/'vehicleThankYou'
-   * (movement is separately gated via playerData.state/inputEnabled, so
-   * nothing else meaningfully competes for E/Space here regardless of
-   * Pointer Lock status). */
+  // --- Input (spec六: E鍵只允許「下一句」或「結束對話」) ---
+
+  /** "載具對話事件化" round spec二/四/七 — THE fix for the "same E"
+   * conflation bug: AIMING AT A VALID MARKER always takes priority. If the
+   * player is looking at any cleanable point, E always means "charge it"
+   * (tryStartCharge) — completely regardless of whether some OTHER
+   * vehicle's thank-you happens to be pending dismissal elsewhere. Only
+   * when NOT aiming at anything does E fall through to thank-you's own
+   * next-line/end handling. This is what makes the exact scenario spec four
+   * describes structurally impossible: "keydown E -> charge -> charge
+   * completes -> completePoint() -> showThankYou()/showPointReaction(),
+   * while E is STILL held down" never routes that same held key (or its
+   * eventual release-and-repress) into a dialogue-dismiss action, because
+   * completePoint() no longer changes `this.state` at all, and even if it
+   * had left a thank-you pending for a DIFFERENT vehicle, the player is
+   * still aiming at a marker, so E keeps charging.
+   *
+   * Also still doesn't gate on playerController.isLocked (see this file's
+   * own git history — "進入黑夜卡死風險" round's fix for the same class of
+   * bug DreamComicSystem/ItemRewardSystem already document): Pointer Lock
+   * is a browser-level concept this feature's own E handling has no real
+   * reason to depend on. */
   private onKeyDown = (event: KeyboardEvent): void => {
     if (event.repeat) return;
+    if (this.state !== 'cleaning') return;
+    const bindings = this.settingsManager.inputBindings;
 
-    if (this.state === 'cleaning') {
-      const bindings = this.settingsManager.inputBindings;
-      if (bindings.matches('interact', event.code)) {
-        this.tryStartCharge();
-      }
+    if (this.getAimedMarker()) {
+      if (bindings.matches('interact', event.code)) this.tryStartCharge();
       return;
     }
 
-    if (this.state === 'vehicleReturnDialogue' || this.state === 'cleaningPointDialogue' || this.state === 'vehicleThankYou') {
-      const bindings = this.settingsManager.inputBindings;
+    if (this.dialogueVehicle && this.dialogueKind === 'thankYou') {
       if (event.code === 'Space' || bindings.matches('interact', event.code) || bindings.matches('pickupPlace', event.code)) {
         event.preventDefault();
-        this.advanceDialogue();
+        this.advanceThankYou();
       }
     }
   };
