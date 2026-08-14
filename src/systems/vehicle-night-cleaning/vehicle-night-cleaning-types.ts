@@ -44,6 +44,11 @@ export type NightCleaningState =
   | 'cleaning'        // the WHOLE rest of the night: aiming/charging points, per-vehicle greeting/point-reaction/thank-you dialogue, and vehicle departures all happen here, all in parallel, none of them blocking each other
   | 'waitingForStory'; // every vehicle cleaned+thanked+departed — AfterWorkStorySystem's own NPC may now start dialogue
 
+/** Purely a bookkeeping label now (see VehicleCleaningInstance.dialogueKind's
+ * own doc comment) — 'return'/'point' no longer drive any E-handling branch
+ * at all; only 'thankYou' does. */
+export type DialogueKind = 'return' | 'point' | 'thankYou';
+
 /** One returned vehicle's own overnight cleaning progress — `vehicleSystem`
  * is intentionally `unknown` here (not `VehicleSystem`) to avoid this types
  * file importing the whole vehicle-system.ts class module just for a type
@@ -56,12 +61,17 @@ export interface VehicleCleaningInstance {
   activePointIds: string[];
   completedPointIds: Set<string>;
   /** "載具對話事件化" round — true once this vehicle's own greeting has
-   * already been auto-shown (drives the "skip if already greeted" checks in
-   * showGreeting/updateCleaning's own aim-triggered reveal). No longer
-   * drives a sequential "wait for E, then chain to the next vehicle" flow —
-   * each vehicle's own greeting fires independently the moment it becomes
-   * relevant (arrival, for the first vehicle; the player first aiming at
-   * one of its markers, for every other one). */
+   * already been auto-shown (drives the "skip if already greeted" check in
+   * showGreeting). */
   greeted: boolean;
   thanked: boolean;
+  /** "每台載具獨立字幕" round — this vehicle's OWN currently-displayed
+   * caption content, entirely independent of every other vehicle's (each
+   * gets its own on-screen caption now — see vehicle-night-cleaning-ui.ts's
+   * own per-vehicle caption pool). `null` whenever this vehicle has nothing
+   * showing (before its greeting fires, and again once its own thank-you
+   * has been dismissed, right before it departs). */
+  dialogueKind: DialogueKind | null;
+  dialogueLines: string[];
+  dialogueLineIndex: number;
 }
