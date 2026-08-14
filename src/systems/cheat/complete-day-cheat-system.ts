@@ -28,6 +28,8 @@ import { VehicleControlSystem } from '../vehicle/vehicle-control-system';
 import { AfterWorkStorySystem } from '../story/after-work-story-system';
 import { UnloadingSystem } from '../unloading/unloading-system';
 import { UpgradeSystem } from '../upgrade/upgrade-system';
+import { ItemRewardSystem } from '../item-reward/item-reward-system';
+import { DreamComicSystem } from '../dream-comic/dream-comic-system';
 
 /** TEMPORARY TEST CHEAT — remove before public demo. */
 export const COMPLETE_DAY_CHEAT_BUTTON_ID = 'complete-day-cheat-button';
@@ -36,6 +38,8 @@ export const JUMP_TO_DAY8_BUTTON_ID = 'jump-to-day8-button';
 /** TEMPORARY TEST CHEAT ("每日結算流程修改" round spec三: "新增『獲得1000分』
  * 作弊按鈕"). */
 export const SCORE_CHEAT_BUTTON_ID = 'score-cheat-button';
+/** TEMPORARY TEST CHEAT ("跳到第四天" round: "新增測試按鈕：直接跳至Day4"). */
+export const JUMP_TO_DAY4_BUTTON_ID = 'jump-to-day4-button';
 
 const BUTTON_WIDTH = 0.55;
 const BUTTON_HEIGHT = 0.30;
@@ -59,6 +63,16 @@ const JUMP_BUTTON_CENTER_X = BUTTON_CENTER_X + BUTTON_WIDTH + 0.25;
  * Right edge sits at -10.9+0.275 = -10.625, still 0.625m clear of
  * LOST_FOUND_ROOM's own maxX (-10). */
 const SCORE_BUTTON_CENTER_X = JUMP_BUTTON_CENTER_X + BUTTON_WIDTH + 0.25;
+/** "跳到第四天" round — the existing 3-button row already runs from
+ * BUTTON_CENTER_X-0.275 (-12.775) to SCORE_BUTTON_CENTER_X+0.275 (-10.625),
+ * leaving only 0.625m clear before LOST_FOUND_ROOM's own east wall
+ * (maxX -10) — not enough room for a 4th button + gap (0.8m) on that side.
+ * The WEST side has plenty of room instead: BUTTON_CENTER_X itself sits
+ * 2.5m clear of the room's own west wall (minX -15), so this new button
+ * goes there (BUTTON_WIDTH + 0.25m further west of the first button),
+ * leaving [跳到第四天] [作弊完成今日] [跳至第八天] [+1000分] left-to-right,
+ * still 1.425m clear of the west wall — no existing button moves. */
+const JUMP4_BUTTON_CENTER_X = BUTTON_CENTER_X - (BUTTON_WIDTH + 0.25);
 
 const CHEAT_BUTTON_INTERACT_DISTANCE = 2.5;
 
@@ -79,6 +93,9 @@ const JUMP_IDLE_TEXT = '測試用\n跳至第八天';
 const JUMP_PROMPT_TEXT = 'E 清除今日物件並跳至第八天';
 const JUMP_BLOCKED_STORY_ACTIVE_TEXT = '請先完成目前的劇情';
 const JUMP_BLOCKED_RESETTING_TEXT = '請稍候，今日流程正在處理中';
+
+const JUMP4_IDLE_TEXT = '測試用\n跳至第四天';
+const JUMP4_PROMPT_TEXT = 'E 清除今日物件並跳至第四天';
 
 const SCORE_IDLE_TEXT = '測試用\n+1000 分';
 const SCORE_PROMPT_TEXT = 'E 獲得 1000 分';
@@ -138,16 +155,20 @@ export class CompleteDayCheatSystem {
   private afterWorkStorySystem: AfterWorkStorySystem;
   private unloadingSystem: UnloadingSystem;
   private upgradeSystem: UpgradeSystem;
+  private itemRewardSystem: ItemRewardSystem;
+  private dreamComicSystem: DreamComicSystem;
 
   private buttonMesh: THREE.Mesh | null = null;
   private jumpButtonMesh: THREE.Mesh | null = null;
   private scoreButtonMesh: THREE.Mesh | null = null;
+  private jump4ButtonMesh: THREE.Mesh | null = null;
 
   /** Re-entrancy lock (spec五: "按鈕處理期間再次按E無效") — pressCheatButton
    * itself is fully synchronous today, but this guard stays cheap insurance
    * against any future async step being added without re-auditing the
-   * re-entrancy story. Shared with pressJumpToDay8Button below — the two
-   * buttons are never meant to run concurrently either. */
+   * re-entrancy story. Shared with pressJumpToDay8Button/
+   * pressJumpToDay4Button below — none of these buttons are ever meant to
+   * run concurrently with each other either. */
   private isExecuting = false;
   /** Which day the cheat has already successfully completed, if any (spec
    * 五: "同一天只能成功執行一次" / "completedCheatDayId") — compared against
@@ -162,7 +183,8 @@ export class CompleteDayCheatSystem {
     mailSystem: MailSystem, mailBagSystem: MailBagSystem, packedMailBagSystem: PackedMailBagSystem,
     envelopeDispatchMachineSystem: EnvelopeDispatchMachineSystem, lostFoundSystem: LostFoundSystem,
     vehicleControlSystem: VehicleControlSystem, afterWorkStorySystem: AfterWorkStorySystem,
-    unloadingSystem: UnloadingSystem, upgradeSystem: UpgradeSystem
+    unloadingSystem: UnloadingSystem, upgradeSystem: UpgradeSystem,
+    itemRewardSystem: ItemRewardSystem, dreamComicSystem: DreamComicSystem
   ) {
     this.scene = scene;
     this.interactables = interactables;
@@ -183,6 +205,8 @@ export class CompleteDayCheatSystem {
     this.afterWorkStorySystem = afterWorkStorySystem;
     this.unloadingSystem = unloadingSystem;
     this.upgradeSystem = upgradeSystem;
+    this.itemRewardSystem = itemRewardSystem;
+    this.dreamComicSystem = dreamComicSystem;
 
     // spec: "優先選擇完全不生成，而非生成但禁用" (same convention this
     // codebase already established for the pallet-inventory-expansion
@@ -192,6 +216,7 @@ export class CompleteDayCheatSystem {
       this.buildButton();
       this.buildJumpButton();
       this.buildScoreButton();
+      this.buildJump4Button();
     }
   }
 
@@ -264,6 +289,27 @@ export class CompleteDayCheatSystem {
     this.interactables.set(SCORE_CHEAT_BUTTON_ID, obj);
   }
 
+  /** "跳到第四天" round — same wall/mount/style as the other three cheat
+   * buttons, positioned WEST of "作弊完成今日" (see JUMP4_BUTTON_CENTER_X's
+   * own doc comment for why west rather than continuing the row east). */
+  private buildJump4Button(): void {
+    const geo = new THREE.BoxGeometry(BUTTON_WIDTH, BUTTON_HEIGHT, BUTTON_DEPTH);
+    const mat = new THREE.MeshStandardMaterial({ color: 0xdd1111, emissive: 0x330000 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(JUMP4_BUTTON_CENTER_X, BUTTON_CENTER_Y, BUTTON_CENTER_Z);
+    this.scene.add(mesh);
+    this.jump4ButtonMesh = mesh;
+
+    const label = createFloatingLabel(JUMP4_IDLE_TEXT, { width: 0.7, bg: 'rgba(120,10,10,0.85)', fg: '#ffe14d' });
+    label.position.set(JUMP4_BUTTON_CENTER_X, BUTTON_CENTER_Y + BUTTON_HEIGHT / 2 + 0.28, BUTTON_CENTER_Z);
+    this.scene.add(label);
+
+    const obj = createInteractableObject(
+      JUMP_TO_DAY4_BUTTON_ID, '測試用跳至第四天按鈕', mesh, BUTTON_WIDTH, BUTTON_HEIGHT, BUTTON_DEPTH
+    );
+    this.interactables.set(JUMP_TO_DAY4_BUTTON_ID, obj);
+  }
+
   isCheatButtonTarget(id: string): boolean {
     return ENABLE_COMPLETE_DAY_CHEAT && id === COMPLETE_DAY_CHEAT_BUTTON_ID;
   }
@@ -274,6 +320,10 @@ export class CompleteDayCheatSystem {
 
   isScoreButtonTarget(id: string): boolean {
     return ENABLE_COMPLETE_DAY_CHEAT && id === SCORE_CHEAT_BUTTON_ID;
+  }
+
+  isJump4ButtonTarget(id: string): boolean {
+    return ENABLE_COMPLETE_DAY_CHEAT && id === JUMP_TO_DAY4_BUTTON_ID;
   }
 
   /** ONE canonical judgment shared by the prompt display and the actual
@@ -304,6 +354,13 @@ export class CompleteDayCheatSystem {
     return cameraPosition.distanceTo(this.scoreButtonMesh.position) <= CHEAT_BUTTON_INTERACT_DISTANCE;
   }
 
+  /** Same raycast-precise distance judgment as canPressJumpButton above,
+   * for the new "跳至第四天" button. */
+  canPressJump4Button(cameraPosition: THREE.Vector3): boolean {
+    if (!this.jump4ButtonMesh) return false;
+    return cameraPosition.distanceTo(this.jump4ButtonMesh.position) <= CHEAT_BUTTON_INTERACT_DISTANCE;
+  }
+
   /** Prompt text for whatever the current press WOULD do — read by
    * InteractionSystem so the on-screen hint always matches pressCheatButton
    * below's own actual outcome. */
@@ -328,6 +385,14 @@ export class CompleteDayCheatSystem {
   /** No blocked state — see buildScoreButton's own doc comment. */
   getScorePromptText(): string {
     return SCORE_PROMPT_TEXT;
+  }
+
+  /** Mirrors getJumpPromptText above for the new "跳至第四天" button — same
+   * two blocks (mid-reset, mid-story) for the same reasons. */
+  getJump4PromptText(): string {
+    if (this.isExecuting || this.dailyFlowSystem.state === 'resetting') return JUMP_BLOCKED_RESETTING_TEXT;
+    if (this.afterWorkStorySystem.isActive) return JUMP_BLOCKED_STORY_ACTIVE_TEXT;
+    return JUMP4_PROMPT_TEXT;
   }
 
   /** Whether today's content has even been generated yet (spec五: "尚未生成
@@ -412,20 +477,103 @@ export class CompleteDayCheatSystem {
     this.playerData.heldObjectId = null;
   }
 
-  /** Spec follow-up二/三/四: the new "跳至第八天" button's own E-action —
-   * resets prior-day logistics state, spawns the ordinary day-8 dock cargo
-   * (the single giant cake item, E-only), THEN directly enters the Day8
-   * finale itself so the tester can test the F-interactable cake/party/
-   * campfire chain with no extra steps (spec follow-up's own "測試者必須能
-   * 夠直接測試" requirement — pressCheatButton + advanceToNextDay are no
-   * longer required first). resetForDayJumpTesting() clears BOTH guards
-   * trigger() itself checks before it will fire a second time in the same
-   * session: the persisted completedDays flag (real players are correctly
-   * blocked from re-triggering an already-finished day forever) and the
-   * in-memory `state` field getting stuck at 'finaleCredits' once a
-   * playthrough reaches Day8's own ending (that branch never resets it,
-   * since a real playthrough's only next step is resetForNewRun()'s own
-   * full page reload). */
+  /** Spec follow-up二/三/四, generalized by "跳到第四天" round into a shared
+   * helper both jump buttons call (this used to inline all of the below
+   * directly here — extracted so a second jump target doesn't duplicate
+   * it): resets prior-day logistics state, spawns `day`'s own ordinary dock
+   * cargo, THEN directly lands in that day's 'ready' state so the tester
+   * can start testing with no extra steps (spec follow-up's own "測試者必須
+   * 能夠直接測試" requirement — pressCheatButton + advanceToNextDay are no
+   * longer required first).
+   *
+   * "跳到第四天" round spec五 — three separate PERSISTED localStorage flags
+   * are cleared here, one per system, so stale data from ANY previously-
+   * tested day (including a partial/earlier run of this exact cheat) can
+   * never silently suppress `day`'s own NPC story, or the FOLLOWING day's
+   * dream, or a reward popup that's genuinely due again on a fresh jump:
+   *   - AfterWorkStorySystem.resetForDayJumpTesting() — clears BOTH guards
+   *     trigger() itself checks: the persisted "most-recently-resolved day"
+   *     flag (hp_after_work_story_v2) and the in-memory `state` field
+   *     getting stuck at 'finaleCredits' from a prior Day8 ending this same
+   *     session (that branch never resets it on its own — a real
+   *     playthrough's only next step is resetForNewRun()'s own page
+   *     reload).
+   *   - DreamComicSystem.resetDreamProgress() — clears hp_dream_comic_v1's
+   *     `completedDays` array, so `day+1`'s own dream (e.g. Day 5's, after
+   *     jumping to Day 4) can't be silently skipped by hasPlayedDream()
+   *     just because it happened to already be marked played from earlier
+   *     testing in this browser.
+   *   - ItemRewardSystem.resetItemRewardProgress() — clears hp_item_reward_v1's
+   *     `grantedDays` array, for the exact same reason (`day`'s own reward
+   *     popup, if daily-item-reward-data.ts has one, must actually show).
+   * None of these three calls touch anything ABOUT a day other than
+   * clearing "already resolved" flags — they can never re-trigger a story/
+   * dream/reward for a day the player hasn't actually reached. */
+  private jumpToDayForTesting(day: number, arrivalToast: string): void {
+    this.clearHeldState();
+
+    // Destroy every logistics object left over from whatever day we were
+    // on (spec follow-up二: "清除前一天物流物件" — cargo/envelope/lost-found,
+    // mesh/collider/rigidbody/interactable-registration/data all included,
+    // via each owning system's own real teardown API — same methods the
+    // REAL end-of-day reset already calls).
+    for (const id of this.dailyFlowSystem.dailyCargoIds) {
+      if (this.cargoSystem.getCargoData(id)) this.cargoSystem.removeCargo(id);
+    }
+    this.mailBagSystem.resetDaily();
+    this.packedMailBagSystem.resetDaily();
+    this.envelopeDispatchMachineSystem.resetDaily();
+    this.envelopeStackSystem.resetDaily();
+    this.mailSystem.resetDaily();
+    this.lostFoundSystem.resetDaily();
+    this.palletSystem.resetToStart();
+
+    // Force the day counter directly (DailyFlowSystem's own fields are
+    // all public, same as every other system this cheat already reaches
+    // into) and land in 'ready' so unloadingSystem.pressButton() below is
+    // willing to start a fresh spawn sequence.
+    this.dailyFlowSystem.currentDay = day;
+    this.dailyFlowSystem.state = 'ready';
+    this.dailyFlowSystem.dailyCargoIds = new Set();
+    this.dailyFlowSystem.totalCargoCount = 0;
+    this.dailyFlowSystem.hasUnloadedToday = false;
+    this.completedCheatDayId = null;
+    // "船運載具規格重製" round — this cheat bypasses the normal
+    // DailyFlowSystem.advanceToNextDay()/resetTools sequence entirely (it
+    // sets currentDay directly instead), so it must also explicitly rebuild
+    // the vehicle roster here the same way that sequence would have —
+    // otherwise whatever day's roster happened to be active before the jump
+    // would incorrectly persist onto `day` (daily-unlock-data.ts's own
+    // per-day vehicle list — Day 4 unlocks all 6, matching this round's own
+    // "6台載具" testing goal — is what buildSlotsForDay reads there).
+    this.vehicleControlSystem.resetForNewDay();
+
+    // Clear whatever stale persisted/in-session story-completion state
+    // might otherwise block trigger(day) from ever firing again — see this
+    // method's own doc comment for the full localStorage-pollution writeup.
+    this.afterWorkStorySystem.resetForDayJumpTesting();
+    this.dreamComicSystem.resetDreamProgress();
+    this.itemRewardSystem.resetItemRewardProgress();
+
+    // Re-initialize `day`'s own state: resetGate() guarantees a clean
+    // 'idle' phase regardless of what the gate was doing before, then
+    // pressButton() starts the same real spawn pipeline every normal day
+    // uses (buildDailyCargoManifest(day) — already day-aware, no special-
+    // casing needed here regardless of which day this is).
+    this.unloadingSystem.resetGate();
+    this.unloadingSystem.pressButton();
+
+    this.hud.showToast(arrivalToast);
+  }
+
+  /** Spec follow-up二/三/四: the "跳至第八天" button's own E-action — see
+   * jumpToDayForTesting's own doc comment for the shared logistics-reset/
+   * localStorage-cleanup work. Day8 spawns exactly its one giant cake
+   * (buildDailyCargoManifest(8) is already gated to that — "Day8巨型蛋糕物
+   * 流化" round), and AfterWorkStorySystem.update() itself notices
+   * dailyFlowSystem.currentDay === 8 the very next frame and starts
+   * watching for that cargo item to be placed and unwrapped, with zero
+   * further action needed from this button. */
   pressJumpToDay8Button(): void {
     if (this.isExecuting) return;
     if (this.dailyFlowSystem.state === 'resetting') {
@@ -443,63 +591,42 @@ export class CompleteDayCheatSystem {
 
     this.isExecuting = true;
     try {
-      this.clearHeldState();
+      this.jumpToDayForTesting(8, '已跳至第八天，蛋糕正在卸貨中');
+    } finally {
+      this.isExecuting = false;
+    }
+  }
 
-      // Destroy every logistics object left over from whatever day we were
-      // on (spec follow-up二: "清除前一天物流物件" — cargo/envelope/lost-found,
-      // mesh/collider/rigidbody/interactable-registration/data all included,
-      // via each owning system's own real teardown API — same methods the
-      // REAL end-of-day reset already calls).
-      for (const id of this.dailyFlowSystem.dailyCargoIds) {
-        if (this.cargoSystem.getCargoData(id)) this.cargoSystem.removeCargo(id);
-      }
-      this.mailBagSystem.resetDaily();
-      this.packedMailBagSystem.resetDaily();
-      this.envelopeDispatchMachineSystem.resetDaily();
-      this.envelopeStackSystem.resetDaily();
-      this.mailSystem.resetDaily();
-      this.lostFoundSystem.resetDaily();
-      this.palletSystem.resetToStart();
+  /** "跳到第四天" round — the new "跳至第四天" button's own E-action, same
+   * shape/guards as pressJumpToDay8Button above, sharing the SAME
+   * jumpToDayForTesting helper (Day8's own cake-only spawn/no-vehicle/no-
+   * dream behavior comes entirely from daily-unlock-data.ts/
+   * buildDailyCargoManifest already being day-aware — nothing here needs to
+   * special-case Day4 vs Day8 beyond the literal day number and toast
+   * text). Lands in Day4's normal 'ready' state with all 6 vehicles
+   * unlocked (daily-unlock-data.ts's own DAY4.vehicles), a full 90-item
+   * cargo manifest, mail, and lost-found queue — the player can immediately
+   * play through 開始卸貨→呼叫載具→出發→夜間清潔→NPC→結算→道具→Day5夢境
+   * exactly like a normal day, just without having actually played Day
+   * 1-3 first (spec三: "不要真的從Day1→Day2→Day3→Day4完整跑流程"). */
+  pressJumpToDay4Button(): void {
+    if (this.isExecuting) return;
+    if (this.dailyFlowSystem.state === 'resetting') {
+      this.hud.showToast(JUMP_BLOCKED_RESETTING_TEXT);
+      return;
+    }
+    if (this.afterWorkStorySystem.isActive) {
+      this.hud.showToast(JUMP_BLOCKED_STORY_ACTIVE_TEXT);
+      return;
+    }
+    if (this.ladderSystem.isCarrying) {
+      this.hud.showToast('請先放下手上的梯子');
+      return;
+    }
 
-      // Force the day counter directly (DailyFlowSystem's own fields are
-      // all public, same as every other system this cheat already reaches
-      // into) and land in 'ready' so unloadingSystem.pressButton() below is
-      // willing to start a fresh spawn sequence.
-      this.dailyFlowSystem.currentDay = 8;
-      this.dailyFlowSystem.state = 'ready';
-      this.dailyFlowSystem.dailyCargoIds = new Set();
-      this.dailyFlowSystem.totalCargoCount = 0;
-      this.dailyFlowSystem.hasUnloadedToday = false;
-      this.completedCheatDayId = null;
-      // "船運載具規格重製" round — this cheat bypasses the normal
-      // DailyFlowSystem.advanceToNextDay()/resetTools sequence entirely
-      // (it sets currentDay directly instead), so it must also explicitly
-      // rebuild the vehicle roster here the same way that sequence would
-      // have — otherwise whatever day's roster happened to be active before
-      // the jump would incorrectly persist onto Day 8.
-      this.vehicleControlSystem.resetForNewDay();
-
-      // Bug fix (see this method's own doc comment above): clear whatever
-      // stale persisted/in-session story-completion state might otherwise
-      // block trigger(8) from ever firing again.
-      this.afterWorkStorySystem.resetForDayJumpTesting();
-
-      // Re-initialize Day8 state (spec follow-up二): resetGate() guarantees
-      // a clean 'idle' phase regardless of what the gate was doing before,
-      // then pressButton() starts the same real spawn pipeline every normal
-      // day uses — buildDailyCargoManifest(8) is already gated (earlier
-      // round) to return exactly the one giant cake and nothing else, so no
-      // separate "spawn only the cake" logic is needed here. This is now the
-      // ONLY cake that ever exists for Day8 ("Day8巨型蛋糕物流化" round —
-      // AfterWorkStorySystem no longer spawns a separate decorative prop at
-      // all); AfterWorkStorySystem.update() itself notices
-      // dailyFlowSystem.currentDay === 8 the very next frame and starts
-      // watching for this exact cargo item to be placed and unwrapped, with
-      // zero further action needed from this button.
-      this.unloadingSystem.resetGate();
-      this.unloadingSystem.pressButton();
-
-      this.hud.showToast('已跳至第八天，蛋糕正在卸貨中');
+    this.isExecuting = true;
+    try {
+      this.jumpToDayForTesting(4, '已跳至第四天，今日貨物正在卸貨中');
     } finally {
       this.isExecuting = false;
     }

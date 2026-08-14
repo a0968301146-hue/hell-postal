@@ -414,6 +414,7 @@ export class InteractionSystem {
         !this.completeDayCheatSystem.isCheatButtonTarget(this.currentTarget.id) &&
         !this.completeDayCheatSystem.isJumpButtonTarget(this.currentTarget.id) &&
         !this.completeDayCheatSystem.isScoreButtonTarget(this.currentTarget.id) &&
+        !this.completeDayCheatSystem.isJump4ButtonTarget(this.currentTarget.id) &&
         !this.isLostFoundNpcTarget(this.currentTarget) &&
         !(this.mailBagSystem.isBag(this.currentTarget.id) && isHoldingEnvelope) &&
         this.pickupSystem.canAddToHeld(this.currentTarget)
@@ -685,6 +686,17 @@ export class InteractionSystem {
     if (this.currentTarget && this.completeDayCheatSystem.isScoreButtonTarget(this.currentTarget.id)) {
       if (this.completeDayCheatSystem.canPressScoreButton(this.camera.position)) {
         this.completeDayCheatSystem.pressScoreButton();
+      }
+      this.clearHighlight(this.currentTarget);
+      this.currentTarget = null;
+      return;
+    }
+
+    // Priority 0.88: "跳至第四天" test button — same shape as the other
+    // jump button above ("跳到第四天" round).
+    if (this.currentTarget && this.completeDayCheatSystem.isJump4ButtonTarget(this.currentTarget.id)) {
+      if (this.completeDayCheatSystem.canPressJump4Button(this.camera.position)) {
+        this.completeDayCheatSystem.pressJumpToDay4Button();
       }
       this.clearHighlight(this.currentTarget);
       this.currentTarget = null;
@@ -963,6 +975,7 @@ export class InteractionSystem {
         !this.completeDayCheatSystem.isCheatButtonTarget(hit.id) &&
         !this.completeDayCheatSystem.isJumpButtonTarget(hit.id) &&
         !this.completeDayCheatSystem.isScoreButtonTarget(hit.id) &&
+        !this.completeDayCheatSystem.isJump4ButtonTarget(hit.id) &&
         this.pickupSystem.canAddToHeld(hit)
       ) {
         if (this.currentTarget !== hit) {
@@ -1190,6 +1203,10 @@ export class InteractionSystem {
           // TEMPORARY TEST CHEAT — mirrors the branches above, for the new
           // "+1000分" button ("每日結算流程修改" round spec三).
           this.hud.showInteractionPrompt(newTarget.displayName, this.completeDayCheatSystem.getScorePromptText());
+        } else if (this.completeDayCheatSystem.isJump4ButtonTarget(newTarget.id)) {
+          // TEMPORARY TEST CHEAT — mirrors the "跳至第八天" branch above, for
+          // the new "跳至第四天" button ("跳到第四天" round).
+          this.hud.showInteractionPrompt(newTarget.displayName, this.completeDayCheatSystem.getJump4PromptText());
         } else if (newTarget && this.isLostFoundNpcTarget(newTarget)) {
           // "Fix NPC direct interaction and pallet stack handling" round二:
           // crosshair directly on the NPC's own hitbox, empty-handed. Not-

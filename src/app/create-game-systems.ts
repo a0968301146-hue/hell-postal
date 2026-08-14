@@ -748,7 +748,14 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     scene, interactables, playerData, hud,
     pickupSystem, palletSystem, ladderSystem, envelopeStackSystem, cargoSystem, dailyFlowSystem,
     mailSystem, mailBagSystem, packedMailBagSystem, envelopeDispatchMachineSystem, lostFoundSystem,
-    vehicleControlSystem, afterWorkStorySystem, unloadingSystem, upgradeSystem
+    vehicleControlSystem, afterWorkStorySystem, unloadingSystem, upgradeSystem,
+    // "跳到第四天" round — both already constructed above (itemRewardSystem
+    // right before vehicleControlSystem, dreamComicSystem right after
+    // afterWorkStorySystem): needed so jumpToDayForTesting() can clear their
+    // own persisted "already resolved" localStorage flags alongside
+    // afterWorkStorySystem's own resetForDayJumpTesting() (see that
+    // method's own doc comment).
+    itemRewardSystem, dreamComicSystem
   );
 
   // Interaction system
