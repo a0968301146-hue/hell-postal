@@ -13,7 +13,8 @@ import {
   CleaningPointDefinition, getVehicleCleaningDefinition, pickNightlyCleaningPoints,
 } from '../../data/vehicle/vehicle-cleaning-data';
 import {
-  createNightCleaningUi, setFadeOpacity, showVehicleDialogueText, hideVehicleDialogueBox, NightCleaningUiHandle,
+  createNightCleaningUi, setFadeOpacity, showVehicleDialogueText, hideVehicleDialogueBox,
+  updateVehicleDialoguePosition, NightCleaningUiHandle,
 } from './vehicle-night-cleaning-ui';
 import { NightCleaningState, VehicleCleaningInstance } from './vehicle-night-cleaning-types';
 import {
@@ -233,6 +234,18 @@ export class VehicleNightCleaningSystem {
     // see spawnReturnedVehicles' own onArrived() doc comment for the other
     // half of this fix).
     for (const vehicle of this.vehicles) (vehicle.vehicleSystem as VehicleSystem).update(deltaTime);
+
+    // "載具對話框跟隨載具" round — re-projects the dialogue box's screen
+    // position every frame while ANY dialogue is showing (all three kinds:
+    // return/point/thankYou), so it stays pinned above whichever vehicle is
+    // actually talking even though nothing else about that vehicle moves
+    // during dialogue (see updateVehicleDialoguePosition's own doc comment
+    // for why this still needs to run every frame regardless — the camera
+    // itself keeps moving as the player looks around, so a screen-space
+    // position computed once at dialogue-start would drift stale otherwise).
+    if (this.dialogueVehicle) {
+      updateVehicleDialoguePosition(this.ui, this.camera, this.dialogueVehicle.vehicleSystem as VehicleSystem);
+    }
 
     switch (this.state) {
       case 'idle':
@@ -493,6 +506,11 @@ export class VehicleNightCleaningSystem {
     this.playerController.setInputEnabled(false);
 
     showVehicleDialogueText(this.ui, this.dialogueLines[0]);
+    // Synchronous first-position sync — avoids a one-frame flash at
+    // whatever left/top the box last had (either its CSS default, or the
+    // PREVIOUS vehicle's own position) before update()'s own per-frame call
+    // below gets a chance to run.
+    updateVehicleDialoguePosition(this.ui, this.camera, vehicle.vehicleSystem as VehicleSystem);
 
     this.state = kind === 'return' ? 'vehicleReturnDialogue' : kind === 'point' ? 'cleaningPointDialogue' : 'vehicleThankYou';
   }
