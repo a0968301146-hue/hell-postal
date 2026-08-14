@@ -8,8 +8,7 @@ import { PALLET_WALL_SLOTS } from '../pallet/pallet-data';
 
 /** "Add ladder tool station and envelope vacuum" round一, reshaped into a
  * genuine A-frame by "Add regional envelope dispatch machine" round二, then
- * shrunk 25% and made double-sided (climbable from either the front OR the
- * back) by a later round — a single foldable ladder, NOT disguised as
+ * shrunk 25% by a later round — a single foldable ladder, NOT disguised as
  * Cargo. Placement/dimension constants live here, mirroring pallet-data.ts's
  * own convention: nothing hardcoded in ladder-system.ts, every wall
  * coordinate DERIVED from BACK_AREA/the pallet rack cluster it must clear
@@ -18,17 +17,18 @@ import { PALLET_WALL_SLOTS } from '../pallet/pallet-data';
  * FOLDED (stored on the wall) — flat slab profile: height 1.35m (spec九:
  *   "1.8m -> 1.35m，降低25%") / width 0.9m (unchanged) / thickness ~0.22m
  *   (unchanged).
- * UNFOLDED — a real A-frame: front (climbing) legs + rear (equally
- *   climbable, spec十) legs hinged together at the top apex, spreader bars
- *   holding the splay open. Standing height 1.35m / width 0.9m / front-to-
- *   back footprint ~0.975m / front AND back both get 8 steps @ 0.16875m
+ * UNFOLDED — a real A-frame, single-sided climb (spec: "只有其中一側設置可
+ *   攀爬階梯,另一側維持支撐腳結構,不設置階梯"): front (climbing) legs carry
+ *   the steps, rear legs are support-only, hinged together at the top apex,
+ *   spreader bars holding the splay open. Standing height 1.35m / width
+ *   0.9m / front-to-back footprint ~0.975m / front gets 8 steps @ 0.16875m
  *   each (8*0.16875=1.35m, matching the apex height exactly) / top platform
  *   depth ~0.315m. The footprint splits into frontRun (front legs' own
- *   horizontal projection, base to apex) + backRun (rear legs' own
- *   horizontal projection, apex to their own foot) — both sides now carry
- *   real step tread meshes AND their own independent Fixed step colliders
- *   (spec十: "前後兩側各有8個可見踏板...共17個主要可踩踏Collider" — 8 front +
- *   8 back + 1 platform), no more a single blocking-only rear panel. */
+ *   horizontal projection, base to apex, carrying the real step tread
+ *   meshes AND their own independent Fixed step colliders — 8 front + 1
+ *   platform = 9 walkable colliders) + backRun (rear legs' own horizontal
+ *   projection, apex to their own foot — bare support rails only, no
+ *   treads, no colliders, so the back side simply has nothing to climb). */
 export const LADDER_ID = 'ladder-01';
 export const LADDER_RACK_ID = 'ladder-rack-01';
 export const LADDER_DISPLAY_NAME = 'A字梯';

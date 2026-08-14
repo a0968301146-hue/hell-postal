@@ -188,18 +188,10 @@ export class LadderSystem {
       rail.rotation.x = LADDER_BACK_LEG_ANGLE;
       unfoldedGroup.add(rail);
     }
-    // Rear step treads — genuinely double-sided this round (spec十:
-    // "前後兩側各有8個可見踏板...玩家可以從任一側走上頂部平台"), evenly spaced
-    // down from the apex to the back foot, mirroring the front tread loop
-    // exactly (same LADDER_STEP_HEIGHT per step, since both sides share the
-    // same total rise/standHeight — only the horizontal run differs).
-    for (let i = 1; i <= LADDER_STEP_COUNT; i++) {
-      const stepZ = apexZ + (i / LADDER_STEP_COUNT) * LADDER_UNFOLDED.backRun;
-      const stepY = LADDER_UNFOLDED.standHeight - i * LADDER_STEP_HEIGHT;
-      const tread = new THREE.Mesh(new THREE.BoxGeometry(LADDER_UNFOLDED.width * 0.85, 0.04, 0.16), woodMat);
-      tread.position.set(0, stepY + LADDER_STEP_HEIGHT / 2, stepZ);
-      unfoldedGroup.add(tread);
-    }
+    // Rear legs are support-only — single-sided climb (spec: "只有其中一側
+    // 設置可攀爬階梯,另一側維持支撐腳結構,不設置階梯"), so unlike the front
+    // rails above, NO tread meshes are added here — just the bare rails
+    // (already built above) bracing the frame.
     // Apex hinge — the metal pivot joining the front and rear leg pairs,
     // the single most A-defining silhouette cue when viewed from the side.
     const apexHinge = new THREE.Mesh(new THREE.BoxGeometry(LADDER_UNFOLDED.width * 0.55, 0.08, 0.1), hingeMat);
@@ -584,21 +576,21 @@ export class LadderSystem {
 
   /** Builds the walkable staircase as genuinely Fixed colliders at the
    * ladder's CURRENT (just-finalized) placed transform — one per visible
-   * front step, one per visible BACK step (spec十: genuinely double-sided,
-   * climbable from either side — no more a single blocking-only rear
-   * panel), plus the top platform (8+8+1=17 total, spec十's own count),
-   * mirroring the visual treads' own local offsets exactly (buildLadder's
-   * own unfoldedGroup). Verified directly with a real trusted-input walk
-   * test that a KINEMATIC body's colliders do NOT receive the player
-   * character controller's autostep/slope-climb treatment (the player got
-   * stuck partway up no matter how the steps were sized), while the
-   * IDENTICAL geometry as separate Fixed bodies climbs correctly — so the
-   * walkable surface has to be its own set of Fixed bodies, rebuilt fresh
-   * every time the ladder is placed (never reused from a previous
-   * placement — see clearWalkableColliders, called at the start of every
-   * pickUp()). Each step's own depth intentionally overlaps its neighbors
-   * slightly so there's no gap a foot could catch or fall through
-   * between them. */
+   * front step, plus the top platform (8+1=9 total). Single-sided by
+   * design (spec: "玩家只能從有階梯的一面進行攀爬,從無階梯的一面不可觸發攀
+   * 爬") — the rear (support-leg) side deliberately gets NO step colliders
+   * here, so there is simply nothing to climb from that side, mirroring
+   * buildLadder's own front-only tread meshes exactly (unfoldedGroup).
+   * Verified directly with a real trusted-input walk test that a KINEMATIC
+   * body's colliders do NOT receive the player character controller's
+   * autostep/slope-climb treatment (the player got stuck partway up no
+   * matter how the steps were sized), while the IDENTICAL geometry as
+   * separate Fixed bodies climbs correctly — so the walkable surface has to
+   * be its own set of Fixed bodies, rebuilt fresh every time the ladder is
+   * placed (never reused from a previous placement — see
+   * clearWalkableColliders, called at the start of every pickUp()). Each
+   * step's own depth intentionally overlaps its neighbors slightly so
+   * there's no gap a foot could catch or fall through between them. */
   private buildWalkableColliders(): void {
     const q = this.mesh.quaternion;
     const apexZ = LADDER_UNFOLDED.frontRun;
@@ -615,20 +607,8 @@ export class LadderSystem {
       this.walkableColliderBodies.push(body);
     }
 
-    // Back steps — same per-step collider approach as the front, mirroring
-    // buildLadder's own back-tread visual loop exactly (descending from the
-    // apex toward the back foot as Z increases).
-    const backStepDepth = (LADDER_UNFOLDED.backRun / LADDER_STEP_COUNT) * 1.6;
-    for (let i = 1; i <= LADDER_STEP_COUNT; i++) {
-      const localZ = apexZ + (i / LADDER_STEP_COUNT) * LADDER_UNFOLDED.backRun;
-      const localY = (LADDER_UNFOLDED.standHeight - i * LADDER_STEP_HEIGHT) + 0.03;
-      const world = new THREE.Vector3(0, localY, localZ).applyQuaternion(q).add(this.mesh.position);
-      const body = this.physics.createRemovableStaticCuboid(
-        world.x, world.y, world.z, q.x, q.y, q.z, q.w,
-        LADDER_UNFOLDED.width / 2, 0.03, backStepDepth / 2
-      );
-      this.walkableColliderBodies.push(body);
-    }
+    // Rear (support-leg) side deliberately gets no step colliders at all —
+    // single-sided climb, see this method's own doc comment above.
 
     const platformLocalY = LADDER_UNFOLDED.standHeight - 0.03;
     const platformLocalZ = apexZ;
