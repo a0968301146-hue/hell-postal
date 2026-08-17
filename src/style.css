@@ -2169,7 +2169,13 @@ body.text-size-large .protagonist-dialogue-text { font-size: 24px; }
  * edge sits at the projected point (i.e. visually above the rabbit, not
  * centered on it). z-index 150 — same tier as #protagonist-dialogue (the two
  * are never shown at the same time — this round's own rabbit UI is fully
- * independent of the dialogue/choice systems, spec八). */
+ * independent of the dialogue/choice systems, spec八).
+ *
+ * "兔子吉祥物第三階段修改" round — shrunk for a single-sentence "NPC路過聊天/
+ * 小提示" feel rather than a formal dialogue box (spec五): smaller padding/
+ * width/font, no title line (mascot-guide-ui.ts's renderMascotContent no
+ * longer renders one at all, so .mascot-guide-title is gone — nothing uses
+ * it anymore). */
 #mascot-guide {
   position: fixed;
   left: 0;
@@ -2190,29 +2196,23 @@ body.text-size-large .protagonist-dialogue-text { font-size: 24px; }
   background: rgba(30, 26, 20, 0.88);
   border: 1px solid rgba(232, 200, 64, 0.3);
   border-radius: 8px;
-  padding: 14px 18px;
-  min-width: 260px;
-  max-width: 360px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  padding: 8px 12px;
+  min-width: 160px;
+  max-width: 260px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
   color: #f5f0e0;
 }
 
-.mascot-guide-title {
-  font-size: 15px;
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-
 .mascot-guide-text {
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: 13px;
+  line-height: 1.5;
   white-space: pre-line;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 .mascot-guide-hint {
-  margin-top: 8px;
-  font-size: 11px;
+  margin-top: 4px;
+  font-size: 10px;
   color: #c8bfa8;
   letter-spacing: 0.03em;
 }

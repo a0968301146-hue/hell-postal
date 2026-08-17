@@ -781,8 +781,11 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   // "新增兔子吉祥物" round — a permanent, always-present fixture (not tied to
   // any day/story trigger), constructed here so it's ready before
   // interactionSystem wires its own onOpenMascotGuide callback below.
+  // "兔子吉祥物第三階段修改" round — no longer takes playerData/
+  // playerController at all: it's a pure environmental prompt now, never
+  // locks player state/input (spec四/七).
   const mascotGuideSystem = new MascotGuideSystem(
-    scene, physics, interactables, playerData, playerController, settingsManager, () => dailyFlowSystem.currentDay
+    scene, physics, interactables, settingsManager, () => dailyFlowSystem.currentDay
   );
 
   const interactionSystem = new InteractionSystem(

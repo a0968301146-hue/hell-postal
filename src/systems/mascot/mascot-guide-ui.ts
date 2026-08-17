@@ -50,10 +50,12 @@ export function positionMascotGuideUi(handle: MascotGuideUiHandle, anchorX: numb
   handle.root.style.top = `${anchorY}px`;
 }
 
-export function renderMascotContent(handle: MascotGuideUiHandle, title: string, line: string, isLast: boolean): void {
+/** "兔子吉祥物第三階段修改" round — one line only, no title (spec五: 縮小到
+ * 適合單句文字, 感覺像"NPC路過聊天/小提示"而不是"正式劇情對話"), no
+ * "E 繼續" state since a single line always closes on the next press. */
+export function renderMascotContent(handle: MascotGuideUiHandle, line: string): void {
   handle.bodyEl.innerHTML = `
-    <div class="mascot-guide-title">${title}</div>
     <div class="mascot-guide-text">${line}</div>
-    <div class="mascot-guide-hint">${isLast ? 'E 結束' : 'E 繼續'}</div>
+    <div class="mascot-guide-hint">E／Space 關閉</div>
   `;
 }

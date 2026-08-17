@@ -1,10 +1,9 @@
 import * as THREE from 'three';
 import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { InteractableObject, createInteractableObject } from '../../shared/types/interactable';
-import { PlayerInteractionData } from '../../core/game-state';
-import { PlayerController } from '../player';
 import { SettingsManager } from '../settings';
-import { BACK_AREA } from '../world-layout';
+import { BACK_AREA, WALL_THICKNESS } from '../world-layout';
+import { PLAYER_ROOM_DOOR } from '../../data/world/player-room-layout-data';
 import { MascotGuideEntry, getAllAvailableMascotGuideEntries } from './mascot-guide-data';
 import {
   createMascotGuideUi, showMascotGuideUi, hideMascotGuideUi, positionMascotGuideUi,
@@ -20,12 +19,30 @@ import {
  * mirror exactly). */
 export const MASCOT_INTERACTABLE_ID = 'rabbit-mascot';
 
-/** East-North corner of the main hall (spec二: 房間東北方), inset from both
- * walls so the table reads as a deliberate corner fixture rather than
- * blocking the north cargo-chute doorway (centered x -1.8..1.8) or the east
- * wall's own pier opening (PIER starts exactly at BACK_AREA.maxX). */
-const MASCOT_POS_X = BACK_AREA.maxX - 2.5;
-const MASCOT_POS_Z = BACK_AREA.minZ + 2.5;
+/** "兔子吉祥物第三階段修改" round — moved from open-floor NE corner to
+ * actually leaning against a real wall (spec一: "靠在牆壁旁／靠著牆"),
+ * derived from the ACTUAL wall geometry world-layout-main-hall.ts's
+ * buildBackArea() builds, not guessed:
+ *
+ * The north wall (z = BACK_AREA.minZ = 10) has two gaps cut into it —
+ * CARGO_CHUTE_DOORWAY (west) and PLAYER_ROOM_DOOR (spec: 物流中心東北方牆角
+ * 的新房間門口, centerX 7, halfWidth 1 → gap spans x 6..8) — leaving a real
+ * SOLID segment from x = PLAYER_ROOM_DOOR's own right edge (8) to
+ * BACK_AREA.maxX (10), thickness WALL_THICKNESS (0.2), i.e. the wall's own
+ * face spans x 8..10, z 9.9..10.1. This is the actual wall the rabbit now
+ * leans against — still the room's NE corner (just east of the new bedroom
+ * door instead of centered in open floor), still nowhere near the
+ * PLAYER_ROOM_DOOR gap or the east wall's own SEA_GATE opening (which starts
+ * at z=12, south of this spot).
+ *
+ * MASCOT_POS_X sits at the midpoint of that 2m-wide solid segment (8..10).
+ * MASCOT_POS_Z sits far enough south of the wall's own inner face (10.1) for
+ * the table's north edge to clear it with a small real gap (not clipping),
+ * close enough to read as "resting against the wall" rather than floating
+ * in the middle of the room. */
+const NORTH_WALL_INNER_FACE_Z = BACK_AREA.minZ + WALL_THICKNESS / 2;
+const MASCOT_POS_X = (PLAYER_ROOM_DOOR.centerX + PLAYER_ROOM_DOOR.halfWidth + BACK_AREA.maxX) / 2;
+const MASCOT_POS_Z = NORTH_WALL_INNER_FACE_Z + 0.35;
 
 /** Small table (spec二: "小桌子／小平台", 現有風格最簡單合理的桌子 — plain
  * box top + 4 corner legs, same construction convention as every other small
@@ -61,9 +78,11 @@ const UI_ANCHOR_HEIGHT_ABOVE_HEAD = 0.35;
  * matches .mascot-guide-panel's own max-width/typical rendered height in
  * style.css closely enough to keep the panel fully on-screen at any
  * interaction distance/angle, without needing to measure the live DOM
- * element's actual rendered size every frame. */
-const PANEL_HALF_WIDTH_PX = 190;
-const PANEL_TOP_MARGIN_PX = 24;
+ * element's actual rendered size every frame. Half-width shrunk to match
+ * the smaller single-line panel ("兔子吉祥物第三階段修改" round spec五: 縮小
+ * 到適合單句文字，不要像大型劇情對話框). */
+const PANEL_HALF_WIDTH_PX = 150;
+const PANEL_TOP_MARGIN_PX = 20;
 
 type MascotUiState = 'closed' | 'content';
 
@@ -85,20 +104,22 @@ type MascotUiState = 'closed' | 'content';
  *
  * "兔子吉祥物互動方式修改" round — player-driven category/entry selection is
  * gone (spec一): E now goes straight from closed to a single random entry's
- * content (spec三: 每次互動隨機抽取一筆話語，只避免與上一筆重複). Once open,
- * this class still owns its OWN keydown listener, just for content-advance/
- * close only now — same "shared raycast to open, then a self-contained modal
- * listener while active" shape every other locked mini-UI in this codebase
- * already uses (AfterWorkStorySystem's own dialogue input, PalletSystem's
- * F-key rope listener, etc.), not a second independent input architecture
- * (spec三/九).
+ * content (spec三: 每次互動隨機抽取一筆話語，只避免與上一筆重複).
+ *
+ * "兔子吉祥物第三階段修改" round — this is now an ENVIRONMENTAL prompt, not a
+ * locked dialogue (spec七: "不要把兔子當成正式Dialogue"): open()/close() no
+ * longer touch playerData.state or playerController input-lock at all (spec
+ * 四: 玩家仍然可以正常WASD移動／不要鎖定玩家／不要進入劇情對話state), unlike
+ * every other modal mini-UI in this codebase. It still owns its own document
+ * keydown listener purely to catch E/Space/Escape while the small speech
+ * bubble is showing, but that listener never blocks or intercepts movement
+ * input — WASD keys are never touched here, only used elsewhere by
+ * player-system.ts's own listener, which keeps running normally throughout.
  */
 export class MascotGuideSystem {
   private scene: THREE.Scene;
   private physics: PhysicsSystem;
   private interactables: Map<string, InteractableObject>;
-  private playerData: PlayerInteractionData;
-  private playerController: PlayerController;
   private settingsManager: SettingsManager;
   private getCurrentDay: () => number = () => 1;
 
@@ -106,8 +127,6 @@ export class MascotGuideSystem {
   private uiAnchorWorldPos: THREE.Vector3;
 
   private uiState: MascotUiState = 'closed';
-  private activeEntry: MascotGuideEntry | null = null;
-  private lineIndex = 0;
   /** id of the entry shown last time the panel opened — passed to
    * pickRandomEntry() so the immediate-next pick never repeats it (spec三:
    * "至少避免上一筆內容立即再次出現"), reset to null on close is NOT needed
@@ -116,14 +135,11 @@ export class MascotGuideSystem {
 
   constructor(
     scene: THREE.Scene, physics: PhysicsSystem, interactables: Map<string, InteractableObject>,
-    playerData: PlayerInteractionData, playerController: PlayerController, settingsManager: SettingsManager,
-    getCurrentDay?: () => number
+    settingsManager: SettingsManager, getCurrentDay?: () => number
   ) {
     this.scene = scene;
     this.physics = physics;
     this.interactables = interactables;
-    this.playerData = playerData;
-    this.playerController = playerController;
     this.settingsManager = settingsManager;
     if (getCurrentDay) this.getCurrentDay = getCurrentDay;
 
@@ -222,25 +238,23 @@ export class MascotGuideSystem {
   /** Called by InteractionSystem once it's already confirmed the player is
    * empty-handed and aiming at the rabbit (spec九: 避免玩家同時操作貨物 — the
    * SAME "heldCount===0" gate the bulletin board's own onOpenUpgradeMenu call
-   * site already enforces before ever calling this). Goes straight to a
-   * random entry's content — no category/entry selection step anymore. */
+   * site already enforces before ever calling this). Goes straight to one
+   * random line — no category/entry selection, no player/input lock (spec
+   * 四/七: 環境互動提示, 玩家仍可正常WASD移動). */
   open(): void {
     if (this.uiState !== 'closed') return;
     const entry = this.pickRandomEntry();
     if (!entry) return; // no content available at all (shouldn't happen — MASCOT_GUIDE_ENTRIES is never empty)
-    this.playerData.state = 'stamping-minigame';
-    this.playerController.setInputEnabled(false);
+    this.lastEntryId = entry.id;
+    this.uiState = 'content';
     showMascotGuideUi(this.uiHandle);
-    this.beginEntry(entry);
+    renderMascotContent(this.uiHandle, entry.lines[0]);
   }
 
   close(): void {
     if (this.uiState === 'closed') return;
     this.uiState = 'closed';
-    this.activeEntry = null;
     hideMascotGuideUi(this.uiHandle);
-    this.playerData.state = 'empty-handed';
-    this.playerController.setInputEnabled(true);
   }
 
   /** Spec三: 每次互動從所有可用話語隨機抽取一筆，只避免與上一次連續重複——
@@ -268,8 +282,9 @@ export class MascotGuideSystem {
     if (this.uiState === 'closed') return;
     const projected = this.uiAnchorWorldPos.clone().project(camera);
     // Behind the camera — clamp off-screen rather than showing a mirrored
-    // panel (a genuine edge case: the player can still look away with the
-    // mouse while movement is locked, see this class's own doc comment).
+    // panel (a genuine edge case: the player can freely walk/turn away
+    // while the bubble is up, spec四, so this triggers far more often now
+    // than it would for a movement-locked modal).
     if (projected.z > 1) {
       positionMascotGuideUi(this.uiHandle, -9999, -9999);
       return;
@@ -289,38 +304,19 @@ export class MascotGuideSystem {
     positionMascotGuideUi(this.uiHandle, x, y);
   }
 
+  /** One line, one close — E/Space/Escape are all equivalent "dismiss the
+   * tip" here (spec二: 一次互動只顯示一句話，不需要連續按E推進). Deliberately
+   * does NOT call event.stopPropagation()/preventDefault() beyond what's
+   * needed to swallow this key press: this listener only ever closes the
+   * bubble, it never blocks or intercepts WASD movement (that's handled
+   * entirely by player-system.ts's own separate listener, untouched here). */
   private onKeyDown(event: KeyboardEvent): void {
     if (this.uiState === 'closed' || event.repeat) return;
-
-    if (event.code === 'Escape') {
-      event.preventDefault();
-      this.close();
-      return;
-    }
-
+    if (event.code === 'Escape') { event.preventDefault(); this.close(); return; }
     const bindings = this.settingsManager.inputBindings;
-    const isAdvanceKey = event.code === 'Space' || bindings.matches('interact', event.code) || bindings.matches('pickupPlace', event.code);
-    if (!isAdvanceKey) return;
+    const isCloseKey = event.code === 'Space' || bindings.matches('interact', event.code) || bindings.matches('pickupPlace', event.code);
+    if (!isCloseKey) return;
     event.preventDefault();
-    this.advanceContent();
-  }
-
-  private beginEntry(entry: MascotGuideEntry): void {
-    this.activeEntry = entry;
-    this.lastEntryId = entry.id;
-    this.lineIndex = 0;
-    this.uiState = 'content';
-    renderMascotContent(this.uiHandle, entry.title, entry.lines[0], entry.lines.length === 1);
-  }
-
-  private advanceContent(): void {
-    if (!this.activeEntry) return;
-    if (this.lineIndex >= this.activeEntry.lines.length - 1) {
-      this.close();
-      return;
-    }
-    this.lineIndex++;
-    const isLast = this.lineIndex === this.activeEntry.lines.length - 1;
-    renderMascotContent(this.uiHandle, this.activeEntry.title, this.activeEntry.lines[this.lineIndex], isLast);
+    this.close();
   }
 }
