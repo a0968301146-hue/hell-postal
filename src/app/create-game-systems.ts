@@ -7,14 +7,14 @@ import { EnvelopeStampStation } from '../game/envelope-stamp-station';
 import { SortingBoxSystem } from '../game/sorting-box-system';
 import { MailSortingSystem } from '../game/mail-sorting-system';
 import { CargoSystem } from '../systems/cargo';
-import { DollySystem } from '../game/dolly-system';
+import { DollySystem } from '../systems/dolly/dolly-system';
 import { VehicleControlSystem } from '../systems/vehicle';
 import { ScoringSystem } from '../systems/scoring';
 import { CounterNpcSystem } from '../game/counter-npc-system';
 import { CounterServiceSystem } from '../game/counter-service-system';
-import { CompassUI } from '../game/compass-ui';
+import { CompassUI } from '../systems/hud/compass-ui';
 import { ManualUI } from '../systems/pause-menu';
-import { ENABLE_LEGACY_COUNTER, ENABLE_LEGACY_MAIL_FLOW, ENABLE_VEHICLE_LOADING_FLOW, ENABLE_LEGACY_TEST_CARGO } from '../game/feature-flags';
+import { ENABLE_LEGACY_COUNTER, ENABLE_LEGACY_MAIL_FLOW, ENABLE_VEHICLE_LOADING_FLOW, ENABLE_LEGACY_TEST_CARGO } from '../core/feature-flags';
 import { DailyFlowSystem } from '../systems/daily-flow';
 import { UnloadingSystem } from '../systems/unloading';
 import { PalletSystem } from '../systems/pallet';
@@ -25,7 +25,8 @@ import { MailBagSystem } from '../systems/mail/mail-bag-system';
 import { PackedMailBagSystem } from '../systems/mail/packed-mail-bag-system';
 import { EnvelopeDispatchMachineSystem } from '../systems/mail/envelope-dispatch-machine-system';
 import { EnvelopeStackSystem } from '../systems/mail/envelope-stack-system';
-import { UpgradeSystem, UpgradeMenuUI, SimilarCargoHighlight } from '../systems/upgrade';
+import { UpgradeSystem, UpgradeMenuUI } from '../systems/upgrade';
+import { SimilarCargoHighlight } from '../systems/cargo/similar-cargo-highlight';
 import { MediaPlayerSystem } from '../systems/media-player/media-player-system';
 import { MediaPlayerUI } from '../systems/media-player/media-player-ui';
 import { ToolSystem } from '../systems/tool';
@@ -34,10 +35,12 @@ import { CargoHookSystem } from '../systems/cargo-hook';
 import { SpraySystem } from '../systems/spray-paint';
 // "Add ladder tool station and envelope vacuum" round.
 import { LadderSystem } from '../systems/ladder/ladder-system';
-import { ToolStationSystem } from '../systems/tool-station-system';
-import { EnvelopeVacuumSystem } from '../systems/envelope-vacuum-system';
+import { ToolStationSystem } from '../systems/tool/tool-station-system';
+import { EnvelopeVacuumSystem } from '../systems/mail/envelope-vacuum-system';
 // "Add day one dock story event" round.
 import { AfterWorkStorySystem } from '../systems/story/after-work-story-system';
+import { ProtagonistDialogueSystem } from '../systems/dialogue/protagonist-dialogue-system';
+import { MascotGuideSystem } from '../systems/mascot/mascot-guide-system';
 import { DreamComicSystem } from '../systems/dream-comic/dream-comic-system';
 import { ItemRewardSystem } from '../systems/item-reward/item-reward-system';
 import { VehicleNightCleaningSystem } from '../systems/vehicle-night-cleaning/vehicle-night-cleaning-system';
@@ -109,6 +112,15 @@ export interface GameSystems {
   envelopeVacuumSystem: EnvelopeVacuumSystem;
   /** "Add day one dock story event" round. */
   afterWorkStorySystem: AfterWorkStorySystem;
+  /** "男主角台詞系統＋特殊NPC劇情選擇" round — generic, reusable independent
+   * of AfterWorkStorySystem (which only holds a read reference to drive its
+   * own protagonist-speaker entries); exposed here so future callers (e.g. a
+   * later environment-object interaction round) can reach it too without
+   * needing to go through AfterWorkStorySystem. */
+  protagonistDialogueSystem: ProtagonistDialogueSystem;
+  /** "新增兔子吉祥物" round — permanent guide/lore character, independent of
+   * AfterWorkStorySystem/ProtagonistDialogueSystem. */
+  mascotGuideSystem: MascotGuideSystem;
   /** "每日起床＋夢境漫畫" round. */
   dreamComicSystem: DreamComicSystem;
   /** "載具夜間清潔互動" round. */
@@ -505,9 +517,16 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     scene, physics, camera, playerController, playerData, hud, settingsManager
   );
 
+  // "男主角台詞系統＋特殊NPC劇情選擇" round — constructed BEFORE
+  // afterWorkStorySystem so that class can take it as a read reference for
+  // its own protagonist-speaker dialogue entries, same "construct the
+  // dependency first" convention every other cross-system reference in this
+  // file already follows.
+  const protagonistDialogueSystem = new ProtagonistDialogueSystem(settingsManager);
+
   const afterWorkStorySystem = new AfterWorkStorySystem(
     scene, camera, physics, hud, playerController, playerData, settingsManager, pickupSystem,
-    cargoSystem, dailyFlowSystem, vehicleNightCleaningSystem
+    cargoSystem, dailyFlowSystem, vehicleNightCleaningSystem, protagonistDialogueSystem
   );
 
   // "每日起床＋夢境漫畫" round — constructed right after afterWorkStorySystem
@@ -759,6 +778,13 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
   );
 
   // Interaction system
+  // "新增兔子吉祥物" round — a permanent, always-present fixture (not tied to
+  // any day/story trigger), constructed here so it's ready before
+  // interactionSystem wires its own onOpenMascotGuide callback below.
+  const mascotGuideSystem = new MascotGuideSystem(
+    scene, physics, interactables, playerData, playerController, settingsManager, () => dailyFlowSystem.currentDay
+  );
+
   const interactionSystem = new InteractionSystem(
     camera, interactables, playerData, pickupSystem, hud,
     () => playerController.isLocked,
@@ -786,6 +812,7 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     toolStationSystem,
     () => toolLoadoutMenuUI.open(),
     completeDayCheatSystem,
+    () => mascotGuideSystem.open(),
     () => settingsManager.fireTutorialEvent('dollyUsed')
   );
 
@@ -851,6 +878,6 @@ export function createGameSystems(context: GameContext, hooks: GameSystemsHooks)
     ladderSystem, toolStationSystem, envelopeVacuumSystem,
     afterWorkStorySystem, dreamComicSystem, vehicleNightCleaningSystem,
     completeDayCheatSystem, mainMenuSystem, freezerSystem, livingCargoSystem,
-    itemRewardSystem,
+    itemRewardSystem, protagonistDialogueSystem, mascotGuideSystem,
   };
 }

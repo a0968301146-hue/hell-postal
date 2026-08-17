@@ -5,7 +5,7 @@ import {
 } from './settings-data';
 import { InputBindingManager } from '../../adapters/browser-input/input-binding-manager';
 import { LocalStorageAdapter } from '../../adapters/local-storage/local-storage-adapter';
-import { TutorialEventKey, TUTORIAL_ENTRIES } from '../../game/tutorial-data';
+import { TutorialEventKey, TUTORIAL_ENTRIES } from '../../data/tutorial-data';
 
 const storage = new LocalStorageAdapter();
 

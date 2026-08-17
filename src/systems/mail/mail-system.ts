@@ -3,10 +3,11 @@ import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { InteractableObject, createInteractableObject } from '../../shared/types/interactable';
 import { PickupPort } from '../../shared/types/pickup-port';
 import { SCENE_CONFIG, BACK_AREA } from '../world-layout';
-import { STAMP_TABLE, ENVELOPE_SIZE } from '../../data/world/mail-layout-data';
+import { STAMP_TABLE } from '../../data/world/mail-layout-data';
 import { UNLOAD_PORTS, UNLOAD_SPAWN_JITTER_X, UNLOAD_SPAWN_JITTER_Z, UNLOAD_BURST_CONFIG } from '../daily-flow';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
 import { MailDestination, EnvelopeRecord } from './mail-types';
+import { getPendingSlotPosition, getCompletedSlotPosition, getActiveSlotPosition } from './mail-queue-layout';
 import {
   MAIL_DESTINATIONS, getMailDestination, buildEnvelopeGeometry, buildEnvelopeMaterials,
   MailEnvelopeVisualPreset, pickWeightedMailEnvelopeVisualPreset, getMailEnvelopeVisualPreset,
@@ -26,14 +27,6 @@ const VELOCITY_THRESHOLD = 0.4;
  * table's own combined pending+completed+active capacity (spec五: "最多容納
  * 20封未貼郵票信封"). */
 const STAMP_TABLE_CAPACITY = 20;
-/** How far left/right of the table's own single-slot center (STAMP_TABLE.
- * posX, unchanged — still where the ACTIVE/currently-processing envelope
- * snaps to, exactly as before this round) the two queue piles sit (spec五:
- * "待處理堆位於工作台左側/已完成堆位於工作台右側...兩堆不可重疊"). */
-const QUEUE_PILE_X_OFFSET = 0.5;
-/** Vertical gap between stacked envelopes in a pending/completed pile —
- * ENVELOPE_SIZE.height plus a hair of daylight so faces don't z-fight. */
-const QUEUE_PILE_STEP = ENVELOPE_SIZE.height + 0.003;
 
 function randRange(min: number, max: number): number {
   return min + Math.random() * (max - min);
@@ -429,9 +422,7 @@ export class MailSystem {
   private snapToPendingSlot(id: string, index: number): void {
     const obj = this.interactables.get(id);
     if (!obj) return;
-    const x = STAMP_TABLE.posX - QUEUE_PILE_X_OFFSET;
-    const y = BACK_AREA.floorY + STAMP_TABLE.height + ENVELOPE_SIZE.height / 2 + 0.005 + index * QUEUE_PILE_STEP;
-    const z = STAMP_TABLE.posZ;
+    const { x, y, z } = getPendingSlotPosition(index);
     obj.mesh.position.set(x, y, z);
     obj.mesh.rotation.set(0, 0, 0);
     if (obj.rigidBody) {
@@ -446,9 +437,7 @@ export class MailSystem {
   private snapToCompletedSlot(id: string, index: number): void {
     const obj = this.interactables.get(id);
     if (!obj) return;
-    const x = STAMP_TABLE.posX + QUEUE_PILE_X_OFFSET;
-    const y = BACK_AREA.floorY + STAMP_TABLE.height + ENVELOPE_SIZE.height / 2 + 0.005 + index * QUEUE_PILE_STEP;
-    const z = STAMP_TABLE.posZ;
+    const { x, y, z } = getCompletedSlotPosition(index);
     obj.mesh.position.set(x, y, z);
     obj.mesh.rotation.set(0, 0, 0);
     if (obj.rigidBody) {
@@ -535,14 +524,14 @@ export class MailSystem {
     this.refreshPendingVisual();
     const obj = this.interactables.get(id);
     if (obj) {
-      const snapY = BACK_AREA.floorY + STAMP_TABLE.height + ENVELOPE_SIZE.height / 2 + 0.005;
-      obj.mesh.position.set(STAMP_TABLE.posX, snapY, STAMP_TABLE.posZ);
+      const { x: snapX, y: snapY, z: snapZ } = getActiveSlotPosition();
+      obj.mesh.position.set(snapX, snapY, snapZ);
       obj.mesh.rotation.set(0, 0, 0);
       // Already physics-disabled from sitting in the pending pile — no
       // separate re-snap of the rigidBody transform needed beyond position,
       // but set it anyway for consistency/defensiveness.
       if (obj.rigidBody) {
-        obj.rigidBody.setTranslation({ x: STAMP_TABLE.posX, y: snapY, z: STAMP_TABLE.posZ }, true);
+        obj.rigidBody.setTranslation({ x: snapX, y: snapY, z: snapZ }, true);
         obj.rigidBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
       }
     }

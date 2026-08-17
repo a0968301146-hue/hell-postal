@@ -63,9 +63,51 @@ export interface FinaleNpcStation {
   idleKind?: FinaleIdleKind;
 }
 
+/** "男主角台詞系統＋特殊NPC劇情選擇" round — one entry in a story day's
+ * `lines` script. A plain `string` means exactly what it always has: a line
+ * spoken by the day's own NPC, shown in the shared 3D head-bubble
+ * (after-work-story-bubble-ui.ts, untouched). Every existing day's
+ * `lines: string[]` stays fully valid with zero rewrite (spec三: "不要重新
+ * 編寫Day1～Day8現有台詞") — this union only ADDS expressive power on top.
+ *
+ * The two new object shapes let a day's script also include a line the
+ * PROTAGONIST speaks (rendered in the separate screen-space subtitle bar,
+ * see systems/dialogue/) or a Choice node (up to 3 options, spec: "第一版
+ * 固定支援3個選項即可" — each with its own short response sub-script that
+ * plays once picked, then rejoins the SAME `lines` array right after the
+ * choice; see AfterWorkStorySystem's own beginChoice/resolveChoice). Neither
+ * shape is used by any of the existing 8 days' data this round — the
+ * capability is added, no existing day's content is touched. */
+export type DialogueEntry = string | ProtagonistDialogueEntry | DialogueChoiceEntry;
+
+export interface ProtagonistDialogueEntry {
+  speaker: 'protagonist';
+  /** Purely descriptive for now (spec: "speech/monologue/thought三種狀態可以
+   * 先共用同一套視覺樣式，不要為了第一版過度設計三種不同UI") — every kind
+   * renders identically in the subtitle bar this round; kept so a future
+   * round can differentiate styling per kind without another data
+   * migration. */
+  kind: 'speech' | 'monologue' | 'thought';
+  text: string;
+}
+
+export interface DialogueChoiceOption {
+  label: string;
+  /** Played once this option is picked, then the main `lines` script resumes
+   * right after this choice node — never a second independent branch (spec
+   * 五: "三個選項不應該改變後續大部分劇情...不需要做真正的多結局系統"). */
+  response: DialogueEntry[];
+}
+
+export interface DialogueChoiceEntry {
+  kind: 'choice';
+  /** Up to 3 options (spec二: "第一版固定支援3個選項即可"). */
+  options: DialogueChoiceOption[];
+}
+
 export interface AfterWorkStoryDay {
   npcName: string;
-  lines: string[];
+  lines: DialogueEntry[];
   /** Omitted for isLetterDay (no NPC at all) and isFinaleDay (uses
    * finaleNpcs instead — a whole roster, not one). */
   npcSpawn?: { x: number; z: number };
@@ -139,6 +181,15 @@ export const AFTER_WORK_STORIES: Record<number, AfterWorkStoryDay> = {
     npcName: '老碼頭工人',
     lines: [
       '你果然還是回來了。你站在這裡的樣子，和你爺爺年輕時很像。',
+      { speaker: 'protagonist', kind: 'speech', text: '……聽你這麼說，我一時不知道該怎麼回答。' },
+      {
+        kind: 'choice',
+        options: [
+          { label: '我還記得爺爺常說的話。', response: ['記得就好，比什麼都重要。'] },
+          { label: '希望我做得跟他一樣好。', response: ['你已經做得很好了。'] },
+          { label: '老實說，我還在摸索中。', response: ['摸索著摸索著，就會像個樣子了。'] },
+        ],
+      },
       '這座物流中心最早只有一間木屋、一座小碼頭，連能遮雨的屋頂都不完整。',
       '你爺爺常說，送到這裡的不是貨物，而是一個人交給另一個人的承諾。',
       '他會親自記住每條路線，也記得每一位來取貨的客人，連那些脾氣古怪的載具都願意聽他的。',
@@ -160,6 +211,15 @@ export const AFTER_WORK_STORIES: Record<number, AfterWorkStoryDay> = {
     npcName: '阿珠姨',
     lines: [
       '今天辛苦了。坐吧，咖啡我剛煮好，還熱著。',
+      { speaker: 'protagonist', kind: 'speech', text: '（坐下，聞到咖啡香）這味道……讓人整個放鬆下來。' },
+      {
+        kind: 'choice',
+        options: [
+          { label: '謝謝，今天真的很累。', response: ['辛苦了，先喝一口再說。'] },
+          { label: '這咖啡的味道好懷念。', response: ['是嗎？那我泡對味道了。'] },
+          { label: '阿珠姨每天都在這裡等大家嗎？', response: ['只要還有人需要，我就在。'] },
+        ],
+      },
       '你爺爺以前每天收工，都會在這張桌子泡一壺咖啡，跟每個員工聊上幾句才放人回家。',
       '他說站著工作一整天，總得有個地方讓人先喘口氣，再帶著今天的疲憊回家。',
       '不管那天貨運得順不順，他從來不會只聊工作。他會問你家裡的事、問你累不累。',
@@ -177,6 +237,15 @@ export const AFTER_WORK_STORIES: Record<number, AfterWorkStoryDay> = {
     npcName: '阿海',
     lines: [
       '跟我來，今天想帶你看個東西。坐這裡，抬頭看。',
+      { speaker: 'protagonist', kind: 'speech', text: '（抬頭）……星星比我想像中還要多。' },
+      {
+        kind: 'choice',
+        options: [
+          { label: '這片天空真的很漂亮。', response: ['是吧？值得留一點時間看看。'] },
+          { label: '你常常一個人來這裡看星星嗎？', response: ['偶爾，一個人靜一靜也不錯。'] },
+          { label: '感覺今天過得特別漫長。', response: ['那正好，就在這裡好好喘口氣。'] },
+        ],
+      },
       '天窗是後來加裝的，晚上收工後，大廳的燈一暗，星星就這樣掛在頭頂上。',
       '你爺爺說過一句話，我一直記到現在：運送貨物，其實也是在把人跟人重新連在一起。',
       '一封信、一件包裹，看起來只是東西，但它連著寄的人跟等的人，中間隔著的就是我們。',
@@ -194,6 +263,15 @@ export const AFTER_WORK_STORIES: Record<number, AfterWorkStoryDay> = {
     npcName: '陳伯',
     lines: [
       '坐，今天放點老照片給你看看，都是我這些年慢慢收集的。',
+      { speaker: 'protagonist', kind: 'speech', text: '（翻看照片）這些都是……很久以前的事了吧。' },
+      {
+        kind: 'choice',
+        options: [
+          { label: '這些照片都保存得真好。', response: ['都是些捨不得丟的回憶。'] },
+          { label: '我想多了解一點以前的事。', response: ['那我們今天就慢慢聊。'] },
+          { label: '看到這些，感覺很不真實。', response: ['時間過得快，但這些都是真的。'] },
+        ],
+      },
       '你看，這個扎著馬尾的小孩，那時候老在碼頭跑來跑去，誰都攔不住。',
       '這張是物流中心剛擴建完的樣子，那時候大家還興奮得睡不著，隔天照樣準時開工。',
       '這個坐在角落的人就是你爺爺，那時候他總說自己不上鏡，結果照片裡最多的就是他。',
@@ -211,6 +289,15 @@ export const AFTER_WORK_STORIES: Record<number, AfterWorkStoryDay> = {
     npcName: '小夏',
     lines: [
       '走，下水吧，今天海況正好，不游太可惜了。',
+      { speaker: 'protagonist', kind: 'speech', text: '（望向海面）……好像有點久沒這樣放鬆了。' },
+      {
+        kind: 'choice',
+        options: [
+          { label: '好，我們走吧！', response: ['這才對嘛！'] },
+          { label: '我好久沒下水了。', response: ['沒關係，我陪你慢慢來。'] },
+          { label: '今天真的很想放鬆一下。', response: ['那就對了，今天什麼都別想。'] },
+        ],
+      },
       '以前一到夏天，收工鈴一響，大家就直接往海邊衝，連衣服都來不及換。',
       '你爺爺游得不快，但每次都最後一個上岸，說要等所有人都平安上來才安心。',
       '風一吹、海浪一拍，白天扛貨的疲憊好像就這樣被沖掉一半。',
@@ -228,6 +315,15 @@ export const AFTER_WORK_STORIES: Record<number, AfterWorkStoryDay> = {
     npcName: '阿古',
     lines: [
       '跟我來，今天想帶你去一個地方——就在海面上，走，別怕，這塊浮台很穩。',
+      { speaker: 'protagonist', kind: 'speech', text: '（踏上浮台）……這裡的視野，跟平常完全不一樣。' },
+      {
+        kind: 'choice',
+        options: [
+          { label: '這裡的視野真好。', response: ['對吧？我最喜歡這個角度。'] },
+          { label: '你常常一個人來這裡嗎？', response: ['偶爾，想事情的時候會來。'] },
+          { label: '老實說，我有點怕水。', response: ['放心，浮台很穩，不會有事的。'] },
+        ],
+      },
       '今天想聊聊我自己的事——其實我一直有個夢想，想開一艘屬於自己的船，到處送貨、到處看看。',
       '不是想離開這裡，只是想帶著這裡教我的東西，走遠一點試試看。',
       '你爺爺聽我說過這件事，他沒有笑我，只說「準備好了就去，這裡會等你回來」。',
@@ -345,3 +441,26 @@ export const AFTER_WORK_STORIES: Record<number, AfterWorkStoryDay> = {
  * on. Kept separate from finaleNpcs (that's the roster the player walks up
  * to; this is the one seat that fires the ending instead of more dialogue). */
 export const FINALE_ENDING_SEAT = CAMPFIRE_BENCH_SOUTH;
+
+// ============================================================================
+// TEMPORARY_TEST — "男主角台詞系統＋特殊NPC劇情選擇" round scaffolding only.
+// NOT referenced by AFTER_WORK_STORIES or any other real day's data, and NOT
+// wired into any trigger path — exists purely to demonstrate the new
+// DialogueEntry shapes (protagonist speech + a 3-option choice with distinct
+// responses that rejoin the same script) compile and type-check correctly.
+// Safe to delete entirely once a real day's data is authored to use these
+// shapes, or once manually verified in-engine.
+// ============================================================================
+export const TEMPORARY_TEST_DIALOGUE_ENTRIES: DialogueEntry[] = [
+  '你終於來了。',
+  { speaker: 'protagonist', kind: 'speech', text: '嗯，我有點好奇你今天找我做什麼。' },
+  {
+    kind: 'choice',
+    options: [
+      { label: '直接問吧。', response: ['我就知道你會這麼直接。'] },
+      { label: '先喝杯茶？', response: ['哈哈，你還是老樣子。'] },
+      { label: '你看起來很緊張。', response: ['……有這麼明顯嗎？'] },
+    ],
+  },
+  '總之，今天辛苦你了。',
+];

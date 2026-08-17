@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import { PhysicsSystem } from '../adapters/rapier/physics-system';
-import { InteractableObject, createInteractableObject } from '../shared/types/interactable';
-import { BACK_AREA, WALL_THICKNESS, LAND_GATE } from './world-layout';
-import { createFloatingLabel } from '../adapters/three/world-label-system';
+import { PhysicsSystem } from '../../adapters/rapier/physics-system';
+import { InteractableObject, createInteractableObject } from '../../shared/types/interactable';
+import { BACK_AREA, WALL_THICKNESS, LAND_GATE } from '../world-layout';
+import { createFloatingLabel } from '../../adapters/three/world-label-system';
 
 export const TOOL_STATION_ID = 'tool-station-01';
 const TOOL_STATION_DISPLAY_NAME = '工具推車';

@@ -1,16 +1,16 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { PhysicsSystem } from '../adapters/rapier/physics-system';
-import { InteractableObject, createInteractableObject } from '../shared/types/interactable';
-import { CargoSystem } from '../systems/cargo';
+import { PhysicsSystem } from '../../adapters/rapier/physics-system';
+import { InteractableObject, createInteractableObject } from '../../shared/types/interactable';
+import { CargoSystem } from '../cargo';
 import {
   DOLLY_PLATFORM_WIDTH, DOLLY_PLATFORM_DEPTH, DOLLY_PLATFORM_THICKNESS,
   DOLLY_RAIL_HEIGHT, DOLLY_RAIL_THICKNESS, DOLLY_HANDLE_HEIGHT,
   DOLLY_HANDLE_ZONE_DEPTH, DOLLY_TOTAL_DEPTH,
   DOLLY_PUSH_OFFSET, DOLLY_CONFIGS, DollyConfig, DOLLY_FLOOR_Y,
 } from './dolly-data';
-import { createFloatingLabel, updateFloatingLabel } from '../adapters/three/world-label-system';
-import { SCENE_CONFIG } from '../systems/world-layout';
+import { createFloatingLabel, updateFloatingLabel } from '../../adapters/three/world-label-system';
+import { SCENE_CONFIG } from '../world-layout';
 
 const IDLE_TEXT = '拖板車\n按 E 推行';
 const PUSHING_TEXT = '推行中\n按 E 放開';

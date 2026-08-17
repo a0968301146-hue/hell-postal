@@ -6,7 +6,7 @@ import { DisposeManager } from '../core/dispose-manager';
 import { InteractableObject } from '../shared/types/interactable';
 import { SCENE_CONFIG } from '../systems/world-layout';
 import { StampMinigame, MinigameResult } from '../game/stamp-minigame';
-import { ENABLE_LEGACY_COUNTER, ENABLE_LEGACY_MAIL_FLOW, ENABLE_VEHICLE_LOADING_FLOW } from '../game/feature-flags';
+import { ENABLE_LEGACY_COUNTER, ENABLE_LEGACY_MAIL_FLOW, ENABLE_VEHICLE_LOADING_FLOW } from '../core/feature-flags';
 import { DailyState } from '../systems/daily-flow';
 import { StampTableUi, StampUiResult } from '../systems/mail/stamp-table-ui';
 import { getCargoShapePreset } from '../systems/cargo';
@@ -410,6 +410,18 @@ export class GameApp {
     // reason that might independently activate. No-ops entirely while
     // inactive/completed (its own update() checks this first).
     s.afterWorkStorySystem.update(deltaTime);
+    // "男主角台詞系統" round — same unconditional/self-guarding convention as
+    // cargoHookSystem/spraySystem/envelopeVacuumSystem above: this system is
+    // deliberately independent of AfterWorkStorySystem (spec: 未來其他系統也
+    // 能呼叫), so its own typewriter timer needs its own per-frame tick here
+    // rather than being nested inside afterWorkStorySystem.update() above.
+    // No-ops entirely unless a say() is currently in progress.
+    s.protagonistDialogueSystem.update(deltaTime);
+    // "新增兔子吉祥物" round — same unconditional/self-guarding convention as
+    // the systems just above: no-ops entirely unless the guide panel is
+    // currently open, otherwise repositions it to track the rabbit's own
+    // fixed world position through the current camera projection.
+    s.mascotGuideSystem.update(this.context.camera);
     // "同類感知" upgrade ("Revise score upgrades and fix frog walkable
     // colliders" round spec二D: 觸發方式改為手持一件貨物時啟用，不再要求準
     // 心先對準貨物) — driven by the CURRENTLY HELD item instead of the

@@ -2052,3 +2052,168 @@ body.text-size-large #interaction-prompt { font-size: 17px; }
   padding: 10px 0;
 }
 
+/* "男主角台詞系統＋特殊NPC劇情選擇" round — screen-space subtitle bar for
+ * protagonist speech/monologue/thought (spec一: 畫面最下方約1/6高度、半透明
+ * 灰色底板、不使用NPC頭頂3D對話泡泡). Independent class/ids from every
+ * existing overlay — never touches #manual-overlay, finale-confirm-ui's or
+ * letter-reading-ui's own inline styles, or any existing z-index. z-index
+ * 150 is the minimum needed to sit above HUD (#interaction-prompt etc. sit
+ * around 100-101) without reaching into manual-overlay's own 500 or the
+ * finale/letter overlays' 600s — so pause menu and story confirm/letter
+ * overlays would still render on top of it if ever shown simultaneously. */
+#protagonist-dialogue {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 16.6667vh;
+  background: rgba(20, 20, 20, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8vw;
+  box-sizing: border-box;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  z-index: 150;
+}
+
+#protagonist-dialogue.visible {
+  opacity: 1;
+}
+
+.protagonist-dialogue-text {
+  color: #f5f0e0;
+  font-family: sans-serif;
+  font-size: 20px;
+  line-height: 1.6;
+  text-align: center;
+  white-space: pre-line;
+}
+
+/* Reuses the SAME text.subtitleSize setting/body-class mechanism as the
+ * manual UI's own #interaction-prompt (spec十四: 沿用subtitleSize/textSpeed,
+ * 不新增設定選項) — never a second, independent font-size setting. */
+body.text-size-small .protagonist-dialogue-text { font-size: 17px; }
+body.text-size-large .protagonist-dialogue-text { font-size: 24px; }
+
+/* Generic (up to 3 options) dialogue choice prompt — generalizes
+ * finale-confirm-ui.ts's own established centered-card pattern to dynamic
+ * option labels. z-index 155 — one step above the subtitle bar it can appear
+ * alongside/instead of, still well below manual-overlay (500). */
+#dialogue-choice {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, background-color 0.2s ease;
+  z-index: 155;
+  font-family: sans-serif;
+}
+
+#dialogue-choice.visible {
+  background: rgba(0, 0, 0, 0.45);
+  opacity: 1;
+}
+
+.dialogue-choice-box {
+  background: linear-gradient(180deg, #3a2e22, #2c2219);
+  border-radius: 10px;
+  padding: 26px 30px;
+  box-shadow: 0 0 0 1px rgba(232, 200, 64, 0.25) inset, 0 18px 50px rgba(0, 0, 0, 0.6);
+  min-width: 320px;
+  max-width: 480px;
+  text-align: center;
+  color: #f5f0e0;
+}
+
+.dialogue-choice-hint {
+  font-size: 12px;
+  color: #c8bfa8;
+  letter-spacing: 0.05em;
+  margin-bottom: 16px;
+}
+
+.dialogue-choice-option {
+  padding: 12px 16px;
+  margin-top: 10px;
+  border: 1px solid rgba(232, 200, 64, 0.35);
+  border-radius: 6px;
+  background: #6b4a2e;
+  font-size: 15px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.dialogue-choice-option:first-child {
+  margin-top: 0;
+}
+
+.dialogue-choice-option.highlighted {
+  background: #8a6234;
+  box-shadow: 0 0 0 2px rgba(232, 200, 64, 0.6) inset;
+}
+
+/* "新增兔子吉祥物" round — the rabbit's own small floating guide panel
+ * (spec三: 小型浮動導覽UI，位於兔子正上方). Independent class/id from every
+ * existing overlay — never touches #protagonist-dialogue, #dialogue-choice,
+ * #manual-overlay, or any existing z-index. `left`/`top` are written every
+ * frame by mascot-guide-system.ts's own camera-projection math (see
+ * positionMascotGuideUi) — this file only defines the fixed box style
+ * anchored at that point via translate(-50%, -100%) so the box's own BOTTOM
+ * edge sits at the projected point (i.e. visually above the rabbit, not
+ * centered on it). z-index 150 — same tier as #protagonist-dialogue (the two
+ * are never shown at the same time — this round's own rabbit UI is fully
+ * independent of the dialogue/choice systems, spec八). */
+#mascot-guide {
+  position: fixed;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+  z-index: 150;
+  font-family: sans-serif;
+}
+
+#mascot-guide.visible {
+  opacity: 1;
+}
+
+.mascot-guide-panel {
+  background: rgba(30, 26, 20, 0.88);
+  border: 1px solid rgba(232, 200, 64, 0.3);
+  border-radius: 8px;
+  padding: 14px 18px;
+  min-width: 260px;
+  max-width: 360px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  color: #f5f0e0;
+}
+
+.mascot-guide-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.mascot-guide-text {
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-line;
+  margin-bottom: 8px;
+}
+
+.mascot-guide-hint {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #c8bfa8;
+  letter-spacing: 0.03em;
+}
+

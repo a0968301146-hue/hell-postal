@@ -26,11 +26,24 @@ import { LocalStorageAdapter } from '../../adapters/local-storage/local-storage-
 import { LOST_FOUND_ROOM } from '../../data/world/lost-found-layout-data';
 import { MAIN_ROOM_CENTER_SPAWN } from '../world-layout/logistics-layout-data';
 import { CAMPFIRE_BENCH_NORTH, CAMPFIRE_BENCH_EAST, CAMPFIRE_BENCH_WEST, CAMPFIRE_BENCH_SOUTH, CAMPFIRE_LOOK_TARGET, CAMPFIRE_CENTER } from '../../data/world/campfire-area-data';
-import { AFTER_WORK_STORIES, FinaleNpcStation, FinaleIdleKind, FINALE_ENDING_SEAT } from './after-work-story-data';
+import {
+  AFTER_WORK_STORIES, FinaleNpcStation, FinaleIdleKind, FINALE_ENDING_SEAT, DialogueEntry, DialogueChoiceEntry,
+} from './after-work-story-data';
 import { createStoryBubble, showStoryBubbleText, hideStoryBubble, disposeStoryBubble, wrapStoryLine } from './after-work-story-bubble-ui';
 import { createLetterReadingUi, showLetterReadingUi, hideLetterReadingUi, LetterReadingUiHandle } from './letter-reading-ui';
 import { createFinaleConfirmUi, showFinaleConfirmUi, hideFinaleConfirmUi, FinaleConfirmUiHandle } from './finale-confirm-ui';
 import { FinaleParticleBurst, playUnwrapSfx, playCheerSfx, startPartyBgm, stopPartyBgm } from './finale-effects';
+// "男主角台詞系統＋特殊NPC劇情選擇" round — ProtagonistDialogueSystem is a
+// generic engine independent of this class (constructed in
+// create-game-systems.ts, passed in here as a read/use reference only, same
+// convention as pickupSystem/cargoSystem above); dialogue-choice-ui.ts is
+// this round's own new satellite UI module, following the SAME "this class
+// owns timing/state, the satellite only builds/shows/hides plain
+// HTMLElements" convention as finale-confirm-ui.ts/letter-reading-ui.ts.
+import { ProtagonistDialogueSystem } from '../dialogue/protagonist-dialogue-system';
+import {
+  createDialogueChoiceUi, showDialogueChoiceUi, hideDialogueChoiceUi, setDialogueChoiceHighlight, DialogueChoiceUiHandle,
+} from '../dialogue/dialogue-choice-ui';
 
 type StoryState =
   | 'inactive' | 'npcWalking' | 'waitingForPlayer' | 'transitioning' | 'dialogue' | 'endTransition' | 'completed'
@@ -72,7 +85,13 @@ type StoryState =
   // partying, music keeps playing" beat between the "歡迎回家。" line and
   // the credits (spec follow-up五: "避免突然切到Credits"). Purely a timed
   // camera lerp; nothing the player does here changes the outcome.
-  | 'finaleEndingHold';
+  | 'finaleEndingHold'
+  // "男主角台詞系統＋特殊NPC劇情選擇" round — a Choice node (DialogueEntry's
+  // own 'choice' kind) is currently showing, waiting for the player to pick
+  // one of pendingChoiceEntry's own options (see beginChoice/resolveChoice
+  // below). Purely input-driven, no per-frame update needed — same shape as
+  // the existing 'finaleEndingConfirm' state above.
+  | 'choice';
 
 /** What should happen once the currently-showing `lines` array runs out
  * (last line consumed via advanceLine, or ESC-hold-skip) — added this round
@@ -283,11 +302,25 @@ export class AfterWorkStorySystem {
   private npcTarget = new THREE.Vector3();
 
   private storyDay = 0;
-  private lines: string[] = [];
+  private lines: DialogueEntry[] = [];
   private lineIndex = 0;
   private wrappedCurrentLine = '';
   private revealMs = 0;
   private dialogueReturnMode: DialogueReturnMode = 'endStory';
+
+  /** "男主角台詞系統＋特殊NPC劇情選擇" round — generic protagonist-line
+   * engine, read/used here only (owned/constructed independently, see this
+   * class's own doc comment / create-game-systems.ts). */
+  private protagonistDialogueSystem: ProtagonistDialogueSystem;
+  private choiceUi: DialogueChoiceUiHandle;
+  /** The Choice entry currently awaiting a pick (state === 'choice' only). */
+  private pendingChoiceEntry: DialogueChoiceEntry | null = null;
+  private choiceHighlightIndex = 0;
+  /** The picked option's own response entries, played one at a time WITHOUT
+   * ever mutating `lines` itself (spec十一: "不要修改原始lines陣列") —
+   * consumed front-to-back by advanceLine(), then `lines` resumes exactly
+   * where the choice node was. */
+  private pendingResponseQueue: DialogueEntry[] = [];
 
   private isLetterDay = false;
   private letterPickedUp = false;
@@ -340,7 +373,7 @@ export class AfterWorkStorySystem {
     scene: THREE.Scene, camera: THREE.PerspectiveCamera, physics: PhysicsSystem, hud: HUD,
     playerController: PlayerController, playerData: PlayerInteractionData, settingsManager: SettingsManager,
     pickupSystem: PickupSystem, cargoSystem: CargoSystem, dailyFlowSystem: DailyFlowSystem,
-    vehicleNightCleaningSystem: VehicleNightCleaningSystem
+    vehicleNightCleaningSystem: VehicleNightCleaningSystem, protagonistDialogueSystem: ProtagonistDialogueSystem
   ) {
     this.scene = scene;
     this.camera = camera;
@@ -353,6 +386,8 @@ export class AfterWorkStorySystem {
     this.cargoSystem = cargoSystem;
     this.dailyFlowSystem = dailyFlowSystem;
     this.vehicleNightCleaningSystem = vehicleNightCleaningSystem;
+    this.protagonistDialogueSystem = protagonistDialogueSystem;
+    this.choiceUi = createDialogueChoiceUi();
 
     this.fadeEl = document.createElement('div');
     this.fadeEl.style.cssText = 'position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;transition:opacity ' + FADE_SECONDS + 's ease;z-index:9999;';
@@ -1195,11 +1230,48 @@ export class AfterWorkStorySystem {
   private beginDialogue(): void {
     this.state = 'dialogue';
     this.lineIndex = 0;
+    this.pendingResponseQueue = [];
+    this.pendingChoiceEntry = null;
     this.beginLine();
   }
 
+  /** The entry about to be shown — the pending Choice response queue takes
+   * priority over `lines` itself whenever it's non-empty (spec十一: response
+   * playback never touches/reindexes the original `lines` array). */
+  private currentEntry(): DialogueEntry | null {
+    if (this.pendingResponseQueue.length > 0) return this.pendingResponseQueue[0];
+    if (this.lineIndex >= this.lines.length) return null;
+    return this.lines[this.lineIndex];
+  }
+
   private beginLine(): void {
-    const raw = this.lines[this.lineIndex];
+    const entry = this.currentEntry();
+    if (entry === null) { this.onDialogueSequenceComplete(); return; }
+
+    if (typeof entry !== 'string' && 'options' in entry) {
+      this.beginChoice(entry);
+      return;
+    }
+
+    if (typeof entry !== 'string' && 'speaker' in entry) {
+      // "男主角台詞系統" round — screen-space subtitle bar instead of the
+      // NPC head-bubble; ProtagonistDialogueSystem owns its own reveal timer
+      // and E/Space advance input for this beat (see onKeyDown's own guard
+      // below), calling back into advanceLine() once the player moves past
+      // it — the SAME re-entry point every other entry type already uses.
+      if (this.npcBubble) hideStoryBubble(this.npcBubble);
+      // Also clear the HUD's own mid-screen interaction-prompt — otherwise
+      // the LAST NPC line's stale "老碼頭工人 / E／Space：完整顯示／下一句"
+      // hint keeps visibly overlapping the new subtitle bar for the whole
+      // protagonist beat (confirmed via browser testing), since
+      // updateDialogue() deliberately skips re-setting it while this entry
+      // type is active.
+      this.hud.hideInteractionPrompt();
+      this.protagonistDialogueSystem.say(entry.text, () => this.advanceLine());
+      return;
+    }
+
+    const raw = entry as string; // narrowed by exclusion; TS can't prove it across the two `in`-guarded returns above
     this.wrappedCurrentLine = wrapStoryLine(raw);
     this.revealMs = 0;
     const textSpeed = this.settingsManager.settings.text.textSpeed;
@@ -1208,6 +1280,31 @@ export class AfterWorkStorySystem {
       this.revealMs = this.wrappedCurrentLine.length * (CHAR_INTERVAL_MS.standard + 1);
     }
     if (this.npcBubble) showStoryBubbleText(this.npcBubble, this.revealedText());
+  }
+
+  /** Shows a Choice node's options and waits for onKeyDown's own 'choice'
+   * branch to resolve one (spec四: 玩家選擇不能被E跳過, must complete the
+   * pick first). */
+  private beginChoice(entry: DialogueChoiceEntry): void {
+    this.state = 'choice';
+    this.pendingChoiceEntry = entry;
+    this.choiceHighlightIndex = 0;
+    if (this.npcBubble) hideStoryBubble(this.npcBubble);
+    this.hud.hideInteractionPrompt();
+    showDialogueChoiceUi(this.choiceUi, entry.options.map((o) => o.label));
+    setDialogueChoiceHighlight(this.choiceUi, 0);
+  }
+
+  /** Queues the picked option's own response entries (never mutating
+   * `lines`) and returns to 'dialogue' to play them — advanceLine() drains
+   * this queue front-to-back, then resumes `lines` right after the choice
+   * node itself once the queue empties (spec: 選項回答結束後回到共同劇情). */
+  private resolveChoice(entry: DialogueChoiceEntry, index: number): void {
+    hideDialogueChoiceUi(this.choiceUi);
+    this.pendingChoiceEntry = null;
+    this.state = 'dialogue';
+    this.pendingResponseQueue = entry.options[index].response.slice();
+    this.beginLine();
   }
 
   private get isLineFullyRevealed(): boolean {
@@ -1229,6 +1326,17 @@ export class AfterWorkStorySystem {
   }
 
   private advanceLine(): void {
+    if (this.pendingResponseQueue.length > 0) {
+      // Still draining a Choice's own response — never touches `lineIndex`
+      // (spec十一: 不要修改原始lines陣列) until the response itself is fully
+      // consumed, at which point `lines` resumes right after the choice node.
+      this.pendingResponseQueue.shift();
+      if (this.pendingResponseQueue.length > 0) { this.beginLine(); return; }
+      if (this.lineIndex >= this.lines.length - 1) { this.onDialogueSequenceComplete(); return; }
+      this.lineIndex++;
+      this.beginLine();
+      return;
+    }
     if (this.lineIndex >= this.lines.length - 1) {
       this.onDialogueSequenceComplete();
       return;
@@ -1276,6 +1384,13 @@ export class AfterWorkStorySystem {
     this.hud.hideChargeBar();
     this.hud.hideInteractionPrompt();
     if (this.npcBubble) hideStoryBubble(this.npcBubble);
+    // "男主角台詞系統＋特殊NPC劇情選擇" round — defensive: a choice prompt
+    // should never legitimately still be open here (R-hold-skip doesn't fire
+    // during 'choice', see onKeyDown's own doc comment), but this guards
+    // against any future/edge re-entry (e.g. a testing cheat) leaving it
+    // visibly stuck on screen.
+    hideDialogueChoiceUi(this.choiceUi);
+    this.pendingChoiceEntry = null;
 
     this.fadePhase = 'out';
     this.fadeElapsed = 0;
@@ -1470,6 +1585,38 @@ export class AfterWorkStorySystem {
       return;
     }
 
+    // "男主角台詞系統＋特殊NPC劇情選擇" round — Choice prompt (spec四: 玩家
+    // 選擇時E不應直接跳過選擇, must resolve the pick first). Number keys pick
+    // directly; arrows move a highlight; E/interact confirms whichever is
+    // currently highlighted (spec十: "玩家可以：數字鍵1/2/3，或方向鍵選擇，
+    // E確認"). No R-hold-skip here — a Choice is a decision the player must
+    // actually make, not narration to skip past.
+    if (this.state === 'choice' && !event.repeat) {
+      const entry = this.pendingChoiceEntry;
+      if (!entry) return;
+      if (event.code === 'Digit1' || event.code === 'Digit2' || event.code === 'Digit3') {
+        const idx = Number(event.code.slice(-1)) - 1;
+        if (idx < entry.options.length) {
+          event.preventDefault();
+          this.resolveChoice(entry, idx);
+        }
+        return;
+      }
+      if (event.code === 'ArrowUp' || event.code === 'ArrowDown') {
+        event.preventDefault();
+        const count = entry.options.length;
+        this.choiceHighlightIndex = (this.choiceHighlightIndex + (event.code === 'ArrowDown' ? 1 : -1) + count) % count;
+        setDialogueChoiceHighlight(this.choiceUi, this.choiceHighlightIndex);
+        return;
+      }
+      const choiceBindings = this.settingsManager.inputBindings;
+      if (event.code === 'Space' || choiceBindings.matches('interact', event.code) || choiceBindings.matches('pickupPlace', event.code)) {
+        event.preventDefault();
+        this.resolveChoice(entry, this.choiceHighlightIndex);
+      }
+      return;
+    }
+
     if (this.state !== 'dialogue') return;
 
     if (event.code === SKIP_HOLD_KEY_CODE) {
@@ -1479,6 +1626,15 @@ export class AfterWorkStorySystem {
       }
       return;
     }
+
+    // "男主角台詞系統" round — ProtagonistDialogueSystem owns its own E/Space
+    // advance handling (its own independent keydown listener) while a
+    // protagonist entry is the one currently showing, so this class's own
+    // advance-key branch below must stay out of its way entirely — see that
+    // class's own doc comment on why the two listeners never both react to
+    // the same keypress.
+    const activeEntry = this.currentEntry();
+    if (activeEntry !== null && typeof activeEntry !== 'string' && 'speaker' in activeEntry) return;
 
     if (event.repeat) return;
     const bindings = this.settingsManager.inputBindings;
@@ -1533,6 +1689,7 @@ export class AfterWorkStorySystem {
     if (
       this.state === 'transitioning' || this.state === 'dialogue' || this.state === 'letterReading' ||
       this.state === 'finaleUnwrapping' || this.state === 'finaleEndingConfirm' || this.state === 'finaleEndingHold' ||
+      this.state === 'choice' ||
       (this.state === 'endTransition' && this.fadePhase === 'out')
     ) {
       if (this.dialogueReturnMode !== 'finaleStation' && this.playerData.activeTool !== this.savedActiveTool) {
@@ -1646,32 +1803,47 @@ export class AfterWorkStorySystem {
   }
 
   private updateDialogue(deltaTime: number): void {
-    this.revealMs += deltaTime * 1000;
-    if (this.npcBubble) showStoryBubbleText(this.npcBubble, this.revealedText());
+    // "男主角台詞系統" round — while a protagonist entry is the one
+    // currently showing, ProtagonistDialogueSystem owns its own reveal timer
+    // and UI entirely (see beginLine's own protagonist branch, which already
+    // hides the NPC bubble once). This class's own NPC-bubble reveal-tick and
+    // HUD prompt must stay out of its way here too — otherwise this method
+    // would silently re-show the NPC bubble every frame using the stale
+    // revealMs/wrappedCurrentLine still left over from the LAST NPC line.
+    // R-hold-skip (escHolding below) still needs to keep working regardless
+    // of entry type, matching onKeyDown's own SKIP_HOLD_KEY_CODE handling.
+    const entry = this.currentEntry();
+    const isProtagonistEntry = entry !== null && typeof entry !== 'string' && 'speaker' in entry;
 
-    // Polish-round follow-up — the ending's own "歡迎回家。" line reads as
-    // one continuous, hands-off beat (spec follow-up五: "避免突然切到
-    // Credits") rather than another "press E to continue" prompt: once fully
-    // revealed, it auto-advances after a short hold instead of waiting for
-    // input. Every other dialogueReturnMode (endStory/finaleStation) is
-    // completely unchanged — still purely E/Space-driven. R-hold-skip still
-    // works throughout for anyone who wants to skip ahead.
-    if (this.dialogueReturnMode === 'finaleEnding') {
-      this.updateFinaleEndingClusterIdle(deltaTime);
-      this.hud.showInteractionPrompt(this.currentSpeakerName(), '長按R：跳過故事');
-      if (this.isLineFullyRevealed) {
-        this.endingLineHoldElapsed += deltaTime;
-        if (this.endingLineHoldElapsed >= ENDING_LINE_AUTO_ADVANCE_HOLD) {
-          this.endingLineHoldElapsed = 0;
-          this.advanceLine();
-          return;
+    if (!isProtagonistEntry) {
+      this.revealMs += deltaTime * 1000;
+      if (this.npcBubble) showStoryBubbleText(this.npcBubble, this.revealedText());
+
+      // Polish-round follow-up — the ending's own "歡迎回家。" line reads as
+      // one continuous, hands-off beat (spec follow-up五: "避免突然切到
+      // Credits") rather than another "press E to continue" prompt: once
+      // fully revealed, it auto-advances after a short hold instead of
+      // waiting for input. Every other dialogueReturnMode (endStory/
+      // finaleStation) is completely unchanged — still purely E/Space-driven.
+      // R-hold-skip still works throughout for anyone who wants to skip
+      // ahead.
+      if (this.dialogueReturnMode === 'finaleEnding') {
+        this.updateFinaleEndingClusterIdle(deltaTime);
+        this.hud.showInteractionPrompt(this.currentSpeakerName(), '長按R：跳過故事');
+        if (this.isLineFullyRevealed) {
+          this.endingLineHoldElapsed += deltaTime;
+          if (this.endingLineHoldElapsed >= ENDING_LINE_AUTO_ADVANCE_HOLD) {
+            this.endingLineHoldElapsed = 0;
+            this.advanceLine();
+            return;
+          }
         }
+      } else {
+        this.hud.showInteractionPrompt(
+          this.currentSpeakerName(),
+          'E／Space：完整顯示／下一句\n長按R：跳過故事'
+        );
       }
-    } else {
-      this.hud.showInteractionPrompt(
-        this.currentSpeakerName(),
-        'E／Space：完整顯示／下一句\n長按R：跳過故事'
-      );
     }
 
     if (this.escHolding) {

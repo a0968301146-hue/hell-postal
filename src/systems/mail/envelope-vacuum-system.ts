@@ -1,9 +1,9 @@
 import * as THREE from 'three';
-import { PhysicsSystem } from '../adapters/rapier/physics-system';
-import { InteractableObject } from '../shared/types/interactable';
-import { PlayerInteractionData } from '../core/game-state';
-import { PauseManager } from '../core/pause-manager';
-import { MailSystem } from './mail/mail-system';
+import { PhysicsSystem } from '../../adapters/rapier/physics-system';
+import { InteractableObject } from '../../shared/types/interactable';
+import { PlayerInteractionData } from '../../core/game-state';
+import { PauseManager } from '../../core/pause-manager';
+import { MailSystem } from './mail-system';
 
 /** "Add ladder tool station and envelope vacuum" round五/六 — suck/blow
  * tuning, centralized here rather than scattered magic numbers, mirroring

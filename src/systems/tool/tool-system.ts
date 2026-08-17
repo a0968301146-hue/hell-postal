@@ -268,6 +268,12 @@ export class ToolSystem {
     if (event.repeat) return;
     if (!this.isLocked()) return;
     if (this.pauseManager.isPaused) return;
+    // "新增兔子吉祥物" round — the rabbit guide panel (and every other
+    // existing modal that reuses this same 'stamping-minigame' lock
+    // convention, e.g. the envelope minigame itself) also reads
+    // Digit1-4 for its own navigation; without this guard those presses
+    // fall through and ALSO reselect a hotbar slot underneath the modal.
+    if (this.playerData.state === 'stamping-minigame') return;
 
     if (event.code === 'Digit1') { this.trySelect('empty'); return; }
     if (event.code === 'Digit2') { this.trySelect(this.slotTools[1]); return; }

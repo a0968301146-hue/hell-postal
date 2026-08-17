@@ -3,7 +3,7 @@
 // concept — this round's spec explicitly wants a push-along tool, not
 // something picked up like a box. All its own dimensions live here, not
 // reused from sorting-box-data.ts or any other container's constants.
-import { BACK_AREA } from '../systems/world-layout';
+import { BACK_AREA } from '../world-layout';
 
 // Resized toward a real hand-truck's long-and-narrow proportions (was a
 // near-square 1.3×0.9 "flatbed"). Width shrinks (0.9, was 1.3) so it clears

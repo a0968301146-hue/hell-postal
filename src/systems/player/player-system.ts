@@ -3,7 +3,7 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 import { SCENE_CONFIG } from '../world-layout';
 import { PhysicsSystem } from '../../adapters/rapier/physics-system';
 import { PLAYER_SPAWN } from '../world-layout';
-import { DOLLY_PUSH_SPEED_MULTIPLIER } from '../../game/dolly-data';
+import { DOLLY_PUSH_SPEED_MULTIPLIER } from '../dolly/dolly-data';
 import { PlayerInteractionData } from '../../core/game-state';
 import { HUD } from '../hud';
 import { SettingsManager } from '../settings';

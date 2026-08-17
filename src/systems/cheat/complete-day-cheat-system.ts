@@ -5,7 +5,7 @@ import { HUD } from '../hud';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
 import { LOST_FOUND_ROOM } from '../../data/world/lost-found-layout-data';
 import { WALL_THICKNESS } from '../world-layout';
-import { ENABLE_COMPLETE_DAY_CHEAT } from '../../game/feature-flags';
+import { ENABLE_COMPLETE_DAY_CHEAT } from '../../core/feature-flags';
 // Imported directly from their own concrete files (not the '../interaction'
 // barrel), mirroring pallet-system.ts's/after-work-story-system.ts's own
 // established reasoning for the same import shape elsewhere in this

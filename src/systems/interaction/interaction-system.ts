@@ -8,7 +8,7 @@ import { EnvelopeStampStation } from '../../game/envelope-stamp-station';
 import { SortingBoxSystem } from '../../game/sorting-box-system';
 import { VehicleControlSystem, VEHICLE_CALL_BUTTON_ID, VEHICLE_DEPART_BUTTON_ID } from '../vehicle';
 import { CounterServiceSystem } from '../../game/counter-service-system';
-import { DollySystem } from '../../game/dolly-system';
+import { DollySystem } from '../dolly/dolly-system';
 import { HUD } from '../hud';
 import { PauseManager } from '../../core/pause-manager';
 import { SettingsManager } from '../settings';
@@ -27,8 +27,13 @@ import { isNpcEDebugEnabled, logNpcEDebug } from './npc-e-debug';
 // from their own system files, not a barrel, matching every other
 // cross-system import in this file's own established convention.
 import { LadderSystem } from '../ladder/ladder-system';
-import { ToolStationSystem } from '../tool-station-system';
+import { ToolStationSystem } from '../tool/tool-station-system';
 import { CompleteDayCheatSystem } from '../cheat/complete-day-cheat-system';
+// "新增兔子吉祥物" round — imported directly from its own system file (not a
+// barrel), mirroring every other cross-system import in this file's own
+// established convention (LadderSystem/ToolStationSystem/CompleteDayCheatSystem
+// above).
+import { MASCOT_INTERACTABLE_ID } from '../mascot/mascot-guide-system';
 
 export class InteractionSystem {
   private raycaster: THREE.Raycaster;
@@ -94,6 +99,10 @@ export class InteractionSystem {
   private onOpenToolLoadoutMenu: () => void;
   /** "Add complete day testing cheat button" round. */
   private completeDayCheatSystem: CompleteDayCheatSystem;
+  /** Opens the rabbit mascot's own small floating guide panel ("新增兔子吉
+   * 祥物" round) — same empty-handed-only priority pattern as
+   * onOpenUpgradeMenu/onOpenMediaPlayer/onOpenToolLoadoutMenu above. */
+  private onOpenMascotGuide: () => void;
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -126,6 +135,7 @@ export class InteractionSystem {
     toolStationSystem: ToolStationSystem,
     onOpenToolLoadoutMenu: () => void,
     completeDayCheatSystem: CompleteDayCheatSystem,
+    onOpenMascotGuide: () => void,
     onDollyUsed?: () => void
   ) {
     this.raycaster = new THREE.Raycaster();
@@ -159,6 +169,7 @@ export class InteractionSystem {
     this.toolStationSystem = toolStationSystem;
     this.onOpenToolLoadoutMenu = onOpenToolLoadoutMenu;
     this.completeDayCheatSystem = completeDayCheatSystem;
+    this.onOpenMascotGuide = onOpenMascotGuide;
     this.onDollyUsed = onDollyUsed;
 
     // "Fix trusted keyboard NPC interaction" round四: moved from
@@ -367,6 +378,11 @@ export class InteractionSystem {
       // Television, same reasoning ("Add television media playlist" round
       // spec二: "需空手才能操作電視" — E does nothing while holding anything).
       if (this.currentTarget && this.currentTarget.id === TELEVISION_INTERACTABLE_ID) {
+        return;
+      }
+      // Rabbit mascot, same reasoning ("新增兔子吉祥物" round spec九: "避免
+      // 玩家同時操作貨物" — E does nothing while holding anything).
+      if (this.currentTarget && this.currentTarget.id === MASCOT_INTERACTABLE_ID) {
         return;
       }
       // Multi-carry: aiming at a NEW plain pickupable item with spare
@@ -587,6 +603,31 @@ export class InteractionSystem {
       stopNpcTrace('diverted: currentTarget is bulletin board, not NPC');
       if (this.pickupSystem.heldCount === 0) {
         this.onOpenUpgradeMenu();
+      }
+      this.clearHighlight(this.currentTarget);
+      this.currentTarget = null;
+      return;
+    }
+
+    // Priority -0.95: rabbit mascot guide panel ("新增兔子吉祥物" round) —
+    // same empty-handed-only pattern as the bulletin board just above.
+    if (this.currentTarget && this.currentTarget.id === MASCOT_INTERACTABLE_ID) {
+      stopNpcTrace('diverted: currentTarget is rabbit mascot, not NPC');
+      if (this.pickupSystem.heldCount === 0) {
+        // MascotGuideSystem attaches its OWN document-level keydown listener
+        // (bubble phase) the moment open() runs below, and — unlike the
+        // upgrade/media-player menus, which are mouse/Escape-only — its own
+        // first-tier input also treats the SAME 'interact' binding as
+        // "confirm highlighted option". Without stopping propagation here,
+        // this single E press would open the panel AND immediately
+        // auto-confirm category 0, since this listener runs first (capture
+        // phase on window, ahead of the mascot's own bubble-phase listener
+        // on document) and open() synchronously flips it to "categories"
+        // before the event finishes propagating. Same race shape as the
+        // ProtagonistDialogueSystem/AfterWorkStorySystem choice-autoconfirm
+        // bug fixed earlier this project via stopImmediatePropagation.
+        event.stopImmediatePropagation();
+        this.onOpenMascotGuide();
       }
       this.clearHighlight(this.currentTarget);
       this.currentTarget = null;
@@ -938,6 +979,20 @@ export class InteractionSystem {
         return;
       }
 
+      // Rabbit mascot while holding anything ("新增兔子吉祥物" round), same
+      // pattern as the bulletin board/television just above.
+      if (hit && hit.id === MASCOT_INTERACTABLE_ID) {
+        if (this.currentTarget !== hit) {
+          if (this.currentTarget) this.clearHighlight(this.currentTarget);
+          this.applyHighlight(hit);
+          this.currentTarget = hit;
+          this.playerData.targetedObjectId = hit.id;
+        }
+        this.hud.showInteractionPrompt('兔子', '需空手才能找兔子聊聊');
+        this.hud.setCrosshairActive(false);
+        return;
+      }
+
       // Holding a stamped/unstamped envelope and aiming at an OPEN mail bag
       // (spec二/三: "E 放入信件"). "Allow unset mail boxes to accept first
       // envelope" round五: an UNSET, still-empty box gets its own two more
@@ -1190,6 +1245,10 @@ export class InteractionSystem {
           // above ("Add television media playlist" round spec二: "E 開啟媒
           // 體播放器").
           this.hud.showInteractionPrompt('二手電視', 'E 開啟媒體播放器');
+        } else if (newTarget.id === MASCOT_INTERACTABLE_ID) {
+          // Empty-handed here, same reasoning as the bulletin board/
+          // television just above ("新增兔子吉祥物" round spec三).
+          this.hud.showInteractionPrompt('兔子', 'E 找兔子聊聊');
         } else if (newTarget.id === VEHICLE_CALL_BUTTON_ID) {
           // Wall-mounted call button ("Fix cargo throwing and rebalance
           // daily manifest" round二) — same blocked/idle text VehicleControlSystem

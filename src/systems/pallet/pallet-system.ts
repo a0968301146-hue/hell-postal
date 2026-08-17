@@ -12,32 +12,19 @@ import { UpgradeSystem } from '../upgrade';
 // cycle: interaction barrel -> interaction-system -> pallet barrel ->
 // pallet-system -> interaction barrel).
 import { PalletThrowHooks } from '../interaction/pickup-system';
-import { BACK_AREA, WORLD_BOUNDS, SCENE_CONFIG } from '../world-layout';
+import { BACK_AREA, SCENE_CONFIG } from '../world-layout';
 import { createFloatingLabel } from '../../adapters/three/world-label-system';
 import {
   PalletSize, PalletDimensions, PalletWallSlot, PalletSetDefinition, PALLET_SIZE_ORDER, PALLET_DIMENSIONS,
-  PALLET_DETECT_HEIGHT, PALLET_SAFETY_DROP_POS, PALLET_SIZE_DISPLAY_NAME, PALLET_SET_DEFINITIONS,
+  PALLET_SAFETY_DROP_POS, PALLET_SIZE_DISPLAY_NAME, PALLET_SET_DEFINITIONS,
   RACK_BRACKET_THICKNESS, isPalletId, isRackId,
 } from './pallet-data';
 import { isPalletUnlockedOnDay } from '../../data/daily-unlock-data';
+import { computeUnionBoundsFromPinned, isExcluded, computeCarryTransform, getRotatedPalletFootprint, isWithinWorldBounds } from './pallet-placement';
+import { CargoStackCandidate, isCargoInPalletDetectionZone, findSupportedCargo } from './pallet-stacking';
 
 const STABLE_THRESHOLD = 0.5; // seconds, organize judgment
 const VELOCITY_THRESHOLD = 0.4;
-
-/** How far in front of the camera the pallet's carry position sits, PLUS the
- * union bounds' own horizontal half-extent (so a bigger load sits further
- * away — spec 四: "需要依托盤與托盤貨物的 union bounds 動態調整距離"). */
-const CARRY_BASE_FORWARD_DIST = 1.0;
-/** How far below eye level the union bounds' CENTER sits while walking. */
-const CARRY_DROP_BELOW_EYE = 0.45;
-/** Never let the union bounds' bottom get closer than this to the floor
- * while WALKING. */
-const CARRY_MIN_FLOOR_CLEARANCE = 0.15;
-/** Never let the union bounds' top rise above camera eye level by more than
- * this. */
-const CARRY_MAX_ABOVE_EYE = 0.35;
-/** Minimum horizontal clearance between the carry center and the camera. */
-const MIN_CAMERA_CLEARANCE = 0.6;
 
 /** How high above the pallet's local top surface `uiAnchor` sits. */
 const UI_ANCHOR_HEIGHT_ABOVE_TOP = 0.4;
@@ -643,73 +630,27 @@ export class PalletSystem implements PalletThrowHooks {
    * reachable from the pallet's own top face through a real contact chain,
    * so nearby-but-unconnected cargo is never swept up. */
   private findSupportedCargoRecursive(instance: PalletInstance): InteractableObject[] {
-    const { width, depth, height } = instance.dimensions;
-    const innerHW = width / 2;
-    const innerHD = depth / 2;
-
     instance.palletObj.mesh.updateMatrixWorld(true);
     const matInv = new THREE.Matrix4().copy(instance.palletObj.mesh.matrixWorld).invert();
 
-    const candidates: InteractableObject[] = [];
+    const candidates: CargoStackCandidate[] = [];
+    const objById = new Map<string, InteractableObject>();
     for (const [id, obj] of this.interactables) {
       if (isPalletId(id) || isRackId(id)) continue;
       if (obj.isHeld || !obj.mesh.visible) continue;
       const data = this.cargoSystem.getCargoData(id);
       if (!data || (data.shapeType !== 'box' && data.shapeType !== 'large')) continue;
-      candidates.push(obj);
+      candidates.push({
+        id,
+        localPos: obj.mesh.position.clone().applyMatrix4(matInv),
+        worldPos: obj.mesh.position,
+        halfWidth: obj.width / 2, halfHeight: obj.height / 2, halfDepth: obj.depth / 2,
+      });
+      objById.set(id, obj);
     }
 
-    const supported: InteractableObject[] = [];
-    const supportedIds = new Set<string>();
-
-    // Layer 1: cargo resting directly on the pallet's own top surface.
-    for (const obj of candidates) {
-      const localPos = obj.mesh.position.clone().applyMatrix4(matInv);
-      const inZone =
-        localPos.x >= -innerHW && localPos.x <= innerHW &&
-        localPos.z >= -innerHD && localPos.z <= innerHD &&
-        localPos.y >= height / 2 - 0.05 && localPos.y <= height / 2 + PALLET_DETECT_HEIGHT;
-      if (inZone) {
-        supported.push(obj);
-        supportedIds.add(obj.id);
-      }
-    }
-
-    // Layers 2+: cargo resting on top of already-supported cargo, found via
-    // real world-space AABB overlap (vertical gap + XZ footprint overlap),
-    // repeated breadth-first until a pass adds nothing new.
-    let frontier = supported.slice();
-    while (frontier.length > 0) {
-      const nextFrontier: InteractableObject[] = [];
-      for (const support of frontier) {
-        const sHalfW = support.width / 2, sHalfD = support.depth / 2, sHalfH = support.height / 2;
-        const sPos = support.mesh.position;
-        const sTop = sPos.y + sHalfH;
-        const sMinX = sPos.x - sHalfW, sMaxX = sPos.x + sHalfW;
-        const sMinZ = sPos.z - sHalfD, sMaxZ = sPos.z + sHalfD;
-
-        for (const cand of candidates) {
-          if (supportedIds.has(cand.id)) continue;
-          const cHalfW = cand.width / 2, cHalfD = cand.depth / 2, cHalfH = cand.height / 2;
-          const cPos = cand.mesh.position;
-          const cBottom = cPos.y - cHalfH;
-          const gap = cBottom - sTop;
-          if (gap < -0.03 || gap > 0.12) continue;
-
-          const cMinX = cPos.x - cHalfW, cMaxX = cPos.x + cHalfW;
-          const cMinZ = cPos.z - cHalfD, cMaxZ = cPos.z + cHalfD;
-          const overlapsXZ = cMinX < sMaxX && cMaxX > sMinX && cMinZ < sMaxZ && cMaxZ > sMinZ;
-          if (!overlapsXZ) continue;
-
-          supported.push(cand);
-          supportedIds.add(cand.id);
-          nextFrontier.push(cand);
-        }
-      }
-      frontier = nextFrontier;
-    }
-
-    return supported;
+    const supportedIds = findSupportedCargo(instance.dimensions, candidates);
+    return supportedIds.map((id) => objById.get(id)!);
   }
 
   /** Binds rope straps to a GROUND-PLACED pallet's own currently-detected
@@ -897,10 +838,6 @@ export class PalletSystem implements PalletThrowHooks {
    * (rotation-aware local-space check, using the instance's OWN dimensions —
    * spec三) for >=0.5s gets marked organized. */
   private updateOrganizeScan(instance: PalletInstance, deltaTime: number): void {
-    const { width, depth, height } = instance.dimensions;
-    const innerHW = width / 2;
-    const innerHD = depth / 2;
-
     instance.palletObj.mesh.updateMatrixWorld(true);
     const matInv = new THREE.Matrix4().copy(instance.palletObj.mesh.matrixWorld).invert();
 
@@ -913,11 +850,7 @@ export class PalletSystem implements PalletThrowHooks {
       if (!data || (data.shapeType !== 'box' && data.shapeType !== 'large')) continue;
 
       const localPos = obj.mesh.position.clone().applyMatrix4(matInv);
-      const inZone =
-        localPos.x >= -innerHW && localPos.x <= innerHW &&
-        localPos.z >= -innerHD && localPos.z <= innerHD &&
-        localPos.y >= height / 2 - 0.05 && localPos.y <= height / 2 + PALLET_DETECT_HEIGHT;
-      if (!inZone) continue;
+      if (!isCargoInPalletDetectionZone(localPos, instance.dimensions)) continue;
 
       idsStillInZone.add(id);
       if (!this.hasFiredUse) {
@@ -1102,7 +1035,9 @@ export class PalletSystem implements PalletThrowHooks {
       }
     }
 
-    this.computeUnionBounds(instance);
+    const unionBounds = computeUnionBoundsFromPinned(instance.dimensions, instance.pinned);
+    instance.unionHalfExtents.copy(unionBounds.halfExtents);
+    instance.unionLocalCenterOffset.copy(unionBounds.centerOffset);
     instance.storageState = 'held';
     instance.wallSlotId = null;
     this.heldPalletId = instance.id;
@@ -1115,43 +1050,6 @@ export class PalletSystem implements PalletThrowHooks {
 
     // Position it in front of the player immediately, not one frame late.
     this.updateCarry(instance, cameraPosition, cameraForward);
-  }
-
-  private computeUnionBounds(instance: PalletInstance): void {
-    const { width, height, depth } = instance.dimensions;
-    let minX = -width / 2, maxX = width / 2;
-    let minY = -height / 2, maxY = height / 2;
-    let minZ = -depth / 2, maxZ = depth / 2;
-
-    for (const p of instance.pinned) {
-      const hw = p.obj.width / 2, hh = p.obj.height / 2, hd = p.obj.depth / 2;
-      minX = Math.min(minX, p.localPos.x - hw); maxX = Math.max(maxX, p.localPos.x + hw);
-      minY = Math.min(minY, p.localPos.y - hh); maxY = Math.max(maxY, p.localPos.y + hh);
-      minZ = Math.min(minZ, p.localPos.z - hd); maxZ = Math.max(maxZ, p.localPos.z + hd);
-    }
-
-    instance.unionHalfExtents.set((maxX - minX) / 2, (maxY - minY) / 2, (maxZ - minZ) / 2);
-    instance.unionLocalCenterOffset.set((maxX + minX) / 2, (maxY + minY) / 2, (maxZ + minZ) / 2);
-  }
-
-  private computeCarryTransform(instance: PalletInstance, cameraPosition: THREE.Vector3, cameraForward: THREE.Vector3): { pos: THREE.Vector3; quat: THREE.Quaternion } | null {
-    const flat = new THREE.Vector3(cameraForward.x, 0, cameraForward.z);
-    if (flat.lengthSq() < 1e-6) return null;
-    flat.normalize();
-
-    const horizExtent = Math.max(instance.unionHalfExtents.x, instance.unionHalfExtents.z);
-    const forwardDist = Math.max(CARRY_BASE_FORWARD_DIST, MIN_CAMERA_CLEARANCE) + horizExtent;
-    const targetX = cameraPosition.x + flat.x * forwardDist;
-    const targetZ = cameraPosition.z + flat.z * forwardDist;
-    const quat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.placementYaw);
-
-    const desiredCenterY = cameraPosition.y - CARRY_DROP_BELOW_EYE;
-    const minCenterY = BACK_AREA.floorY + CARRY_MIN_FLOOR_CLEARANCE + instance.unionHalfExtents.y;
-    const maxCenterY = cameraPosition.y + CARRY_MAX_ABOVE_EYE - instance.unionHalfExtents.y;
-    const centerY = THREE.MathUtils.clamp(desiredCenterY, minCenterY, Math.max(minCenterY, maxCenterY));
-    const targetY = centerY - instance.unionLocalCenterOffset.y;
-
-    return { pos: new THREE.Vector3(targetX, targetY, targetZ), quat };
   }
 
   private clampCarryMove(instance: PalletInstance, targetPos: THREE.Vector3, targetQuat: THREE.Quaternion): THREE.Vector3 {
@@ -1176,7 +1074,12 @@ export class PalletSystem implements PalletThrowHooks {
   }
 
   private updateCarry(instance: PalletInstance, cameraPosition: THREE.Vector3, cameraForward: THREE.Vector3): void {
-    const transform = this.computeCarryTransform(instance, cameraPosition, cameraForward);
+    const transform = computeCarryTransform({
+      unionHalfExtents: instance.unionHalfExtents,
+      unionLocalCenterOffset: instance.unionLocalCenterOffset,
+      placementYaw: this.placementYaw,
+      cameraPosition, cameraForward,
+    });
     if (!transform) return;
 
     const clampedPos = this.clampCarryMove(instance, transform.pos, transform.quat);
@@ -1204,7 +1107,7 @@ export class PalletSystem implements PalletThrowHooks {
     const excludeRoots: THREE.Object3D[] = [instance.palletObj.mesh, this.previewMesh, ...instance.pinned.map((p) => p.obj.mesh)];
     this.downRaycaster.set(new THREE.Vector3(carryPos.x, carryPos.y + 3, carryPos.z), new THREE.Vector3(0, -1, 0));
     const hits = this.downRaycaster.intersectObjects(this.scene.children, true)
-      .filter((h) => !this.isExcluded(h.object, excludeRoots));
+      .filter((h) => !isExcluded(h.object, excludeRoots));
     const supportY = hits.length > 0 ? hits[0].point.y : BACK_AREA.floorY;
 
     const placeCenterY = supportY + instance.unionHalfExtents.y;
@@ -1224,15 +1127,10 @@ export class PalletSystem implements PalletThrowHooks {
   }
 
   private checkPlacementValidity(instance: PalletInstance): boolean {
-    const cos = Math.abs(Math.cos(this.placementYaw));
-    const sin = Math.abs(Math.sin(this.placementYaw));
-    const halfW = instance.unionHalfExtents.x * cos + instance.unionHalfExtents.z * sin;
-    const halfD = instance.unionHalfExtents.x * sin + instance.unionHalfExtents.z * cos;
-    const halfH = instance.unionHalfExtents.y;
+    const { halfW, halfD, halfH } = getRotatedPalletFootprint(instance.unionHalfExtents, this.placementYaw);
     const center = this.placementPos.clone().add(instance.unionLocalCenterOffset.clone().applyQuaternion(this.placementQuat));
 
-    if (center.x - halfW < WORLD_BOUNDS.minX || center.x + halfW > WORLD_BOUNDS.maxX ||
-        center.z - halfD < WORLD_BOUNDS.minZ || center.z + halfD > WORLD_BOUNDS.maxZ) return false;
+    if (!isWithinWorldBounds(center, halfW, halfD)) return false;
 
     const eps = 0.02;
     const box = new THREE.Box3(
@@ -1247,15 +1145,6 @@ export class PalletSystem implements PalletThrowHooks {
       if (box.intersectsBox(otherBox)) return false;
     }
     return true;
-  }
-
-  private isExcluded(obj: THREE.Object3D, excludeRoots: THREE.Object3D[]): boolean {
-    let cur: THREE.Object3D | null = obj;
-    while (cur) {
-      if (excludeRoots.includes(cur)) return true;
-      cur = cur.parent;
-    }
-    return false;
   }
 
   /** Called by InteractionSystem on a second E-press while holding a pallet

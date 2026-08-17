@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { CargoData, CargoSystem } from '../cargo';
+import { CargoData } from './cargo-data';
+import { CargoSystem } from './cargo-system';
 
 const SEARCH_RADIUS = 12;
 const HIGHLIGHT_DURATION = 2.5;
