@@ -615,17 +615,23 @@ export class InteractionSystem {
       stopNpcTrace('diverted: currentTarget is rabbit mascot, not NPC');
       if (this.pickupSystem.heldCount === 0) {
         // MascotGuideSystem attaches its OWN document-level keydown listener
-        // (bubble phase) the moment open() runs below, and — unlike the
-        // upgrade/media-player menus, which are mouse/Escape-only — its own
-        // first-tier input also treats the SAME 'interact' binding as
-        // "confirm highlighted option". Without stopping propagation here,
-        // this single E press would open the panel AND immediately
-        // auto-confirm category 0, since this listener runs first (capture
-        // phase on window, ahead of the mascot's own bubble-phase listener
-        // on document) and open() synchronously flips it to "categories"
-        // before the event finishes propagating. Same race shape as the
-        // ProtagonistDialogueSystem/AfterWorkStorySystem choice-autoconfirm
-        // bug fixed earlier this project via stopImmediatePropagation.
+        // (bubble phase), and — unlike the upgrade/media-player menus, which
+        // are mouse/Escape-only — its own first-tier input also treats the
+        // SAME 'interact' binding as "close the bubble". Without stopping
+        // propagation here, this single E press would open/advance the
+        // panel via onOpenMascotGuide() below AND immediately reach that
+        // same listener afterward and close what was just shown, since this
+        // listener runs first (capture phase on window, ahead of the
+        // mascot's own bubble-phase listener on document). Same race shape
+        // as the ProtagonistDialogueSystem/AfterWorkStorySystem choice-
+        // autoconfirm bug fixed earlier this project via
+        // stopImmediatePropagation. This is also what makes "E while
+        // already aimed at the rabbit and the bubble open = next line"
+        // ("兔子吉祥物互動再次修改" round spec一/七) work correctly: this
+        // dispatch always wins the race and calls onOpenMascotGuide() again
+        // (open() itself has no "already open" guard — see its own doc
+        // comment), so the mascot's own listener never gets a chance to
+        // treat that same press as "close" instead.
         event.stopImmediatePropagation();
         this.onOpenMascotGuide();
       }

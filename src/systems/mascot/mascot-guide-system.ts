@@ -84,6 +84,11 @@ const UI_ANCHOR_HEIGHT_ABOVE_HEAD = 0.35;
 const PANEL_HALF_WIDTH_PX = 150;
 const PANEL_TOP_MARGIN_PX = 20;
 
+/** "兔子吉祥物互動再次修改" round spec三 — walking this far from the rabbit
+ * (horizontal XZ distance only, Y ignored per spec) while the bubble is
+ * showing auto-closes it, no E press needed. */
+const MASCOT_AUTO_CLOSE_DISTANCE_XZ = 5.0;
+
 type MascotUiState = 'closed' | 'content';
 
 /**
@@ -235,14 +240,18 @@ export class MascotGuideSystem {
     );
   }
 
-  /** Called by InteractionSystem once it's already confirmed the player is
-   * empty-handed and aiming at the rabbit (spec九: 避免玩家同時操作貨物 — the
-   * SAME "heldCount===0" gate the bulletin board's own onOpenUpgradeMenu call
-   * site already enforces before ever calling this). Goes straight to one
-   * random line — no category/entry selection, no player/input lock (spec
-   * 四/七: 環境互動提示, 玩家仍可正常WASD移動). */
+  /** Called by InteractionSystem EVERY time it's already confirmed the
+   * player is empty-handed and aiming at the rabbit (spec一/十: same
+   * dispatch site InteractionSystem already used before this round —
+   * currentTarget.id === MASCOT_INTERACTABLE_ID + heldCount===0 — fires on
+   * EVERY such E press, not just the first). Deliberately has no "already
+   * open" guard anymore: closed→open and open→next-line are now the exact
+   * same operation (pick a fresh random line, show it), so a second E press
+   * while still aimed at the rabbit and the bubble already showing just
+   * replaces the current line instead of no-op'ing (spec一: "對著兔子按E＝
+   * 直接換下一句"). No player/input lock either way (spec五: 環境互動提示,
+   * 玩家仍可正常WASD移動). */
   open(): void {
-    if (this.uiState !== 'closed') return;
     const entry = this.pickRandomEntry();
     if (!entry) return; // no content available at all (shouldn't happen — MASCOT_GUIDE_ENTRIES is never empty)
     this.lastEntryId = entry.id;
@@ -277,9 +286,23 @@ export class MascotGuideSystem {
    * no-op unless the guide panel is currently open. Repositions the DOM
    * panel to track the rabbit's own fixed world anchor point through the
    * current camera projection (spec三: "UI必須位於兔子的正上方"), so it stays
-   * correctly placed regardless of which direction the player is looking. */
+   * correctly placed regardless of which direction the player is looking.
+   *
+   * Also auto-closes once the player walks MASCOT_AUTO_CLOSE_DISTANCE_XZ
+   * away (spec三/六: 離開兔子5公尺自動關閉, XZ-only, computed here rather than
+   * adding a second per-frame query elsewhere). Uses camera.position for the
+   * player's own XZ position rather than taking a playerData/physics
+   * dependency just for this — player-system.ts's own update() sets
+   * camera.position to the physics body's X/Z exactly (only Y differs, by a
+   * fixed eye-height offset), so this is already the player's real world
+   * position, not an approximation. */
   update(camera: THREE.PerspectiveCamera): void {
     if (this.uiState === 'closed') return;
+    const distXZ = Math.hypot(camera.position.x - MASCOT_POS_X, camera.position.z - MASCOT_POS_Z);
+    if (distXZ >= MASCOT_AUTO_CLOSE_DISTANCE_XZ) {
+      this.close();
+      return;
+    }
     const projected = this.uiAnchorWorldPos.clone().project(camera);
     // Behind the camera — clamp off-screen rather than showing a mirrored
     // panel (a genuine edge case: the player can freely walk/turn away
@@ -304,12 +327,16 @@ export class MascotGuideSystem {
     positionMascotGuideUi(this.uiHandle, x, y);
   }
 
-  /** One line, one close — E/Space/Escape are all equivalent "dismiss the
-   * tip" here (spec二: 一次互動只顯示一句話，不需要連續按E推進). Deliberately
-   * does NOT call event.stopPropagation()/preventDefault() beyond what's
-   * needed to swallow this key press: this listener only ever closes the
-   * bubble, it never blocks or intercepts WASD movement (that's handled
-   * entirely by player-system.ts's own separate listener, untouched here). */
+  /** Space/Escape always close the bubble outright. E is here too, but only
+   * ever actually reaches this handler when the player is NOT aimed at the
+   * rabbit — InteractionSystem's own dispatch (currentTarget.id ===
+   * MASCOT_INTERACTABLE_ID) calls event.stopImmediatePropagation() before
+   * this document-level listener ever sees an E press made WHILE aimed at
+   * the rabbit, routing that case to open() instead (next-line, spec一/七).
+   * So in practice: aimed + E → next line (via InteractionSystem→open());
+   * not aimed + E → close (via here) — exactly spec二's "玩家轉身看向其他地方
+   * 時E不應該換下一句". Deliberately does NOT touch WASD in any way — that's
+   * handled entirely by player-system.ts's own separate listener. */
   private onKeyDown(event: KeyboardEvent): void {
     if (this.uiState === 'closed' || event.repeat) return;
     if (event.code === 'Escape') { event.preventDefault(); this.close(); return; }
